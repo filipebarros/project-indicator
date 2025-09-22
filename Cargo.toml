@@ -25,6 +25,10 @@ ignore = "0.4"
 anyhow = "1.0"
 thiserror = "1.0"
 
+# System utilities
+dirs = "5.0"
+log = "0.4"
+
 # Caching
 dashmap = "5.0"
 

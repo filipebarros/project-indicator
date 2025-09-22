@@ -1,0 +1,343 @@
+# Project Indicator Configuration
+# Enhanced configuration with framework detection capabilities
+
+[meta]
+version = "2.0"
+
+[display]
+show_frameworks = true
+max_frameworks = 2
+framework_separator = "+"
+
+[cache]
+enabled = true
+max_entries = 1000
+ttl_seconds = 300  # Cache results for 5 minutes
+
+# Language definitions with framework detection
+[[languages]]
+name = "TypeScript"
+files = ["package.json", "tsconfig.json"]
+color = "#3178C6"
+icon = "󰛦"
+priority = 1
+
+[[languages.frameworks]]
+name = "React"
+detection = { type = "PackageJson", dependencies = ["react"] }
+icon = ""
+color = "#61DAFB"
+priority = 1
+
+[[languages.frameworks]]
+name = "Next.js"
+detection = { type = "PackageJson", dependencies = ["next"] }
+files = ["next.config.js", "next.config.ts"]
+icon = ""
+color = "#000000"
+priority = 1
+
+[[languages.frameworks]]
+name = "Vue"
+detection = { type = "PackageJson", dependencies = ["vue", "@vue/core"] }
+icon = ""
+color = "#4FC08D"
+priority = 1
+
+[[languages.frameworks]]
+name = "Angular"
+detection = { type = "PackageJson", dependencies = ["@angular/core"] }
+icon = ""
+color = "#DD0031"
+priority = 1
+
+[[languages.frameworks]]
+name = "Svelte"
+detection = { type = "PackageJson", dependencies = ["svelte"] }
+icon = ""
+color = "#FF3E00"
+priority = 1
+
+[[languages.frameworks]]
+name = "Astro"
+detection = { type = "PackageJson", dependencies = ["astro"] }
+files = ["astro.config.ts"]
+icon = "󰓏"
+color = "#FF5D01"
+priority = 1
+
+[[languages]]
+name = "JavaScript"
+files = ["package.json"]
+color = "#F0DB4F"
+icon = "󰌞"
+priority = 2
+
+[[languages.frameworks]]
+name = "React"
+detection = { type = "PackageJson", dependencies = ["react"] }
+icon = ""
+color = "#61DAFB"
+priority = 1
+
+[[languages.frameworks]]
+name = "Express"
+detection = { type = "PackageJson", dependencies = ["express"] }
+icon = "󰄛"
+color = "#000000"
+priority = 1
+
+[[languages.frameworks]]
+name = "Fastify"
+detection = { type = "PackageJson", dependencies = ["fastify"] }
+icon = ""
+color = "#000000"
+priority = 1
+
+[[languages.frameworks]]
+name = "Astro"
+detection = { type = "PackageJson", dependencies = ["astro"] }
+files = ["astro.config.js", "astro.config.mjs"]
+icon = "󰓏"
+color = "#FF5D01"
+priority = 1
+
+[[languages]]
+name = "Python"
+files = ["pyproject.toml", "requirements.txt", "setup.py", ".python-version"]
+color = "#3776AB"
+icon = ""
+priority = 1
+
+[[languages.frameworks]]
+name = "Django"
+detection = { type = "PyProjectToml", dependencies = ["django"] }
+files = ["manage.py"]
+icon = ""
+color = "#092E20"
+priority = 1
+
+[[languages.frameworks]]
+name = "Flask"
+detection = { type = "PyProjectToml", dependencies = ["flask"] }
+icon = ""
+color = "#000000"
+priority = 1
+
+[[languages.frameworks]]
+name = "FastAPI"
+detection = { type = "PyProjectToml", dependencies = ["fastapi"] }
+icon = ""
+color = "#009688"
+priority = 1
+
+[[languages]]
+name = "Rust"
+files = ["Cargo.toml", "Cargo.lock"]
+color = "#DEA584"
+icon = ""
+priority = 1
+
+[[languages.frameworks]]
+name = "Rocket"
+detection = { type = "CargoToml", dependencies = ["rocket"] }
+icon = ""
+color = "#D33847"
+priority = 1
+
+[[languages.frameworks]]
+name = "Actix"
+detection = { type = "CargoToml", dependencies = ["actix-web"] }
+icon = "󰠳"
+color = "#88C999"
+priority = 1
+
+[[languages.frameworks]]
+name = "Axum"
+detection = { type = "CargoToml", dependencies = ["axum"] }
+icon = "󰣈"
+color = "#b7410e"
+priority = 1
+
+[[languages]]
+name = "Go"
+files = ["go.mod", "go.sum"]
+color = "#01ADD8"
+icon = ""
+priority = 1
+
+[[languages.frameworks]]
+name = "Gin"
+detection = { type = "GoMod", modules = ["github.com/gin-gonic/gin"] }
+icon = ""
+color = "#00ADD8"
+priority = 1
+
+[[languages.frameworks]]
+name = "Echo"
+detection = { type = "GoMod", modules = ["github.com/labstack/echo"] }
+icon = "󰆧"
+color = "#00ADD8"
+priority = 1
+
+[[languages.frameworks]]
+name = "Fiber"
+detection = { type = "GoMod", modules = ["github.com/gofiber/fiber"] }
+icon = "󱤑"
+color = "#00ADD8"
+priority = 1
+
+[[languages]]
+name = "Ruby"
+files = ["Gemfile", "*.gemspec"]
+color = "#D51F06"
+icon = ""
+priority = 1
+
+[[languages.frameworks]]
+name = "Rails"
+detection = { type = "GemSpec", gems = ["rails"] }
+files = ["config/application.rb"]
+icon = ""
+color = "#CC0000"
+priority = 1
+
+[[languages.frameworks]]
+name = "Sinatra"
+detection = { type = "GemSpec", gems = ["sinatra"] }
+icon = "󰮤"
+color = "#000000"
+priority = 1
+
+[[languages.frameworks]]
+name = "Jekyll"
+detection = { type = "GemSpec", gems = ["jekyll"] }
+icon = ""
+color = "#CC0000"
+priority = 1
+
+[[languages]]
+name = "PHP"
+files = ["composer.json"]
+color = "#777BB4"
+icon = ""
+priority = 1
+
+[[languages.frameworks]]
+name = "Laravel"
+detection = { type = "ComposerJson", packages = ["laravel/framework"] }
+icon = ""
+color = "#FF2D20"
+priority = 1
+
+[[languages.frameworks]]
+name = "Symfony"
+detection = { type = "ComposerJson", packages = ["symfony/framework-bundle"] }
+icon = ""
+color = "#000000"
+priority = 1
+
+[[languages.frameworks]]
+name = "CodeIgniter"
+detection = { type = "ComposerJson", packages = ["codeigniter4/framework"] }
+icon = ""
+color = "#EF4223"
+priority = 1
+
+[[languages]]
+name = "Java"
+files = ["*.java", "pom.xml", "build.gradle"]
+color = "#ED8B00"
+icon = "󰬷"
+priority = 1
+
+[[languages.frameworks]]
+name = "Spring"
+detection = { type = "FileExists", files = ["pom.xml"] }
+icon = ""
+color = "#6DB33F"
+priority = 1
+
+[[languages]]
+name = "Swift"
+files = ["*.swift", "Package.swift"]
+color = "#FA7343"
+icon = ""
+priority = 1
+
+[[languages]]
+name = "Kotlin"
+files = ["*.kt", "*.kts"]
+color = "#7F52FF"
+icon = ""
+priority = 1
+
+[[languages]]
+name = "C#"
+files = ["*.csproj", "*.sln"]
+color = "#5C2D91"
+icon = ""
+priority = 1
+
+[[languages]]
+name = "Scala"
+files = ["build.sbt", "build.sc"]
+color = "#DE3423"
+icon = ""
+priority = 1
+
+[[languages]]
+name = "Elixir"
+files = ["mix.exs"]
+color = "#6E4A7E"
+icon = ""
+priority = 1
+
+[[languages.frameworks]]
+name = "Phoenix"
+detection = { type = "FileExists", files = ["lib/*_web"] }
+icon = ""
+color = "#FD4F00"
+priority = 1
+
+[[languages]]
+name = "Dart"
+files = ["pubspec.yaml"]
+color = "#0175C2"
+icon = ""
+priority = 1
+
+[[languages.frameworks]]
+name = "Flutter"
+detection = { type = "ConfigFile", file = "pubspec.yaml", keys = ["flutter"] }
+icon = ""
+color = "#02569B"
+priority = 1
+
+[[languages]]
+name = "C"
+files = ["CMakeLists.txt", "Makefile"]
+color = "#004482"
+icon = ""
+priority = 2
+
+[[languages]]
+name = "C++"
+files = ["*.cpp", "*.cc", "*.cxx"]
+color = "#00599C"
+icon = ""
+priority = 2
+
+[[languages]]
+name = "Lua"
+files = ["*.lua"]
+color = "#000080"
+icon = ""
+priority = 1
+
+[[languages]]
+name = "Zig"
+files = ["build.zig"]
+color = "#F48D01"
+icon = ""
+priority = 1

@@ -1,0 +1,91 @@
+name: Dependencies
+
+on:
+  schedule:
+    # Run weekly on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+
+jobs:
+  update-dependencies:
+    name: Update Dependencies
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write       # Required to push changes
+      pull-requests: write  # Required to create PRs
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Update dependencies
+      id: update
+      run: |
+        # Update patch versions (safer than major updates)
+        cargo update
+
+        # Check if anything changed
+        if git diff --quiet Cargo.lock; then
+          echo "has_updates=false" >> $GITHUB_OUTPUT
+          echo "No dependency updates available"
+        else
+          echo "has_updates=true" >> $GITHUB_OUTPUT
+          echo "Dependencies updated"
+        fi
+
+        # Test that everything still works
+        cargo check
+
+    - name: Create Pull Request
+      if: steps.update.outputs.has_updates == 'true'
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit-message: "Update dependencies"
+        title: "🔄 Update dependencies"
+        body: |
+          Automated dependency update
+
+          ## Changes
+          - Updated Cargo.lock with latest compatible versions
+          - Basic checks passing
+
+          Please review the changes and merge if everything looks good.
+        branch: update-dependencies
+        delete-branch: true
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+
+    - name: Run security audit
+      run: cargo audit
+
+    - name: Create issue on security vulnerability
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: '🚨 Security vulnerability detected',
+            body: 'A security vulnerability was detected in the dependencies. Please check the security audit logs and update the affected dependencies.',
+            labels: ['security', 'dependencies']
+          })
