@@ -10,8 +10,8 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      pull-requests: write  # Required to comment on PRs
-      contents: read        # Required to read repository content
+      pull-requests: write # Required to comment on PRs
+      contents: read # Required to read repository content
 
     steps:
     - name: Check for release label

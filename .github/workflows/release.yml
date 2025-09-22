@@ -67,7 +67,7 @@ jobs:
       shell: bash
       run: |
         VERSION="${{ github.event.release.tag_name }}"
-        VERSION_NUMBER=${VERSION#v}  # Remove 'v' prefix
+        VERSION_NUMBER=${VERSION#v} # Remove 'v' prefix
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
         echo "Release version: $VERSION"

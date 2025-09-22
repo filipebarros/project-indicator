@@ -13,7 +13,7 @@ categories = ["command-line-utilities", "development-tools"]
 # CLI and configuration
 clap = { version = "4.0", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
-toml = "0.8"
+toml = "0.9"
 serde_json = "1.0"
 
 # File operations and performance

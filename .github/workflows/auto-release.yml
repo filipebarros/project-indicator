@@ -15,8 +15,8 @@ jobs:
     if: ${{ !contains(github.event.head_commit.message, '[skip-release]') }}
 
     permissions:
-      contents: write      # Required to create releases and push tags
-      pull-requests: read  # Required to read PR information
+      contents: write # Required to create releases and push tags
+      pull-requests: read # Required to read PR information
 
     steps:
     - name: Checkout code
