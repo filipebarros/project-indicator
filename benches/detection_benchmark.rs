@@ -3,7 +3,7 @@
 //! These benchmarks measure the performance of different aspects of the detection system
 //! to ensure optimizations provide measurable improvements.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use project_indicator::{
     config::Config,
     detection::DetectionEngine,
@@ -11,6 +11,7 @@ use project_indicator::{
     types::{DetectionType, DisplayConfig, FrameworkDetector, ProjectIndicator},
 };
 use std::fs;
+use std::hint::black_box;
 use tempfile::TempDir;
 
 /// Create a realistic test project structure
