@@ -1,0 +1,49 @@
+[package]
+name = "project-indicator"
+version = "0.1.0"
+edition = "2021"
+authors = ["Filipe Barros <afbarros@me.com>"]
+description = "Fast project type and framework detection for shell prompts"
+license = "MIT"
+repository = "https://github.com/filipebarros/project-indicator"
+keywords = ["cli", "shell", "prompt", "project", "detection"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+# CLI and configuration
+clap = { version = "4.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.9"
+serde_json = "1.0"
+
+# File operations and performance
+walkdir = "2.0"
+rayon = "1.7"
+ignore = "0.4"
+regex = "1.10"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# System utilities
+dirs = "6.0"
+log = "0.4"
+
+# Caching
+dashmap = "6.0"
+
+[dev-dependencies]
+criterion = "0.7"
+tempfile = "3.0"
+pretty_assertions = "1.0"
+
+[[bin]]
+name = "project-indicator"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

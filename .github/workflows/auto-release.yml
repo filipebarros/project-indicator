@@ -1,0 +1,165 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  auto-release:
+    name: Auto Release
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.head_commit.message, '[skip-release]') }}
+
+    permissions:
+      contents: write
+      pull-requests: read
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo tools
+      uses: actions/cache@v4
+      with:
+        path: ~/.cargo/bin/cargo-set-version
+        key: ${{ runner.os }}-cargo-edit-0.13
+
+    - name: Install cargo-edit
+      run: |
+        if ! command -v cargo-set-version &> /dev/null; then
+          cargo install cargo-edit --version ^0.13
+        fi
+
+    - name: Get current version
+      id: current_version
+      run: |
+        CURRENT_VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[0].version')
+        echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        echo "Current version: $CURRENT_VERSION"
+
+    - name: Detect version bump from PR
+      id: detect_bump
+      run: |
+        # Get the PR number from the merge commit
+        PR_NUMBER=$(gh pr list --state merged --limit 1 --json number --jq '.[0].number')
+        echo "PR number: $PR_NUMBER"
+
+        if [ -n "$PR_NUMBER" ]; then
+          # Get PR labels
+          LABELS=$(gh pr view $PR_NUMBER --json labels --jq '.labels[].name' | tr '\n' ' ')
+          echo "PR labels: $LABELS"
+
+          # Determine bump type from labels
+          if echo "$LABELS" | grep -q "major"; then
+            echo "bump_type=major" >> $GITHUB_OUTPUT
+            echo "Detected: major release"
+          elif echo "$LABELS" | grep -q "minor"; then
+            echo "bump_type=minor" >> $GITHUB_OUTPUT
+            echo "Detected: minor release"
+          elif echo "$LABELS" | grep -q "patch"; then
+            echo "bump_type=patch" >> $GITHUB_OUTPUT
+            echo "Detected: patch release"
+          elif echo "$LABELS" | grep -q "no-release"; then
+            echo "bump_type=none" >> $GITHUB_OUTPUT
+            echo "Detected: no release needed"
+          else
+            # Default to patch if no label specified
+            echo "bump_type=patch" >> $GITHUB_OUTPUT
+            echo "No release label found, defaulting to patch"
+          fi
+        else
+          echo "bump_type=patch" >> $GITHUB_OUTPUT
+          echo "No PR found, defaulting to patch"
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Bump version
+      id: bump_version
+      if: steps.detect_bump.outputs.bump_type != 'none'
+      run: |
+        BUMP_TYPE="${{ steps.detect_bump.outputs.bump_type }}"
+        echo "Bumping $BUMP_TYPE version..."
+
+        cargo set-version --bump $BUMP_TYPE
+
+        NEW_VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[0].version')
+        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "New version: $NEW_VERSION"
+
+        # Update Cargo.lock
+        cargo check
+
+    - name: Run tests
+      if: steps.detect_bump.outputs.bump_type != 'none'
+      run: |
+        echo "Running tests before release..."
+        cargo test --all-features
+
+    - name: Commit version bump
+      if: steps.detect_bump.outputs.bump_type != 'none'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+        git add Cargo.toml Cargo.lock
+        git commit -m "Bump version to ${{ steps.bump_version.outputs.new_version }}"
+
+    - name: Create and push tag
+      if: steps.detect_bump.outputs.bump_type != 'none'
+      run: |
+        TAG="v${{ steps.bump_version.outputs.new_version }}"
+        echo "Creating tag: $TAG"
+
+        git tag -a "$TAG" -m "Release $TAG"
+        git push origin main --tags
+
+    - name: Create GitHub Release
+      if: steps.detect_bump.outputs.bump_type != 'none'
+      run: |
+        TAG="v${{ steps.bump_version.outputs.new_version }}"
+
+        # Generate changelog from commits since last tag
+        PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        if [ -n "$PREVIOUS_TAG" ]; then
+          CHANGELOG=$(git log --pretty=format:"- %s (%h)" ${PREVIOUS_TAG}..HEAD^)
+        else
+          CHANGELOG=$(git log --pretty=format:"- %s (%h)" HEAD^)
+        fi
+
+        # Create release notes file
+        cat > release_notes.md << EOF
+        ## Changes
+
+        $CHANGELOG
+
+        ---
+        *This release was automatically created from PR labels.*
+        EOF
+
+        # Create the release
+        gh release create "$TAG" \
+          --title "Release $TAG" \
+          --notes-file release_notes.md
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Summary
+      if: steps.detect_bump.outputs.bump_type != 'none'
+      run: |
+        echo "🎉 Successfully created release v${{ steps.bump_version.outputs.new_version }}"
+        echo "The release workflow will now build and upload binaries automatically."
+
+    - name: No release needed
+      if: steps.detect_bump.outputs.bump_type == 'none'
+      run: |
+        echo "ℹ️ No release created (no-release label detected)"
