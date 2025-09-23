@@ -1,8 +1,8 @@
 name: Release
 
 on:
-  release:
-    types: [created]
+  push:
+    tags: ['v*']
 
 env:
   CARGO_TERM_COLOR: always
@@ -62,23 +62,13 @@ jobs:
           target
         key: ${{ runner.os }}-${{ matrix.target }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Get release version
-      id: version
+    - name: Get release info
+      id: release
       shell: bash
       run: |
-        VERSION="${{ github.event.release.tag_name }}"
-        VERSION_NUMBER=${VERSION#v} # Remove 'v' prefix
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
-        echo "Release version: $VERSION"
-        echo "Version number: $VERSION_NUMBER"
-
-    - name: Update version in Cargo.toml
-      shell: bash
-      run: |
-        sed -i.bak "s/^version = \".*\"/version = \"${{ steps.version.outputs.version_number }}\"/" Cargo.toml
-        echo "Updated version to ${{ steps.version.outputs.version_number }}"
-        grep "^version" Cargo.toml
+        TAG_NAME=${GITHUB_REF#refs/tags/}
+        echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+        echo "Tag name: $TAG_NAME"
 
     - name: Build release binary
       shell: bash
@@ -107,20 +97,9 @@ jobs:
         ls ${{ matrix.asset_name }}
 
     - name: Upload Release Asset
-      uses: actions/github-script@v8
-      with:
-        script: |
-          const fs = require('fs');
-          const path = require('path');
-
-          const assetPath = '${{ matrix.asset_name }}';
-          const assetName = path.basename(assetPath);
-          const assetData = fs.readFileSync(assetPath);
-
-          await github.rest.repos.uploadReleaseAsset({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            release_id: ${{ github.event.release.id }},
-            name: assetName,
-            data: assetData,
-          });
+      shell: bash
+      run: |
+        gh release upload ${{ steps.release.outputs.tag_name }} ${{ matrix.asset_name }} \
+          --clobber
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
