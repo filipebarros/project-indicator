@@ -27,17 +27,10 @@ jobs:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Cache cargo tools
-      uses: actions/cache@v4
-      with:
-        path: ~/.cargo/bin/cargo-set-version
-        key: ${{ runner.os }}-cargo-edit-0.13
-
     - name: Install cargo-edit
-      run: |
-        if ! command -v cargo-set-version &> /dev/null; then
-          cargo install cargo-edit --version ^0.13
-        fi
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-edit
 
     - name: Get current version
       id: current_version
