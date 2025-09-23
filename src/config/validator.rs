@@ -1,6 +1,8 @@
 //! Configuration validation
 
 use super::{Config, ConfigError};
+#[cfg(test)]
+use crate::types::DetectionConfig;
 use crate::types::{DetectionType, FrameworkDetector, ProjectIndicator};
 use anyhow::Result;
 use std::collections::HashSet;
@@ -311,6 +313,7 @@ mod tests {
             },
             display: DisplayConfig::default(),
             cache: CacheConfig::default(),
+            detection: DetectionConfig::default(),
             languages: vec![create_valid_language()],
         };
 
@@ -325,6 +328,7 @@ mod tests {
             },
             display: DisplayConfig::default(),
             cache: CacheConfig::default(),
+            detection: DetectionConfig::default(),
             languages: vec![create_valid_language()],
         };
 
@@ -337,6 +341,7 @@ mod tests {
             meta: ConfigMeta::default(),
             display: DisplayConfig::default(),
             cache: CacheConfig::default(),
+            detection: DetectionConfig::default(),
             languages: vec![],
         };
 
@@ -349,6 +354,7 @@ mod tests {
             meta: ConfigMeta::default(),
             display: DisplayConfig::default(),
             cache: CacheConfig::default(),
+            detection: DetectionConfig::default(),
             languages: vec![
                 create_valid_language(),
                 create_valid_language(), // Same name

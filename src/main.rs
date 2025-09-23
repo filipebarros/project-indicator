@@ -7,7 +7,6 @@ use project_indicator::{
     Result,
 };
 use std::env;
-use std::path::PathBuf;
 use std::time::Instant;
 
 fn main() {
@@ -30,19 +29,28 @@ fn run() -> Result<()> {
 }
 
 fn handle_detect_command(cli: &Cli) -> Result<()> {
-    // Determine the path to analyze
-    let path = cli
-        .path
-        .clone()
-        .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    // Determine the path to analyze with proper error handling
+    let path = if let Some(provided_path) = &cli.path {
+        // Validate that the provided path exists and is accessible
+        if !provided_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Path does not exist: {}",
+                provided_path.display()
+            ));
+        }
+        provided_path.clone()
+    } else {
+        // Fallback to current directory with proper error handling
+        env::current_dir().map_err(|e| anyhow::anyhow!("Cannot access current directory: {}", e))?
+    };
 
     // Load configuration
     let config = Config::load_default()?;
 
-    // Create detection engine
-    let engine = DetectionEngine::new(config.languages);
+    // Create detection engine with configuration
+    let engine = DetectionEngine::with_config(config.languages, config.detection);
 
-    // Run detection
+    // Run detection (root discovery controlled by configuration)
     let result = engine.detect(&path)?;
 
     // Parse output format
@@ -94,10 +102,17 @@ fn handle_config_command(action: ConfigAction) -> Result<()> {
 }
 
 fn handle_debug_command(cli: &Cli, verbose: bool) -> Result<()> {
-    let path = cli
-        .path
-        .clone()
-        .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let path = if let Some(provided_path) = &cli.path {
+        if !provided_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Path does not exist: {}",
+                provided_path.display()
+            ));
+        }
+        provided_path.clone()
+    } else {
+        env::current_dir().map_err(|e| anyhow::anyhow!("Cannot access current directory: {}", e))?
+    };
 
     println!("Debug mode for path: {}", path.display());
 
@@ -113,8 +128,8 @@ fn handle_debug_command(cli: &Cli, verbose: bool) -> Result<()> {
         println!("Frameworks: {}", config.frameworks().len());
     }
 
-    // Create detection engine
-    let engine = DetectionEngine::new(config.languages.clone());
+    // Create detection engine with configuration
+    let engine = DetectionEngine::with_config(config.languages.clone(), config.detection.clone());
 
     // Run detection
     let result = engine.detect(&path)?;
@@ -149,12 +164,19 @@ fn handle_benchmark_command(cli: &Cli) -> Result<()> {
     println!("Performance Benchmark");
     println!("====================");
 
-    let path = cli
-        .path
-        .clone()
-        .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let path = if let Some(provided_path) = &cli.path {
+        if !provided_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Path does not exist: {}",
+                provided_path.display()
+            ));
+        }
+        provided_path.clone()
+    } else {
+        env::current_dir().map_err(|e| anyhow::anyhow!("Cannot access current directory: {}", e))?
+    };
     let config = Config::load_default()?;
-    let engine = DetectionEngine::new(config.languages.clone());
+    let engine = DetectionEngine::with_config(config.languages.clone(), config.detection.clone());
 
     // Create cache for cached benchmarks
     let cache = DetectionCache::new(config.cache.clone());

@@ -5,7 +5,11 @@ use crate::detection::matchers::{
     CargoTomlMatcher, ComposerJsonMatcher, GemfileMatcher, GoModMatcher, PackageJsonMatcher,
     PyProjectTomlMatcher,
 };
-use crate::types::{DetectionResult, DetectionType, FrameworkMatch, ProjectIndicator};
+use crate::detection::root_discovery::RootDiscovery;
+use crate::patterns::{pattern_to_regex, simple_wildcard_match};
+use crate::types::{
+    DetectionConfig, DetectionResult, DetectionType, FrameworkMatch, ProjectIndicator,
+};
 use crate::Result;
 use anyhow::Context;
 use rayon::prelude::*;
@@ -18,6 +22,8 @@ use walkdir::WalkDir;
 /// The main detection engine
 pub struct DetectionEngine {
     languages: Vec<Arc<ProjectIndicator>>,
+    // Root discovery module
+    root_discovery: RootDiscovery,
     // Compiled regex patterns for efficient matching
     pattern_cache: HashMap<String, Regex>,
     // Pre-computed unique patterns to avoid repeated allocation
@@ -27,9 +33,18 @@ pub struct DetectionEngine {
 impl DetectionEngine {
     /// Create a new detection engine with the given language configurations
     pub fn new(languages: Vec<ProjectIndicator>) -> Self {
+        Self::with_config(languages, DetectionConfig::default())
+    }
+
+    /// Create a new detection engine with specific configuration
+    pub fn with_config(
+        languages: Vec<ProjectIndicator>,
+        detection_config: DetectionConfig,
+    ) -> Self {
         let languages: Vec<Arc<ProjectIndicator>> = languages.into_iter().map(Arc::new).collect();
         let mut engine = Self {
             languages,
+            root_discovery: RootDiscovery::new(detection_config),
             pattern_cache: HashMap::new(),
             unique_patterns: Vec::new(),
         };
@@ -52,7 +67,7 @@ impl DetectionEngine {
         // Compile regex patterns for wildcard patterns
         for pattern in &self.unique_patterns {
             if pattern.contains('*') {
-                if let Some(regex_pattern) = Self::pattern_to_regex(pattern) {
+                if let Some(regex_pattern) = pattern_to_regex(pattern) {
                     if let Ok(compiled) = Regex::new(&regex_pattern) {
                         self.pattern_cache.insert(pattern.clone(), compiled);
                     }
@@ -61,21 +76,44 @@ impl DetectionEngine {
         }
     }
 
-    /// Convert a glob pattern to a regex pattern
-    fn pattern_to_regex(pattern: &str) -> Option<String> {
-        if pattern.contains('*') {
-            // Convert glob patterns to regex
-            let escaped = regex::escape(pattern);
-            let regex_pattern = escaped.replace(r"\*", ".*");
-            Some(format!("^{}$", regex_pattern))
-        } else {
-            // For exact matches, we can use simple string comparison (faster)
-            None
-        }
-    }
-
     /// Detect project type in the given path
     pub fn detect(&self, path: &Path) -> Result<DetectionResult> {
+        // Determine if we should attempt root discovery based on configured indicators
+        let should_discover_root = self.root_discovery.is_enabled();
+
+        if should_discover_root {
+            // Strategy 1: Try to find project root and detect from there
+            if let Some(project_root) = self.root_discovery.find_project_root(path) {
+                if project_root != path {
+                    let result = self.detect_from_path(&project_root)?;
+                    if !result.is_empty() {
+                        return Ok(result);
+                    }
+                }
+            }
+        }
+
+        // Strategy 2: Detect from current directory (fallback)
+        let result = self.detect_from_path(path)?;
+        if !result.is_empty() {
+            return Ok(result);
+        }
+
+        // Strategy 3: Try parent directories (limited upward search) as last resort
+        if should_discover_root {
+            for ancestor in path.ancestors().skip(1).take(3) {
+                let result = self.detect_from_path(ancestor)?;
+                if !result.is_empty() {
+                    return Ok(result);
+                }
+            }
+        }
+
+        Ok(DetectionResult::empty())
+    }
+
+    /// Internal method to detect project type from a specific path
+    fn detect_from_path(&self, path: &Path) -> Result<DetectionResult> {
         // Scan for files in the project directory
         let project_files = self
             .scan_project_files(path)
@@ -164,18 +202,21 @@ impl DetectionEngine {
 
                 // If we found a match, add it and check if we should stop
                 if let Some(matched_file) = found_match {
-                    let mut files = matched_files.lock().unwrap();
-                    files.insert(matched_file);
+                    if let Ok(mut files) = matched_files.lock() {
+                        files.insert(matched_file);
 
-                    // Early termination: stop if we have matches for most patterns
-                    // This significantly speeds up scanning in large projects
-                    if files.len() >= patterns.len().min(10) {
-                        should_stop.store(true, Ordering::Relaxed);
+                        // Early termination: stop if we have matches for most patterns
+                        // This significantly speeds up scanning in large projects
+                        if files.len() >= patterns.len().min(10) {
+                            should_stop.store(true, Ordering::Relaxed);
+                        }
                     }
                 }
             });
 
-        let final_files = matched_files.lock().unwrap();
+        let final_files = matched_files
+            .lock()
+            .map_err(|_| anyhow::anyhow!("File scanning mutex poisoned"))?;
         Ok(final_files.iter().cloned().collect())
     }
 
@@ -186,25 +227,10 @@ impl DetectionEngine {
             compiled_pattern.is_match(file_name)
         } else if pattern.contains('*') {
             // Fallback for wildcard patterns not in cache
-            Self::simple_wildcard_match(file_name, pattern)
+            simple_wildcard_match(file_name, pattern)
         } else {
             // Fast path for exact matches (no wildcards)
             file_name == pattern
-        }
-    }
-
-    /// Simple wildcard matching for patterns not in cache
-    fn simple_wildcard_match(file_name: &str, pattern: &str) -> bool {
-        let parts: Vec<&str> = pattern.split('*').collect();
-        if parts.len() == 2 {
-            let prefix = parts[0];
-            let suffix = parts[1];
-            file_name.starts_with(prefix) && file_name.ends_with(suffix)
-        } else {
-            // For more complex patterns, just check if it contains the non-wildcard parts
-            parts
-                .iter()
-                .all(|part| !part.is_empty() && file_name.contains(part))
         }
     }
 
@@ -317,35 +343,43 @@ impl DetectionEngine {
 
         // Process each group once (much more efficient than per-framework)
         if !package_json_frameworks.is_empty() {
-            let frameworks_slice: Vec<_> =
-                package_json_frameworks.iter().cloned().cloned().collect();
+            let frameworks_slice: Vec<_> = package_json_frameworks
+                .iter()
+                .map(|f| (*f).clone())
+                .collect();
             let mut matches = PackageJsonMatcher::detect_frameworks(path, &frameworks_slice)?;
             all_matches.append(&mut matches);
         }
         if !cargo_toml_frameworks.is_empty() {
-            let frameworks_slice: Vec<_> = cargo_toml_frameworks.iter().cloned().cloned().collect();
+            let frameworks_slice: Vec<_> =
+                cargo_toml_frameworks.iter().map(|f| (*f).clone()).collect();
             let mut matches = CargoTomlMatcher::detect_frameworks(path, &frameworks_slice)?;
             all_matches.append(&mut matches);
         }
         if !go_mod_frameworks.is_empty() {
-            let frameworks_slice: Vec<_> = go_mod_frameworks.iter().cloned().cloned().collect();
+            let frameworks_slice: Vec<_> = go_mod_frameworks.iter().map(|f| (*f).clone()).collect();
             let mut matches = GoModMatcher::detect_frameworks(path, &frameworks_slice)?;
             all_matches.append(&mut matches);
         }
         if !pyproject_toml_frameworks.is_empty() {
-            let frameworks_slice: Vec<_> =
-                pyproject_toml_frameworks.iter().cloned().cloned().collect();
+            let frameworks_slice: Vec<_> = pyproject_toml_frameworks
+                .iter()
+                .map(|f| (*f).clone())
+                .collect();
             let mut matches = PyProjectTomlMatcher::detect_frameworks(path, &frameworks_slice)?;
             all_matches.append(&mut matches);
         }
         if !gemspec_frameworks.is_empty() {
-            let frameworks_slice: Vec<_> = gemspec_frameworks.iter().cloned().cloned().collect();
+            let frameworks_slice: Vec<_> =
+                gemspec_frameworks.iter().map(|f| (*f).clone()).collect();
             let mut matches = GemfileMatcher::detect_frameworks(path, &frameworks_slice)?;
             all_matches.append(&mut matches);
         }
         if !composer_json_frameworks.is_empty() {
-            let frameworks_slice: Vec<_> =
-                composer_json_frameworks.iter().cloned().cloned().collect();
+            let frameworks_slice: Vec<_> = composer_json_frameworks
+                .iter()
+                .map(|f| (*f).clone())
+                .collect();
             let mut matches = ComposerJsonMatcher::detect_frameworks(path, &frameworks_slice)?;
             all_matches.append(&mut matches);
         }
@@ -508,6 +542,45 @@ impl DetectionEngine {
 impl CachedDetection for DetectionEngine {
     /// Detect project type with caching support
     fn detect_cached(&self, path: &Path, cache: &DetectionCache) -> Result<DetectionResult> {
+        // Populate cache dynamic relevant set for this run
+        cache.clear_dynamic_relevant();
+        // Language file patterns (use base names when applicable)
+        for lang in &self.languages {
+            for pat in &lang.files {
+                // Only add simple filenames (skip wildcards to avoid explosion)
+                if !pat.contains('*') {
+                    cache.add_dynamic_relevant(pat.clone());
+                }
+            }
+            // Framework config files that are single-file based
+            for fw in &lang.frameworks {
+                match &fw.detection {
+                    DetectionType::PackageJson { .. } => cache.add_dynamic_relevant("package.json"),
+                    DetectionType::CargoToml { .. } => cache.add_dynamic_relevant("Cargo.toml"),
+                    DetectionType::GoMod { .. } => cache.add_dynamic_relevant("go.mod"),
+                    DetectionType::PyProjectToml { .. } => {
+                        cache.add_dynamic_relevant("pyproject.toml")
+                    }
+                    DetectionType::ComposerJson { .. } => {
+                        cache.add_dynamic_relevant("composer.json")
+                    }
+                    DetectionType::GemSpec { .. } => cache.add_dynamic_relevant("Gemfile"),
+                    DetectionType::FileExists { files } => {
+                        for f in files {
+                            cache.add_dynamic_relevant(f.clone());
+                        }
+                    }
+                    DetectionType::ConfigFile { file, .. } => {
+                        cache.add_dynamic_relevant(file.clone())
+                    }
+                }
+            }
+        }
+        // Root indicators
+        for ind in self.root_discovery.root_indicators() {
+            cache.add_dynamic_relevant(ind.pattern.clone());
+        }
+
         // Try to get from cache first
         if let Some(cached_result) = cache.get(path)? {
             return Ok(cached_result);
@@ -648,7 +721,7 @@ mod tests {
         ];
 
         let engine = DetectionEngine::new(languages);
-        let temp_project = create_test_project(&["README.md", "LICENSE"]);
+        let temp_project = create_test_project(&["some_random_file.txt", "another_file.log"]);
 
         let result = engine.detect(temp_project.path()).unwrap();
 
@@ -1011,5 +1084,146 @@ requires = ["poetry"]
         let no_match = engine.check_text_keys(text_content, &["NonExistent".to_string()]);
 
         assert!(no_match.is_none());
+    }
+
+    #[test]
+    fn test_project_root_discovery() {
+        use crate::types::RootIndicator;
+
+        // Create engine with explicit root indicators
+        let detection_config = DetectionConfig {
+            max_upward_traversal: 10,
+            require_vcs_root: false,
+            confidence_threshold: 0.3,
+            root_indicators: vec![
+                RootIndicator {
+                    pattern: "Cargo.toml".to_string(),
+                    weight: 0.9,
+                },
+                RootIndicator {
+                    pattern: "package.json".to_string(),
+                    weight: 0.9,
+                },
+            ],
+        };
+        let engine = DetectionEngine::with_config(vec![], detection_config);
+
+        // Create a nested project structure
+        let temp_project = create_test_project(&["Cargo.toml", "src/main.rs"]);
+        let src_dir = temp_project.path().join("src");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::write(src_dir.join("main.rs"), "fn main() {}").unwrap();
+
+        // Test from src directory - should find project root
+        let root = engine.root_discovery.find_project_root(&src_dir);
+        assert!(root.is_some());
+        // Use canonicalized paths for comparison to handle symlinks
+        let canonical_root = root.unwrap().canonicalize().unwrap();
+        let canonical_project = temp_project.path().canonicalize().unwrap();
+        assert_eq!(canonical_root, canonical_project);
+
+        // Test from project root - should find itself
+        let root = engine.root_discovery.find_project_root(temp_project.path());
+        assert!(root.is_some());
+        let canonical_root = root.unwrap().canonicalize().unwrap();
+        assert_eq!(canonical_root, canonical_project);
+
+        // Test from non-project directory
+        let temp_empty = TempDir::new().unwrap();
+        let root = engine.root_discovery.find_project_root(temp_empty.path());
+        assert!(root.is_none());
+    }
+
+    #[test]
+    fn test_root_confidence_calculation() {
+        use crate::types::RootIndicator;
+
+        // Create engine with explicit root indicators
+        let detection_config = DetectionConfig {
+            max_upward_traversal: 10,
+            require_vcs_root: false,
+            confidence_threshold: 0.3,
+            root_indicators: vec![
+                RootIndicator {
+                    pattern: ".git".to_string(),
+                    weight: 1.0,
+                },
+                RootIndicator {
+                    pattern: "Cargo.toml".to_string(),
+                    weight: 0.9,
+                },
+                RootIndicator {
+                    pattern: "README.md".to_string(),
+                    weight: 0.2,
+                },
+            ],
+        };
+        let engine = DetectionEngine::with_config(vec![], detection_config);
+
+        // Create project with multiple indicators
+        let temp_project = create_test_project(&["Cargo.toml", ".git/config", "README.md"]);
+        fs::create_dir_all(temp_project.path().join(".git")).unwrap();
+        fs::write(temp_project.path().join(".git/config"), "").unwrap();
+        fs::write(temp_project.path().join("README.md"), "# Test Project").unwrap();
+
+        let confidence = engine
+            .root_discovery
+            .calculate_root_confidence(temp_project.path());
+        assert!(confidence >= 1.0); // Should have high confidence due to multiple indicators (capped at 1.0)
+
+        // Test with just .git (highest confidence)
+        let temp_git = TempDir::new().unwrap();
+        fs::create_dir_all(temp_git.path().join(".git")).unwrap();
+        let git_confidence = engine
+            .root_discovery
+            .calculate_root_confidence(temp_git.path());
+        assert_eq!(git_confidence, 1.0);
+
+        // Test with no indicators
+        let temp_empty = TempDir::new().unwrap();
+        let empty_confidence = engine
+            .root_discovery
+            .calculate_root_confidence(temp_empty.path());
+        assert_eq!(empty_confidence, 0.0);
+    }
+
+    #[test]
+    fn test_detection_with_root_discovery() {
+        use crate::types::RootIndicator;
+
+        let rust_lang = create_test_language("Rust", vec!["Cargo.toml"], 1);
+        let detection_config = DetectionConfig {
+            max_upward_traversal: 10,
+            require_vcs_root: false,
+            confidence_threshold: 0.3,
+            root_indicators: vec![RootIndicator {
+                pattern: "Cargo.toml".to_string(),
+                weight: 1.0,
+            }],
+        };
+        let engine = DetectionEngine::with_config(vec![rust_lang.clone()], detection_config);
+
+        // Create a project with nested structure
+        let temp_project = create_test_project(&["Cargo.toml"]);
+        let deep_dir = temp_project.path().join("src/components");
+        fs::create_dir_all(&deep_dir).unwrap();
+
+        // Test detection from deep directory with root discovery enabled (indicators present)
+        let result = engine.detect(&deep_dir).unwrap();
+        assert!(!result.is_empty());
+        assert_eq!(result.language.as_ref().unwrap().name, "Rust");
+
+        // Test detection from deep directory with root discovery effectively disabled (no indicators)
+        let disabled_engine = DetectionEngine::with_config(
+            vec![rust_lang],
+            DetectionConfig {
+                max_upward_traversal: 10,
+                require_vcs_root: false,
+                confidence_threshold: 0.3,
+                root_indicators: vec![],
+            },
+        );
+        let result_disabled = disabled_engine.detect(&deep_dir).unwrap();
+        assert!(result_disabled.is_empty()); // Should not find anything without root discovery
     }
 }

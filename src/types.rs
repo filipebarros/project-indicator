@@ -1,5 +1,6 @@
 //! Core data types for project detection
 
+use crate::patterns::{pattern_to_regex, simple_wildcard_match};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -112,6 +113,28 @@ pub struct ConfigMeta {
     pub version: String,
 }
 
+/// Root indicator for project root detection
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RootIndicator {
+    /// File or directory pattern to look for
+    pub pattern: String,
+    /// Confidence weight (0.0 - 1.0)
+    pub weight: f32,
+}
+
+/// Detection configuration for project root discovery and behavior
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DetectionConfig {
+    /// Maximum number of directories to traverse upward
+    pub max_upward_traversal: usize,
+    /// Require version control system (.git, .hg, .svn) to be present
+    pub require_vcs_root: bool,
+    /// Minimum confidence threshold for considering a directory as project root
+    pub confidence_threshold: f32,
+    /// Custom root indicators in addition to built-in ones
+    pub root_indicators: Vec<RootIndicator>,
+}
+
 impl Default for DisplayConfig {
     fn default() -> Self {
         Self {
@@ -137,6 +160,24 @@ impl Default for ConfigMeta {
         Self {
             version: "2.0".to_string(),
         }
+    }
+}
+
+impl Default for DetectionConfig {
+    fn default() -> Self {
+        Self {
+            max_upward_traversal: 10,
+            require_vcs_root: false,
+            confidence_threshold: 0.3,
+            root_indicators: vec![], // No default indicators - must be explicitly defined
+        }
+    }
+}
+
+impl DetectionConfig {
+    /// Get all root indicators from configuration
+    pub fn all_root_indicators(&self) -> Vec<&RootIndicator> {
+        self.root_indicators.iter().collect()
     }
 }
 
@@ -208,16 +249,21 @@ impl FrameworkMatch {
 impl ProjectIndicator {
     /// Check if this language matches any of the given file patterns
     pub fn matches_files(&self, files: &[String]) -> bool {
-        self.files.iter().any(|pattern| {
-            files.iter().any(|file| {
-                // Simple pattern matching - could be enhanced with glob patterns later
-                if pattern.contains('*') {
-                    // Basic wildcard support
-                    let prefix = pattern.split('*').next().unwrap_or("");
-                    let suffix = pattern.split('*').next_back().unwrap_or("");
-                    file.starts_with(prefix) && file.ends_with(suffix)
+        // Compile wildcard patterns once for efficiency
+        let mut compiled: Vec<(Option<regex::Regex>, &str)> = Vec::new();
+        for pattern in &self.files {
+            let regex_opt = pattern_to_regex(pattern).and_then(|s| regex::Regex::new(&s).ok());
+            compiled.push((regex_opt, pattern.as_str()));
+        }
+
+        files.iter().any(|file| {
+            compiled.iter().any(|(re_opt, pat)| {
+                if let Some(re) = re_opt {
+                    re.is_match(file)
+                } else if pat.contains('*') {
+                    simple_wildcard_match(file, pat)
                 } else {
-                    file == pattern
+                    file == pat
                 }
             })
         })

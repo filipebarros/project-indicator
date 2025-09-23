@@ -11,6 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Cache key consisting of path and relevant file modification times
@@ -40,7 +41,9 @@ pub struct DetectionCache {
     /// Cache configuration
     config: CacheConfig,
     /// Statistics
-    stats: CacheStats,
+    stats: Mutex<CacheStats>,
+    /// Additional dynamically supplied relevant paths (filenames or relative paths)
+    dynamic_relevant: DashMap<PathBuf, ()>,
 }
 
 /// Cache performance statistics
@@ -58,28 +61,70 @@ impl DetectionCache {
         Self {
             cache: DashMap::new(),
             config,
-            stats: CacheStats::default(),
+            stats: Mutex::new(CacheStats::default()),
+            dynamic_relevant: DashMap::new(),
         }
     }
 
     /// Get a cached result if it exists and is still valid
     pub fn get(&self, path: &Path) -> Result<Option<DetectionResult>> {
-        // Calculate current file hash
-        let current_key = self.calculate_cache_key(path)?;
+        let path_buf = path.to_path_buf();
 
-        if let Some(entry) = self.cache.get(&current_key) {
-            // Check if entry is still valid (TTL check)
-            if self.is_entry_valid(&entry, &current_key)? {
-                // Note: In a real implementation, we'd use atomic counters for stats
+        // Find entry and determine what to do with it
+        let mut found_key: Option<CacheKey> = None;
+        let mut result: Option<DetectionResult> = None;
+        let mut should_remove = false;
 
-                return Ok(Some(entry.result.clone()));
-            } else {
-                // Entry is stale, remove it
-                drop(entry); // Release the read lock
-                self.cache.remove(&current_key);
+        // Look for any entry with this path and do fast TTL check
+        for entry_ref in self.cache.iter() {
+            let (key, entry) = entry_ref.pair();
+            if key.path == path_buf {
+                found_key = Some(key.clone());
+
+                // Fast TTL check first (no filesystem operations)
+                if let Ok(age) = entry.created_at.elapsed() {
+                    if age > Duration::from_secs(self.config.ttl_seconds) {
+                        // Entry is too old
+                        should_remove = true;
+                        break;
+                    }
+                }
+
+                // TTL is still valid, now do expensive file validation
+                let current_key = self.calculate_cache_key(path)?;
+                if key.file_hash == current_key.file_hash {
+                    // Files haven't changed, cache hit
+                    result = Some(entry.result.clone());
+                    break;
+                } else {
+                    // Files changed, entry is stale
+                    should_remove = true;
+                    break;
+                }
             }
         }
 
+        // Handle the result
+        if let Some(key) = found_key {
+            if should_remove {
+                self.cache.remove(&key);
+                if let Ok(mut stats) = self.stats.lock() {
+                    stats.invalidations = stats.invalidations.saturating_add(1);
+                    stats.misses = stats.misses.saturating_add(1);
+                }
+                return Ok(None);
+            } else if let Some(res) = result {
+                if let Ok(mut stats) = self.stats.lock() {
+                    stats.hits = stats.hits.saturating_add(1);
+                }
+                return Ok(Some(res));
+            }
+        }
+
+        // No entry found for this path
+        if let Ok(mut stats) = self.stats.lock() {
+            stats.misses = stats.misses.saturating_add(1);
+        }
         Ok(None)
     }
 
@@ -142,18 +187,17 @@ impl DetectionCache {
             }
         }
 
-        // Also check for common config directories that might affect detection
-        let config_dirs = [
-            ".vscode",
-            ".idea",
-            "node_modules/.bin", // Check if dependencies changed
-        ];
+        // Check only critical config directories that directly affect detection
+        // Removed .vscode, .idea, node_modules/.bin as they rarely invalidate detection results
+        // and cause significant filesystem overhead in cache operations
 
-        for dir_name in &config_dirs {
-            let dir_path = path.join(dir_name);
-            if let Ok(metadata) = fs::metadata(&dir_path) {
+        // Include dynamic relevant paths (relative to base path)
+        for key in self.dynamic_relevant.iter() {
+            let rel = key.key();
+            let p = path.join(rel);
+            if let Ok(metadata) = fs::metadata(&p) {
                 if let Ok(modified) = metadata.modified() {
-                    file_times.insert(dir_path, modified);
+                    file_times.insert(p, modified);
                 }
             }
         }
@@ -184,45 +228,6 @@ impl DetectionCache {
         hasher.finish()
     }
 
-    /// Check if a cache entry is still valid
-    fn is_entry_valid(&self, entry: &CacheEntry, current_key: &CacheKey) -> Result<bool> {
-        // Check TTL
-        if let Ok(age) = entry.created_at.elapsed() {
-            if age > Duration::from_secs(self.config.ttl_seconds) {
-                return Ok(false);
-            }
-        }
-
-        // Check if any tracked files have been modified
-        let current_file_times = self.get_relevant_file_times(&current_key.path)?;
-
-        // If the number of files changed, cache is invalid
-        if current_file_times.len() != entry.file_times.len() {
-            return Ok(false);
-        }
-
-        // Check each file's modification time
-        for (path, current_time) in &current_file_times {
-            if let Some(cached_time) = entry.file_times.get(path) {
-                if current_time != cached_time {
-                    return Ok(false);
-                }
-            } else {
-                // New file appeared
-                return Ok(false);
-            }
-        }
-
-        // Check for deleted files
-        for path in entry.file_times.keys() {
-            if !current_file_times.contains_key(path) {
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
-    }
-
     /// Remove oldest cache entries when cache is full
     fn evict_oldest_entries(&self) {
         let target_size = (self.config.max_entries as f32 * 0.8) as usize;
@@ -241,6 +246,11 @@ impl DetectionCache {
         for (key, _) in entries_to_remove.into_iter().take(to_remove) {
             self.cache.remove(&key);
         }
+        if to_remove > 0 {
+            if let Ok(mut stats) = self.stats.lock() {
+                stats.invalidations = stats.invalidations.saturating_add(to_remove as u64);
+            }
+        }
     }
 
     /// Clear all cache entries
@@ -250,11 +260,20 @@ impl DetectionCache {
 
     /// Get cache statistics
     pub fn stats(&self) -> CacheStats {
-        CacheStats {
-            hits: self.stats.hits,
-            misses: self.stats.misses,
-            invalidations: self.stats.invalidations,
-            entries: self.cache.len(),
+        if let Ok(stats) = self.stats.lock() {
+            CacheStats {
+                hits: stats.hits,
+                misses: stats.misses,
+                invalidations: stats.invalidations,
+                entries: self.cache.len(),
+            }
+        } else {
+            CacheStats {
+                hits: 0,
+                misses: 0,
+                invalidations: 0,
+                entries: self.cache.len(),
+            }
         }
     }
 
@@ -288,7 +307,24 @@ impl DetectionCache {
             }
         }
 
+        if removed > 0 {
+            if let Ok(mut stats) = self.stats.lock() {
+                stats.invalidations = stats.invalidations.saturating_add(removed as u64);
+            }
+        }
+
         removed
+    }
+
+    /// Add a dynamically relevant file or directory (relative path) to monitor
+    pub fn add_dynamic_relevant<P: Into<PathBuf>>(&self, relative: P) {
+        let p: PathBuf = relative.into();
+        self.dynamic_relevant.insert(p, ());
+    }
+
+    /// Clear all dynamically relevant paths
+    pub fn clear_dynamic_relevant(&self) {
+        self.dynamic_relevant.clear();
     }
 }
 

@@ -7,6 +7,7 @@ pub mod cli;
 pub mod config;
 pub mod detection;
 pub mod output;
+pub mod patterns;
 pub mod types;
 
 // Re-export main types for convenience
