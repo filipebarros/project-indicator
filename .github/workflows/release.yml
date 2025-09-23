@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build release for (e.g., v1.0.0)'
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -66,7 +72,11 @@ jobs:
       id: release
       shell: bash
       run: |
-        TAG_NAME=${GITHUB_REF#refs/tags/}
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          TAG_NAME="${{ github.event.inputs.tag }}"
+        else
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+        fi
         echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
         echo "Tag name: $TAG_NAME"
 
