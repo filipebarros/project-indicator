@@ -16,6 +16,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: read
+      actions: write
 
     steps:
     - name: Checkout code
@@ -148,18 +149,27 @@ jobs:
 
     - name: Trigger Release Workflow
       if: steps.detect_bump.outputs.bump_type != 'none'
-      run: |
-        TAG="v${{ steps.bump_version.outputs.new_version }}"
-        echo "Triggering release workflow for $TAG"
-        gh workflow run release.yml --field tag="$TAG"
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: actions/github-script@v8
+      with:
+        script: |
+          const tag = "v${{ steps.bump_version.outputs.new_version }}";
+          console.log(`Triggering release workflow for ${tag}`);
+
+          await github.rest.repos.createDispatchEvent({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            event_type: 'release-created',
+            client_payload: {
+              tag: tag
+            }
+          });
 
     - name: Summary
       if: steps.detect_bump.outputs.bump_type != 'none'
       run: |
         echo "🎉 Successfully created release v${{ steps.bump_version.outputs.new_version }}"
-        echo "Triggered release workflow to build and upload binaries."
+        echo "🚀 Triggered release workflow via repository dispatch."
+        echo "Binaries will be built and uploaded automatically."
 
     - name: No release needed
       if: steps.detect_bump.outputs.bump_type == 'none'
