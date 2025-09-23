@@ -303,6 +303,42 @@ priority = 1
 - `ComposerJson` - PHP Composer dependencies
 - `FileExists` - File/directory existence
 
+### Project Root Detection
+
+Configure how project roots are detected when working in subdirectories:
+
+```toml
+[detection]
+# Maximum number of directories to traverse upward when looking for project root
+max_upward_traversal = 10
+
+# Require a version control system root (e.g., .git) to be considered a project root
+require_vcs_root = false
+
+# Minimum confidence threshold (0.0 - 1.0) to accept a path as project root
+confidence_threshold = 0.3
+
+# Root indicators for project root detection
+# If no indicators are defined, root discovery is disabled
+[[detection.root_indicators]]
+pattern = ".git"             # Version control
+weight = 1.0
+
+[[detection.root_indicators]]
+pattern = "Cargo.toml"       # Rust projects
+weight = 0.9
+
+[[detection.root_indicators]]
+pattern = "package.json"     # Node.js projects
+weight = 0.9
+
+[[detection.root_indicators]]
+pattern = "workspace.json"   # Nx/monorepo workspace file
+weight = 0.8
+```
+
+**Note**: Root discovery only works if you explicitly define `root_indicators` in your configuration. There are no built-in defaults - you must specify which files/directories should be considered project root indicators.
+
 ### Output Formats
 
 - `default` - Human-readable with icons and colors

@@ -53,6 +53,7 @@ fn test_config_serialization() {
         meta: ConfigMeta::default(),
         display: DisplayConfig::default(),
         cache: CacheConfig::default(),
+        detection: DetectionConfig::default(),
         languages: vec![language],
     };
 

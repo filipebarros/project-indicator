@@ -15,14 +15,6 @@ pub struct Cli {
     #[arg(long, default_value = "simple")]
     pub format: String,
 
-    /// Show only frameworks, not languages
-    #[arg(long)]
-    pub frameworks_only: bool,
-
-    /// Force detection of a specific language
-    #[arg(long)]
-    pub language: Option<String>,
-
     /// Subcommands
     #[command(subcommand)]
     pub command: Option<Commands>,

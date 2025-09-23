@@ -14,6 +14,105 @@ enabled = true
 max_entries = 1000
 ttl_seconds = 300  # Cache results for 5 minutes
 
+# Project root detection configuration
+[detection]
+# Maximum number of directories to traverse upward when looking for project root
+max_upward_traversal = 10
+
+# Require version control system (.git, .hg, .svn) to be present for root detection
+require_vcs_root = false
+
+# Minimum confidence threshold (0.0-1.0) to consider a directory as project root
+confidence_threshold = 0.3
+
+# Root indicators for project root detection
+# If no indicators are defined, root discovery is disabled
+# Define indicators you want to use for detecting project roots
+
+# Version control indicators (highest confidence)
+[[detection.root_indicators]]
+pattern = ".git"
+weight = 1.0
+
+[[detection.root_indicators]]
+pattern = ".hg"
+weight = 1.0
+
+[[detection.root_indicators]]
+pattern = ".svn"
+weight = 0.9
+
+# Project files (high confidence)
+[[detection.root_indicators]]
+pattern = "Cargo.toml"
+weight = 0.9
+
+[[detection.root_indicators]]
+pattern = "package.json"
+weight = 0.9
+
+[[detection.root_indicators]]
+pattern = "pyproject.toml"
+weight = 0.9
+
+[[detection.root_indicators]]
+pattern = "go.mod"
+weight = 0.9
+
+[[detection.root_indicators]]
+pattern = "Gemfile"
+weight = 0.8
+
+[[detection.root_indicators]]
+pattern = "composer.json"
+weight = 0.8
+
+[[detection.root_indicators]]
+pattern = "pom.xml"
+weight = 0.8
+
+[[detection.root_indicators]]
+pattern = "build.gradle"
+weight = 0.8
+
+[[detection.root_indicators]]
+pattern = "CMakeLists.txt"
+weight = 0.7
+
+[[detection.root_indicators]]
+pattern = "Makefile"
+weight = 0.6
+
+# Project metadata (medium confidence)
+[[detection.root_indicators]]
+pattern = ".gitignore"
+weight = 0.3
+
+[[detection.root_indicators]]
+pattern = "README.md"
+weight = 0.2
+
+[[detection.root_indicators]]
+pattern = "LICENSE"
+weight = 0.2
+
+[[detection.root_indicators]]
+pattern = ".env"
+weight = 0.1
+
+# Custom indicators for specific workflows
+[[detection.root_indicators]]
+pattern = "workspace.json" # Nx/monorepo workspace file
+weight = 0.8
+
+[[detection.root_indicators]]
+pattern = "lerna.json" # Lerna monorepo file
+weight = 0.8
+
+[[detection.root_indicators]]
+pattern = "rush.json" # Rush monorepo file
+weight = 0.8
+
 # Language definitions with framework detection
 [[languages]]
 name = "TypeScript"

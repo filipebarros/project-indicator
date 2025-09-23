@@ -9,8 +9,6 @@ fn test_cli_parsing_basic() {
 
     assert_eq!(cli.path, None);
     assert_eq!(cli.format, "simple");
-    assert!(!cli.frameworks_only);
-    assert_eq!(cli.language, None);
     assert!(cli.command.is_none());
 }
 
@@ -26,20 +24,6 @@ fn test_cli_parsing_with_format() {
     let cli = Cli::try_parse_from(["project-indicator", "--format", "json"]).unwrap();
 
     assert_eq!(cli.format, "json");
-}
-
-#[test]
-fn test_cli_parsing_frameworks_only() {
-    let cli = Cli::try_parse_from(["project-indicator", "--frameworks-only"]).unwrap();
-
-    assert!(cli.frameworks_only);
-}
-
-#[test]
-fn test_cli_parsing_force_language() {
-    let cli = Cli::try_parse_from(["project-indicator", "--language", "rust"]).unwrap();
-
-    assert_eq!(cli.language, Some("rust".to_string()));
 }
 
 #[test]

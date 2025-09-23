@@ -6,7 +6,7 @@ mod validator;
 pub use self::parser::{ConfigError, ConfigParser};
 pub use self::validator::validate_config;
 
-use crate::types::{CacheConfig, ConfigMeta, DisplayConfig, ProjectIndicator};
+use crate::types::{CacheConfig, ConfigMeta, DetectionConfig, DisplayConfig, ProjectIndicator};
 use serde::{Deserialize, Serialize};
 
 /// Main configuration structure
@@ -21,6 +21,9 @@ pub struct Config {
     /// Cache settings
     #[serde(default)]
     pub cache: CacheConfig,
+    /// Detection settings for project root discovery
+    #[serde(default)]
+    pub detection: DetectionConfig,
     /// Language definitions
     #[serde(rename = "languages")]
     pub languages: Vec<ProjectIndicator>,
