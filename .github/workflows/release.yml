@@ -11,7 +11,7 @@ jobs:
   build-and-upload:
     name: Build and Upload
     permissions:
-      contents: write # Required to upload release assets
+      contents: write
     strategy:
       matrix:
         include:
@@ -99,12 +99,12 @@ jobs:
 
     - name: Create archive (Windows)
       if: runner.os == 'Windows'
-      shell: bash
+      shell: powershell
       run: |
         cd target/${{ matrix.target }}/release
-        7z a ../../../${{ matrix.asset_name }} project-indicator.exe
+        Compress-Archive -Path project-indicator.exe -DestinationPath ../../../${{ matrix.asset_name }}
         cd ../../..
-        ls -la ${{ matrix.asset_name }}
+        ls ${{ matrix.asset_name }}
 
     - name: Upload Release Asset
       uses: actions/github-script@v8
