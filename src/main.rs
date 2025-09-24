@@ -160,10 +160,9 @@ fn handle_debug_command(cli: &Cli, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn handle_benchmark_command(cli: &Cli) -> Result<()> {
-    println!("Performance Benchmark");
-    println!("====================");
-
+fn setup_benchmark(
+    cli: &Cli,
+) -> Result<(std::path::PathBuf, Config, DetectionEngine, DetectionCache)> {
     let path = if let Some(provided_path) = &cli.path {
         if !provided_path.exists() {
             return Err(anyhow::anyhow!(
@@ -175,11 +174,19 @@ fn handle_benchmark_command(cli: &Cli) -> Result<()> {
     } else {
         env::current_dir().map_err(|e| anyhow::anyhow!("Cannot access current directory: {}", e))?
     };
+
     let config = Config::load_default()?;
     let engine = DetectionEngine::with_config(config.languages.clone(), config.detection.clone());
-
-    // Create cache for cached benchmarks
     let cache = DetectionCache::new(config.cache.clone());
+
+    Ok((path, config, engine, cache))
+}
+
+fn handle_benchmark_command(cli: &Cli) -> Result<()> {
+    println!("Performance Benchmark");
+    println!("====================");
+
+    let (path, config, engine, cache) = setup_benchmark(cli)?;
 
     println!("Benchmarking path: {}", path.display());
     println!("Languages configured: {}", config.languages.len());
