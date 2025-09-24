@@ -1,1 +1,9 @@
 /target
+
+# Test output files
+/test_output/
+test.csv
+test.html
+test.json
+test.md
+test.unknown

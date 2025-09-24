@@ -1,7 +1,9 @@
-//! Output formatting for detection results
-
 pub mod formatters;
-pub mod themes;
+pub mod render;
+pub mod rich;
 
-pub use formatters::{OutputFormat, OutputFormatter};
-pub use themes::{ColorTheme, DefaultTheme};
+pub use formatters::{format_result, OutputFormat, OutputFormatter};
+pub use render::{
+    CompactRenderer, DebugRenderer, FullRenderer, JsonRenderer, Render, SimpleRenderer,
+};
+pub use rich::RichFormatter;

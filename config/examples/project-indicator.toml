@@ -1,442 +1,1123 @@
-# Project Indicator Configuration
-# Enhanced configuration with framework detection capabilities
-
 [meta]
 version = "2.0"
 
 [display]
 show_frameworks = true
-max_frameworks = 2
-framework_separator = "+"
+max_frameworks = 5
+framework_separator = " • "
 
 [cache]
 enabled = true
-max_entries = 1000
-ttl_seconds = 300  # Cache results for 5 minutes
+max_entries = 2000
+ttl_seconds = 600
 
-# Project root detection configuration
 [detection]
-# Maximum number of directories to traverse upward when looking for project root
-max_upward_traversal = 10
-
-# Require version control system (.git, .hg, .svn) to be present for root detection
+max_upward_traversal = 4
 require_vcs_root = false
+confidence_threshold = 0.4
+max_depth = 3
+detection_mode = "Thorough"
 
-# Minimum confidence threshold (0.0-1.0) to consider a directory as project root
-confidence_threshold = 0.3
-
-# Root indicators for project root detection
-# If no indicators are defined, root discovery is disabled
-# Define indicators you want to use for detecting project roots
-
-# Version control indicators (highest confidence)
 [[detection.root_indicators]]
 pattern = ".git"
 weight = 1.0
+context = "VersionControl"
 
 [[detection.root_indicators]]
 pattern = ".hg"
 weight = 1.0
+context = "VersionControl"
 
 [[detection.root_indicators]]
 pattern = ".svn"
-weight = 0.9
-
-# Project files (high confidence)
-[[detection.root_indicators]]
-pattern = "Cargo.toml"
-weight = 0.9
-
-[[detection.root_indicators]]
-pattern = "package.json"
-weight = 0.9
-
-[[detection.root_indicators]]
-pattern = "pyproject.toml"
-weight = 0.9
-
-[[detection.root_indicators]]
-pattern = "go.mod"
-weight = 0.9
-
-[[detection.root_indicators]]
-pattern = "Gemfile"
-weight = 0.8
-
-[[detection.root_indicators]]
-pattern = "composer.json"
-weight = 0.8
-
-[[detection.root_indicators]]
-pattern = "pom.xml"
-weight = 0.8
-
-[[detection.root_indicators]]
-pattern = "build.gradle"
-weight = 0.8
-
-[[detection.root_indicators]]
-pattern = "CMakeLists.txt"
-weight = 0.7
-
-[[detection.root_indicators]]
-pattern = "Makefile"
-weight = 0.6
-
-# Project metadata (medium confidence)
-[[detection.root_indicators]]
-pattern = ".gitignore"
-weight = 0.3
-
-[[detection.root_indicators]]
-pattern = "README.md"
-weight = 0.2
-
-[[detection.root_indicators]]
-pattern = "LICENSE"
-weight = 0.2
-
-[[detection.root_indicators]]
-pattern = ".env"
-weight = 0.1
-
-# Custom indicators for specific workflows
-[[detection.root_indicators]]
-pattern = "workspace.json" # Nx/monorepo workspace file
-weight = 0.8
-
-[[detection.root_indicators]]
-pattern = "lerna.json" # Lerna monorepo file
-weight = 0.8
-
-[[detection.root_indicators]]
-pattern = "rush.json" # Rush monorepo file
-weight = 0.8
-
-# Language definitions with framework detection
-[[languages]]
-name = "TypeScript"
-files = ["package.json", "tsconfig.json"]
-color = "#3178C6"
-icon = "󰛦"
-priority = 1
-
-[[languages.frameworks]]
-name = "React"
-detection = { type = "PackageJson", dependencies = ["react"] }
-icon = ""
-color = "#61DAFB"
-priority = 1
-
-[[languages.frameworks]]
-name = "Next.js"
-detection = { type = "PackageJson", dependencies = ["next"] }
-files = ["next.config.js", "next.config.ts"]
-icon = ""
-color = "#000000"
-priority = 1
-
-[[languages.frameworks]]
-name = "Vue"
-detection = { type = "PackageJson", dependencies = ["vue", "@vue/core"] }
-icon = ""
-color = "#4FC08D"
-priority = 1
-
-[[languages.frameworks]]
-name = "Angular"
-detection = { type = "PackageJson", dependencies = ["@angular/core"] }
-icon = ""
-color = "#DD0031"
-priority = 1
-
-[[languages.frameworks]]
-name = "Svelte"
-detection = { type = "PackageJson", dependencies = ["svelte"] }
-icon = ""
-color = "#FF3E00"
-priority = 1
-
-[[languages.frameworks]]
-name = "Astro"
-detection = { type = "PackageJson", dependencies = ["astro"] }
-files = ["astro.config.ts"]
-icon = "󰓏"
-color = "#FF5D01"
-priority = 1
-
-[[languages]]
-name = "JavaScript"
-files = ["package.json"]
-color = "#F0DB4F"
-icon = "󰌞"
-priority = 2
-
-[[languages.frameworks]]
-name = "React"
-detection = { type = "PackageJson", dependencies = ["react"] }
-icon = ""
-color = "#61DAFB"
-priority = 1
-
-[[languages.frameworks]]
-name = "Express"
-detection = { type = "PackageJson", dependencies = ["express"] }
-icon = "󰄛"
-color = "#000000"
-priority = 1
-
-[[languages.frameworks]]
-name = "Fastify"
-detection = { type = "PackageJson", dependencies = ["fastify"] }
-icon = ""
-color = "#000000"
-priority = 1
-
-[[languages.frameworks]]
-name = "Astro"
-detection = { type = "PackageJson", dependencies = ["astro"] }
-files = ["astro.config.js", "astro.config.mjs"]
-icon = "󰓏"
-color = "#FF5D01"
-priority = 1
-
-[[languages]]
-name = "Python"
-files = ["pyproject.toml", "requirements.txt", "setup.py", ".python-version"]
-color = "#3776AB"
-icon = ""
-priority = 1
-
-[[languages.frameworks]]
-name = "Django"
-detection = { type = "PyProjectToml", dependencies = ["django"] }
-files = ["manage.py"]
-icon = ""
-color = "#092E20"
-priority = 1
-
-[[languages.frameworks]]
-name = "Flask"
-detection = { type = "PyProjectToml", dependencies = ["flask"] }
-icon = ""
-color = "#000000"
-priority = 1
-
-[[languages.frameworks]]
-name = "FastAPI"
-detection = { type = "PyProjectToml", dependencies = ["fastapi"] }
-icon = ""
-color = "#009688"
-priority = 1
+weight = 1.0
+context = "VersionControl"
 
 [[languages]]
 name = "Rust"
-files = ["Cargo.toml", "Cargo.lock"]
-color = "#DEA584"
-icon = ""
+files = [
+    "*.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+]
+color = "#dea584"
+icon = ""
+priority = 5
+
+[[languages.frameworks]]
+name = "Actix Web"
+icon = ""
+color = "#ff6b00"
 priority = 1
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "RustEcosystem"
+dependencies = ["actix-web"]
 
 [[languages.frameworks]]
 name = "Rocket"
-detection = { type = "CargoToml", dependencies = ["rocket"] }
-icon = ""
-color = "#D33847"
-priority = 1
+icon = ""
+color = "#d33847"
+priority = 2
+files = []
 
-[[languages.frameworks]]
-name = "Actix"
-detection = { type = "CargoToml", dependencies = ["actix-web"] }
-icon = "󰠳"
-color = "#88C999"
-priority = 1
+[languages.frameworks.detection]
+type = "RustEcosystem"
+dependencies = ["rocket"]
+
+[[languages.frameworks.root_indicators]]
+pattern = "Rocket.toml"
+weight = 0.9
+context = "FrameworkRoot"
 
 [[languages.frameworks]]
 name = "Axum"
-detection = { type = "CargoToml", dependencies = ["axum"] }
 icon = "󰣈"
-color = "#b7410e"
+color = "#4a90e2"
+priority = 3
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "RustEcosystem"
+dependencies = ["axum"]
+
+[[languages.frameworks]]
+name = "Warp"
+icon = ""
+color = "#00a8ff"
+priority = 4
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "RustEcosystem"
+dependencies = ["warp"]
+
+[[languages.root_indicators]]
+pattern = "Cargo.toml"
+weight = 0.95
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "Cargo.lock"
+weight = 0.8
+context = "LanguageRoot"
+
+[[languages]]
+name = "JavaScript"
+files = [
+    "*.js",
+    "*.mjs",
+    "*.cjs",
+    "package.json",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+]
+color = "#f7df1e"
+icon = ""
+priority = 6
+
+[[languages.frameworks]]
+name = "React"
+icon = ""
+color = "#61dafb"
 priority = 1
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "NodeEcosystem"
+dependencies = ["react"]
+
+[[languages.frameworks]]
+name = "Vue"
+icon = ""
+color = "#4fc08d"
+priority = 2
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "NodeEcosystem"
+dependencies = ["vue"]
+
+[[languages.frameworks]]
+name = "Angular"
+icon = ""
+color = "#dd0031"
+priority = 2
+files = []
+
+[languages.frameworks.detection]
+type = "NodeEcosystem"
+dependencies = ["@angular/core"]
+
+[[languages.frameworks.root_indicators]]
+pattern = "angular.json"
+weight = 0.9
+context = "FrameworkRoot"
+
+[[languages.frameworks]]
+name = "Next.js"
+icon = ""
+color = "#000000"
+priority = 3
+files = [
+    "next.config.js",
+    "next.config.mjs",
+]
+
+[languages.frameworks.detection]
+type = "NodeEcosystem"
+dependencies = ["next"]
+
+[[languages.frameworks.root_indicators]]
+pattern = "next.config.js"
+weight = 0.9
+context = "FrameworkRoot"
+
+[[languages.root_indicators]]
+pattern = "package.json"
+weight = 0.95
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "package-lock.json"
+weight = 0.8
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "yarn.lock"
+weight = 0.8
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "pnpm-lock.yaml"
+weight = 0.8
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "node_modules"
+weight = 0.6
+context = "LanguageRoot"
+
+[[languages]]
+name = "TypeScript"
+files = [
+    "*.ts",
+    "*.tsx",
+    "*.mts",
+    "*.cts",
+    "tsconfig.json",
+    "package.json",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+]
+color = "#3178c6"
+icon = ""
+priority = 6
+
+[[languages.frameworks]]
+name = "React"
+icon = ""
+color = "#61dafb"
+priority = 1
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "NodeEcosystem"
+dependencies = [
+    "react",
+    "@types/react",
+]
+
+[[languages.frameworks]]
+name = "Angular"
+icon = ""
+color = "#dd0031"
+priority = 2
+files = []
+
+[languages.frameworks.detection]
+type = "NodeEcosystem"
+dependencies = ["@angular/core"]
+
+[[languages.frameworks.root_indicators]]
+pattern = "angular.json"
+weight = 0.9
+context = "FrameworkRoot"
+
+[[languages.frameworks]]
+name = "Next.js"
+icon = ""
+color = "#000000"
+priority = 3
+files = [
+    "next.config.js",
+    "next.config.ts",
+]
+
+[languages.frameworks.detection]
+type = "NodeEcosystem"
+dependencies = ["next"]
+
+[[languages.frameworks.root_indicators]]
+pattern = "next.config.ts"
+weight = 0.9
+context = "FrameworkRoot"
+
+[[languages.frameworks]]
+name = "NestJS"
+icon = ""
+color = "#e0234e"
+priority = 4
+files = ["nest-cli.json"]
+
+[languages.frameworks.detection]
+type = "NodeEcosystem"
+dependencies = ["@nestjs/core"]
+
+[[languages.frameworks.root_indicators]]
+pattern = "nest-cli.json"
+weight = 0.9
+context = "FrameworkRoot"
+
+[[languages.root_indicators]]
+pattern = "tsconfig.json"
+weight = 0.95
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "package.json"
+weight = 0.9
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "package-lock.json"
+weight = 0.8
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "yarn.lock"
+weight = 0.8
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "pnpm-lock.yaml"
+weight = 0.8
+context = "LanguageRoot"
+
+[[languages]]
+name = "Python"
+files = [
+    "*.py",
+    "*.pyw",
+    "*.pyi",
+    "requirements.txt",
+    "pyproject.toml",
+    "setup.py",
+    "Pipfile",
+    "poetry.lock",
+]
+color = "#3776ab"
+icon = ""
+priority = 8
+
+[[languages.frameworks]]
+name = "Django"
+icon = ""
+color = "#092e20"
+priority = 1
+files = []
+
+[languages.frameworks.detection]
+type = "PythonEcosystem"
+dependencies = ["django"]
+
+[[languages.frameworks.root_indicators]]
+pattern = "manage.py"
+weight = 0.9
+context = "FrameworkRoot"
+
+[[languages.frameworks]]
+name = "Flask"
+icon = ""
+color = "#000000"
+priority = 2
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "PythonEcosystem"
+dependencies = ["flask"]
+
+[[languages.frameworks]]
+name = "FastAPI"
+icon = ""
+color = "#009688"
+priority = 3
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "PythonEcosystem"
+dependencies = ["fastapi"]
+
+[[languages.root_indicators]]
+pattern = "pyproject.toml"
+weight = 0.95
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "requirements.txt"
+weight = 0.9
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "setup.py"
+weight = 0.85
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "Pipfile"
+weight = 0.9
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "poetry.lock"
+weight = 0.8
+context = "LanguageRoot"
 
 [[languages]]
 name = "Go"
-files = ["go.mod", "go.sum"]
-color = "#01ADD8"
-icon = ""
-priority = 1
+files = [
+    "*.go",
+    "go.mod",
+    "go.sum",
+]
+color = "#00add8"
+icon = ""
+priority = 7
 
 [[languages.frameworks]]
 name = "Gin"
-detection = { type = "GoMod", modules = ["github.com/gin-gonic/gin"] }
 icon = ""
-color = "#00ADD8"
+color = "#00add8"
 priority = 1
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "GoEcosystem"
+modules = ["github.com/gin-gonic/gin"]
 
 [[languages.frameworks]]
 name = "Echo"
-detection = { type = "GoMod", modules = ["github.com/labstack/echo"] }
-icon = "󰆧"
-color = "#00ADD8"
-priority = 1
+icon = ""
+color = "#00add8"
+priority = 2
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "GoEcosystem"
+modules = ["github.com/labstack/echo"]
 
 [[languages.frameworks]]
 name = "Fiber"
-detection = { type = "GoMod", modules = ["github.com/gofiber/fiber"] }
-icon = "󱤑"
-color = "#00ADD8"
-priority = 1
+icon = "󰞈"
+color = "#00add8"
+priority = 3
+files = []
+root_indicators = []
 
-[[languages]]
-name = "Ruby"
-files = ["Gemfile", "*.gemspec"]
-color = "#D51F06"
-icon = ""
-priority = 1
+[languages.frameworks.detection]
+type = "GoEcosystem"
+modules = ["github.com/gofiber/fiber"]
 
 [[languages.frameworks]]
-name = "Rails"
-detection = { type = "GemSpec", gems = ["rails"] }
-files = ["config/application.rb"]
-icon = ""
-color = "#CC0000"
-priority = 1
+name = "Gorilla Mux"
+icon = "󰬎"
+color = "#00add8"
+priority = 4
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "GoEcosystem"
+modules = ["github.com/gorilla/mux"]
 
 [[languages.frameworks]]
-name = "Sinatra"
-detection = { type = "GemSpec", gems = ["sinatra"] }
-icon = "󰮤"
-color = "#000000"
-priority = 1
+name = "Beego"
+icon = "󰾡"
+color = "#00add8"
+priority = 5
+files = []
+root_indicators = []
 
-[[languages.frameworks]]
-name = "Jekyll"
-detection = { type = "GemSpec", gems = ["jekyll"] }
-icon = ""
-color = "#CC0000"
-priority = 1
+[languages.frameworks.detection]
+type = "GoEcosystem"
+modules = ["github.com/beego/beego"]
 
-[[languages]]
-name = "PHP"
-files = ["composer.json"]
-color = "#777BB4"
-icon = ""
-priority = 1
+[[languages.root_indicators]]
+pattern = "go.mod"
+weight = 0.9
+context = "LanguageRoot"
 
-[[languages.frameworks]]
-name = "Laravel"
-detection = { type = "ComposerJson", packages = ["laravel/framework"] }
-icon = ""
-color = "#FF2D20"
-priority = 1
-
-[[languages.frameworks]]
-name = "Symfony"
-detection = { type = "ComposerJson", packages = ["symfony/framework-bundle"] }
-icon = ""
-color = "#000000"
-priority = 1
-
-[[languages.frameworks]]
-name = "CodeIgniter"
-detection = { type = "ComposerJson", packages = ["codeigniter4/framework"] }
-icon = ""
-color = "#EF4223"
-priority = 1
+[[languages.root_indicators]]
+pattern = "go.sum"
+weight = 0.7
+context = "LanguageRoot"
 
 [[languages]]
 name = "Java"
-files = ["*.java", "pom.xml", "build.gradle"]
-color = "#ED8B00"
-icon = "󰬷"
-priority = 1
+files = [
+    "*.java",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+]
+color = "#ed8b00"
+icon = ""
+priority = 11
 
 [[languages.frameworks]]
-name = "Spring"
-detection = { type = "FileExists", files = ["pom.xml"] }
+name = "Spring Boot"
 icon = ""
-color = "#6DB33F"
+color = "#6db33f"
 priority = 1
+files = []
 
-[[languages]]
-name = "Swift"
-files = ["*.swift", "Package.swift"]
-color = "#FA7343"
-icon = ""
-priority = 1
+[languages.frameworks.detection]
+type = "JavaEcosystem"
+dependencies = [
+    "spring-boot-starter",
+    "spring-boot-starter-web",
+    "spring-boot-starter-data-jpa",
+    "spring-boot-starter-test",
+]
 
-[[languages]]
-name = "Kotlin"
-files = ["*.kt", "*.kts"]
-color = "#7F52FF"
-icon = ""
-priority = 1
+[[languages.frameworks.root_indicators]]
+pattern = "src/main/resources/application.properties"
+weight = 0.9
+context = "Configuration"
+
+[[languages.frameworks.root_indicators]]
+pattern = "src/main/resources/application.yml"
+weight = 0.9
+context = "Configuration"
+
+[[languages.root_indicators]]
+pattern = "pom.xml"
+weight = 0.95
+context = "BuildSystem"
+
+[[languages.root_indicators]]
+pattern = "build.gradle"
+weight = 0.95
+context = "BuildSystem"
+
+[[languages.root_indicators]]
+pattern = "build.gradle.kts"
+weight = 0.95
+context = "BuildSystem"
+
+[[languages.root_indicators]]
+pattern = "settings.gradle"
+weight = 0.8
+context = "BuildSystem"
 
 [[languages]]
 name = "C#"
-files = ["*.csproj", "*.sln"]
-color = "#5C2D91"
-icon = ""
-priority = 1
-
-[[languages]]
-name = "Scala"
-files = ["build.sbt", "build.sc"]
-color = "#DE3423"
-icon = ""
-priority = 1
-
-[[languages]]
-name = "Elixir"
-files = ["mix.exs"]
-color = "#6E4A7E"
-icon = ""
-priority = 1
+files = [
+    "*.cs",
+    "*.csproj",
+    "*.sln",
+    "Program.cs",
+]
+color = "#239120"
+icon = ""
+priority = 10
 
 [[languages.frameworks]]
-name = "Phoenix"
-detection = { type = "FileExists", files = ["lib/*_web"] }
-icon = ""
-color = "#FD4F00"
+name = "ASP.NET Core"
+icon = ""
+color = "#512bd4"
 priority = 1
+files = []
+root_indicators = []
 
-[[languages]]
-name = "Dart"
-files = ["pubspec.yaml"]
-color = "#0175C2"
-icon = ""
-priority = 1
+[languages.frameworks.detection]
+type = "DotNetEcosystem"
+packages = [
+    "Microsoft.AspNetCore",
+    "Microsoft.AspNetCore.App",
+    "Microsoft.AspNetCore.Mvc",
+]
 
 [[languages.frameworks]]
-name = "Flutter"
-detection = { type = "ConfigFile", file = "pubspec.yaml", keys = ["flutter"] }
-icon = ""
-color = "#02569B"
-priority = 1
+name = "Xamarin"
+icon = ""
+color = "#3498db"
+priority = 3
+files = []
 
-[[languages]]
-name = "C"
-files = ["CMakeLists.txt", "Makefile"]
-color = "#004482"
-icon = ""
-priority = 2
+[languages.frameworks.detection]
+type = "DotNetEcosystem"
+packages = [
+    "Xamarin.Forms",
+    "Xamarin.Essentials",
+]
+
+[[languages.frameworks.root_indicators]]
+pattern = "*.xaml"
+weight = 0.9
+context = "FrameworkRoot"
+
+[[languages.frameworks]]
+name = ".NET MAUI"
+icon = ""
+color = "#512bd4"
+priority = 4
+files = []
+
+[languages.frameworks.detection]
+type = "DotNetEcosystem"
+packages = [
+    "Microsoft.Maui",
+    "Microsoft.Maui.Controls",
+]
+
+[[languages.frameworks.root_indicators]]
+pattern = "Platforms/"
+weight = 0.9
+context = "FrameworkRoot"
+
+[[languages.root_indicators]]
+pattern = "*.csproj"
+weight = 0.95
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "*.sln"
+weight = 0.9
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "Program.cs"
+weight = 0.85
+context = "LanguageRoot"
 
 [[languages]]
 name = "C++"
-files = ["*.cpp", "*.cc", "*.cxx"]
-color = "#00599C"
-icon = ""
-priority = 2
+files = [
+    "*.cpp",
+    "*.cxx",
+    "*.cc",
+    "*.c",
+    "*.h",
+    "*.hpp",
+    "*.hxx",
+    "CMakeLists.txt",
+    "Makefile",
+    "*.vcxproj",
+]
+color = "#00599c"
+icon = ""
+priority = 9
+
+[[languages.frameworks]]
+name = "Qt"
+icon = ""
+color = "#41cd52"
+priority = 1
+files = []
+
+[languages.frameworks.detection]
+type = "FileExists"
+files = [
+    "*.pro",
+    "*.pri",
+]
+
+[[languages.frameworks.root_indicators]]
+pattern = "*.pro"
+weight = 0.9
+context = "BuildSystem"
+
+[[languages.root_indicators]]
+pattern = "CMakeLists.txt"
+weight = 0.95
+context = "BuildSystem"
+
+[[languages.root_indicators]]
+pattern = "Makefile"
+weight = 0.9
+context = "BuildSystem"
 
 [[languages]]
-name = "Lua"
-files = ["*.lua"]
-color = "#000080"
-icon = ""
+name = "PHP"
+files = [
+    "*.php",
+    "composer.json",
+    "composer.lock",
+]
+color = "#777bb4"
+icon = ""
+priority = 8
+
+[[languages.frameworks]]
+name = "Laravel"
+icon = ""
+color = "#ff2d20"
 priority = 1
+files = ["artisan"]
+
+[languages.frameworks.detection]
+type = "PHPEcosystem"
+packages = ["laravel/framework"]
+
+[[languages.frameworks.root_indicators]]
+pattern = "artisan"
+weight = 0.9
+context = "FrameworkRoot"
+
+[[languages.frameworks]]
+name = "Symfony"
+icon = ""
+color = "#000000"
+priority = 2
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "PHPEcosystem"
+packages = ["symfony/framework-bundle"]
+
+[[languages.root_indicators]]
+pattern = "composer.json"
+weight = 0.95
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "composer.lock"
+weight = 0.8
+context = "LanguageRoot"
+
+[[languages]]
+name = "Ruby"
+files = [
+    "*.rb",
+    "Gemfile",
+    "Gemfile.lock",
+    "Rakefile",
+]
+color = "#cc342d"
+icon = ""
+priority = 9
+
+[[languages.frameworks]]
+name = "Rails"
+icon = ""
+color = "#cc0000"
+priority = 1
+files = []
+
+[languages.frameworks.detection]
+type = "RubyEcosystem"
+gems = ["rails"]
+
+[[languages.frameworks.root_indicators]]
+pattern = "config/application.rb"
+weight = 0.9
+context = "FrameworkRoot"
+
+[[languages.frameworks.root_indicators]]
+pattern = "config/routes.rb"
+weight = 0.9
+context = "FrameworkRoot"
+
+[[languages.frameworks]]
+name = "Sinatra"
+icon = ""
+color = "#000000"
+priority = 2
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "RubyEcosystem"
+gems = ["sinatra"]
+
+[[languages.root_indicators]]
+pattern = "Gemfile"
+weight = 0.95
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "Gemfile.lock"
+weight = 0.8
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "Rakefile"
+weight = 0.85
+context = "BuildSystem"
+
+[[languages.root_indicators]]
+pattern = "*.gemspec"
+weight = 0.9
+context = "LanguageRoot"
+
+[[languages]]
+name = "Swift"
+files = [
+    "*.swift",
+    "*.xcworkspace",
+]
+color = "#fa7343"
+icon = ""
+priority = 8
+
+[[languages.frameworks]]
+name = "SwiftUI"
+icon = ""
+color = "#fa7343"
+priority = 1
+files = []
+
+[languages.frameworks.detection]
+type = "FileExists"
+files = ["*.xcodeproj"]
+
+[[languages.frameworks.root_indicators]]
+pattern = "*.xcodeproj"
+weight = 0.9
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "Package.swift"
+weight = 0.95
+context = "LanguageRoot"
+
+[[languages]]
+name = "Kotlin"
+files = [
+    "*.kt",
+    "*.kts",
+    "build.gradle.kts",
+]
+color = "#7f52ff"
+icon = ""
+priority = 9
+
+[[languages.frameworks]]
+name = "Android"
+icon = ""
+color = "#3ddc84"
+priority = 1
+files = []
+
+[languages.frameworks.detection]
+type = "FileExists"
+files = ["AndroidManifest.xml"]
+
+[[languages.frameworks.root_indicators]]
+pattern = "AndroidManifest.xml"
+weight = 0.95
+context = "Configuration"
+
+[[languages.root_indicators]]
+pattern = "build.gradle.kts"
+weight = 0.95
+context = "BuildSystem"
+
+[[languages.root_indicators]]
+pattern = "build.gradle"
+weight = 0.9
+context = "BuildSystem"
+
+[[languages]]
+name = "Dart"
+files = [
+    "*.dart",
+    "pubspec.yaml",
+]
+color = "#0175c2"
+icon = ""
+priority = 8
+
+[[languages.frameworks]]
+name = "Flutter"
+icon = ""
+color = "#02569b"
+priority = 1
+files = []
+
+[languages.frameworks.detection]
+type = "DartEcosystem"
+dependencies = [
+    "flutter",
+    "flutter_test",
+    "cupertino_icons",
+]
+
+[[languages.frameworks.root_indicators]]
+pattern = "lib/main.dart"
+weight = 0.9
+context = "FrameworkRoot"
+
+[[languages.frameworks.root_indicators]]
+pattern = "android/"
+weight = 0.8
+context = "FrameworkRoot"
+
+[[languages.frameworks.root_indicators]]
+pattern = "ios/"
+weight = 0.8
+context = "FrameworkRoot"
+
+[[languages.root_indicators]]
+pattern = "pubspec.yaml"
+weight = 0.95
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "pubspec.lock"
+weight = 0.8
+context = "LanguageRoot"
+
+[[languages]]
+name = "Elixir"
+files = [
+    "*.ex",
+    "*.exs",
+    "mix.exs",
+    "mix.lock",
+]
+color = "#6e4a7e"
+icon = ""
+priority = 8
+
+[[languages.frameworks]]
+name = "Phoenix"
+icon = ""
+color = "#ff6600"
+priority = 1
+files = []
+
+[languages.frameworks.detection]
+type = "FileExists"
+files = [
+    "lib/*_web",
+    "assets",
+]
+
+[[languages.frameworks.root_indicators]]
+pattern = "lib/*_web"
+weight = 0.9
+context = "FrameworkRoot"
+
+[[languages.frameworks.root_indicators]]
+pattern = "assets/"
+weight = 0.8
+context = "FrameworkRoot"
+
+[[languages.root_indicators]]
+pattern = "mix.exs"
+weight = 0.95
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "mix.lock"
+weight = 0.8
+context = "LanguageRoot"
 
 [[languages]]
 name = "Zig"
-files = ["build.zig"]
-color = "#F48D01"
+files = ["*.zig"]
+color = "#f7a41d"
 icon = ""
+priority = 8
+frameworks = []
+
+[[languages.root_indicators]]
+pattern = "build.zig"
+weight = 0.95
+context = "BuildSystem"
+
+[[languages.root_indicators]]
+pattern = "build.zig.zon"
+weight = 0.8
+context = "BuildSystem"
+
+[[languages]]
+name = "R"
+files = [
+    "*.r",
+    "*.R",
+    "*.Rmd",
+    "*.Rnw",
+    "DESCRIPTION",
+    "NAMESPACE",
+]
+color = "#276dc3"
+icon = ""
+priority = 8
+
+[[languages.frameworks]]
+name = "Shiny"
+icon = "󰋘"
+color = "#276dc3"
 priority = 1
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "FileExists"
+files = [
+    "app.R",
+    "ui.R",
+    "server.R",
+]
+
+[[languages.root_indicators]]
+pattern = "DESCRIPTION"
+weight = 0.95
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "renv.lock"
+weight = 0.8
+context = "LanguageRoot"
+
+[[languages]]
+name = "Julia"
+files = [
+    "*.jl",
+    "Project.toml",
+    "Manifest.toml",
+]
+color = "#9558b2"
+icon = ""
+priority = 7
+
+[[languages.frameworks]]
+name = "Pluto"
+icon = ""
+color = "#9558b2"
+priority = 1
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "FileExists"
+files = ["*.jl"]
+
+[[languages.root_indicators]]
+pattern = "Project.toml"
+weight = 0.95
+context = "LanguageRoot"
+
+[[languages.root_indicators]]
+pattern = "Manifest.toml"
+weight = 0.8
+context = "LanguageRoot"
+
+[[languages]]
+name = "Scala"
+files = [
+    "*.scala",
+    "build.sbt",
+    "build.sc",
+]
+color = "#dc322f"
+icon = ""
+priority = 6
+
+[[languages.frameworks]]
+name = "Play Framework"
+icon = ""
+color = "#92d13d"
+priority = 1
+files = []
+
+[languages.frameworks.detection]
+type = "ScalaEcosystem"
+dependencies = [
+    "play-server",
+    "play-ws",
+    "play-json",
+]
+
+[[languages.frameworks.root_indicators]]
+pattern = "conf/application.conf"
+weight = 0.9
+context = "Configuration"
+
+[[languages.frameworks.root_indicators]]
+pattern = "conf/routes"
+weight = 0.9
+context = "Configuration"
+
+[[languages.frameworks]]
+name = "Akka HTTP"
+icon = ""
+color = "#0b5394"
+priority = 2
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "ScalaEcosystem"
+dependencies = [
+    "akka-http",
+    "akka-stream",
+    "akka-actor",
+]
+
+[[languages.frameworks]]
+name = "Finagle"
+icon = "󱗆"
+color = "#1da1f2"
+priority = 3
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "ScalaEcosystem"
+dependencies = [
+    "finagle-core",
+    "finagle-http",
+]
+
+[[languages.frameworks]]
+name = "Spark"
+icon = ""
+color = "#e25a1c"
+priority = 4
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "ScalaEcosystem"
+dependencies = [
+    "spark-core",
+    "spark-sql",
+]
+
+[[languages.root_indicators]]
+pattern = "build.sbt"
+weight = 0.95
+context = "BuildSystem"
+
+[[languages.root_indicators]]
+pattern = "project/build.properties"
+weight = 0.8
+context = "BuildSystem"

@@ -1,0 +1,32 @@
+use super::shared::{
+    create_angular_framework, create_nextjs_framework, create_react_framework,
+    create_vue_framework, nerd_icon, node_lockfiles, root_indicator,
+};
+use crate::types::{IndicatorContext, ProjectIndicator};
+
+pub fn create_javascript_language() -> ProjectIndicator {
+    let mut files = vec!["*.js".to_string(), "*.mjs".to_string(), "*.cjs".to_string()];
+    files.extend(node_lockfiles());
+
+    let mut indicators = super::shared::node_lockfile_root_indicators();
+    indicators.push(root_indicator(
+        "node_modules",
+        0.6,
+        IndicatorContext::LanguageRoot,
+    ));
+
+    ProjectIndicator::with_root_indicators(
+        "JavaScript".to_string(),
+        files,
+        "#f7df1e".to_string(),
+        nerd_icon("e74e"),
+        6,
+        vec![
+            create_react_framework(false),
+            create_vue_framework(),
+            create_angular_framework(),
+            create_nextjs_framework(false),
+        ],
+        indicators,
+    )
+}
