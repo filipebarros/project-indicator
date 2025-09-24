@@ -1,46 +1,27 @@
-//! Configuration validation
-
 use super::{Config, ConfigError};
 #[cfg(test)]
 use crate::types::DetectionConfig;
 use crate::types::{DetectionType, FrameworkDetector, ProjectIndicator};
 use anyhow::Result;
 use std::collections::HashSet;
-
-/// Helper to create validation errors with consistent formatting
 fn validation_error(message: impl Into<String>) -> anyhow::Error {
     ConfigError::ValidationError {
         message: message.into(),
     }
     .into()
 }
-
-/// Helper to create simple anyhow errors with consistent formatting
 fn simple_error(message: impl Into<String>) -> anyhow::Error {
     anyhow::anyhow!(message.into())
 }
-
-/// Validate a configuration for correctness and consistency
 pub fn validate_config(config: &Config) -> Result<()> {
-    // Check version compatibility
     validate_version(&config.meta.version)?;
-
-    // Validate display settings
     validate_display_config(config)?;
-
-    // Validate cache settings
     validate_cache_config(config)?;
-
-    // Validate languages
     validate_languages(&config.languages)?;
-
-    // Check for duplicate language names
     validate_unique_language_names(&config.languages)?;
 
     Ok(())
 }
-
-/// Validate configuration version
 fn validate_version(version: &str) -> Result<()> {
     if !version.starts_with("2.") {
         return Err(ConfigError::UnsupportedVersion {
@@ -50,8 +31,6 @@ fn validate_version(version: &str) -> Result<()> {
     }
     Ok(())
 }
-
-/// Validate display configuration
 fn validate_display_config(config: &Config) -> Result<()> {
     if config.display.max_frameworks == 0 {
         return Err(validation_error("max_frameworks must be greater than 0"));
@@ -63,11 +42,8 @@ fn validate_display_config(config: &Config) -> Result<()> {
 
     Ok(())
 }
-
-/// Validate cache configuration
 fn validate_cache_config(config: &Config) -> Result<()> {
     if config.cache.ttl_seconds > 86400 {
-        // 24 hours in seconds
         log::warn!(
             "Cache TTL is very high: {} seconds ({}h)",
             config.cache.ttl_seconds,
@@ -84,8 +60,6 @@ fn validate_cache_config(config: &Config) -> Result<()> {
 
     Ok(())
 }
-
-/// Validate all language configurations
 fn validate_languages(languages: &[ProjectIndicator]) -> Result<()> {
     if languages.is_empty() {
         return Err(ConfigError::ValidationError {
@@ -102,15 +76,11 @@ fn validate_languages(languages: &[ProjectIndicator]) -> Result<()> {
 
     Ok(())
 }
-
-/// Validate a single language configuration
 fn validate_language(language: &ProjectIndicator) -> Result<()> {
-    // Validate name
     if language.name.trim().is_empty() {
         return Err(simple_error("name cannot be empty"));
     }
 
-    // Validate files
     if language.files.is_empty() {
         return Err(simple_error("must have at least one file pattern"));
     }
@@ -121,7 +91,6 @@ fn validate_language(language: &ProjectIndicator) -> Result<()> {
         }
     }
 
-    // Validate color (basic hex color check)
     if !is_valid_hex_color(&language.color) {
         return Err(simple_error(format!(
             "invalid hex color: {}",
@@ -129,57 +98,51 @@ fn validate_language(language: &ProjectIndicator) -> Result<()> {
         )));
     }
 
-    // Validate icon (basic non-empty check)
     if language.icon.trim().is_empty() {
         log::warn!("Language '{}' has empty icon", language.name);
     }
 
-    // Validate priority
     if language.priority == 0 {
         return Err(simple_error("priority must be greater than 0"));
     }
 
-    // Validate frameworks
     validate_frameworks(&language.frameworks)?;
 
     Ok(())
 }
-
-/// Validate framework configurations
 fn validate_frameworks(frameworks: &[FrameworkDetector]) -> Result<()> {
-    let mut names = HashSet::new();
+    use std::collections::HashMap;
+    let mut name_detection_pairs = HashMap::new();
 
     for framework in frameworks {
         validate_framework(framework)?;
 
-        // Check for duplicate framework names
-        if !names.insert(&framework.name) {
+        let key = (
+            framework.name.clone(),
+            std::mem::discriminant(&framework.detection),
+        );
+        if name_detection_pairs.contains_key(&key) {
             return Err(simple_error(format!(
-                "duplicate framework name: {}",
+                "duplicate framework '{}' with same detection type",
                 framework.name
             )));
         }
+        name_detection_pairs.insert(key, ());
     }
 
     Ok(())
 }
-
-/// Validate a single framework configuration
 fn validate_framework(framework: &FrameworkDetector) -> Result<()> {
-    // Validate name
     if framework.name.trim().is_empty() {
         return Err(simple_error("framework name cannot be empty"));
     }
 
-    // Validate priority
     if framework.priority == 0 {
         return Err(simple_error("framework priority must be greater than 0"));
     }
 
-    // Validate detection configuration
     validate_detection_type(&framework.detection)?;
 
-    // Validate color if provided
     if let Some(color) = &framework.color {
         if !is_valid_hex_color(color) {
             return Err(simple_error(format!(
@@ -191,27 +154,40 @@ fn validate_framework(framework: &FrameworkDetector) -> Result<()> {
 
     Ok(())
 }
-
-/// Validate detection type configuration
 fn validate_detection_type(detection: &DetectionType) -> Result<()> {
     match detection {
-        DetectionType::PackageJson { dependencies } => {
-            validate_non_empty_vec(dependencies, "PackageJson dependencies")?;
+        DetectionType::NodeEcosystem { dependencies } => {
+            validate_non_empty_vec(dependencies, "NodeEcosystem dependencies")?;
         }
-        DetectionType::CargoToml { dependencies } => {
-            validate_non_empty_vec(dependencies, "CargoToml dependencies")?;
+        DetectionType::RustEcosystem { dependencies } => {
+            validate_non_empty_vec(dependencies, "RustEcosystem dependencies")?;
         }
-        DetectionType::GoMod { modules } => {
-            validate_non_empty_vec(modules, "GoMod modules")?;
+        DetectionType::GoEcosystem { modules } => {
+            validate_non_empty_vec(modules, "GoEcosystem modules")?;
         }
-        DetectionType::PyProjectToml { dependencies } => {
-            validate_non_empty_vec(dependencies, "PyProjectToml dependencies")?;
+        DetectionType::PythonEcosystem { dependencies } => {
+            validate_non_empty_vec(dependencies, "PythonEcosystem dependencies")?;
         }
-        DetectionType::GemSpec { gems } => {
-            validate_non_empty_vec(gems, "GemSpec gems")?;
+        DetectionType::RubyEcosystem { gems } => {
+            validate_non_empty_vec(gems, "RubyEcosystem gems")?;
         }
-        DetectionType::ComposerJson { packages } => {
-            validate_non_empty_vec(packages, "ComposerJson packages")?;
+        DetectionType::PHPEcosystem { packages } => {
+            validate_non_empty_vec(packages, "PHPEcosystem packages")?;
+        }
+        DetectionType::JavaEcosystem { dependencies } => {
+            validate_non_empty_vec(dependencies, "JavaEcosystem dependencies")?;
+        }
+        DetectionType::DotNetEcosystem { packages } => {
+            validate_non_empty_vec(packages, "DotNetEcosystem packages")?;
+        }
+        DetectionType::ScalaEcosystem { dependencies } => {
+            validate_non_empty_vec(dependencies, "ScalaEcosystem dependencies")?;
+        }
+        DetectionType::DartEcosystem { dependencies } => {
+            validate_non_empty_vec(dependencies, "DartEcosystem dependencies")?;
+        }
+        DetectionType::LuaEcosystem { packages } => {
+            validate_non_empty_vec(packages, "LuaEcosystem packages")?;
         }
         DetectionType::FileExists { files } => {
             validate_non_empty_vec(files, "FileExists files")?;
@@ -226,8 +202,6 @@ fn validate_detection_type(detection: &DetectionType) -> Result<()> {
 
     Ok(())
 }
-
-/// Validate that a vector is not empty and contains no empty strings
 fn validate_non_empty_vec(vec: &[String], context: &str) -> Result<()> {
     if vec.is_empty() {
         return Err(simple_error(format!("{} cannot be empty", context)));
@@ -244,8 +218,6 @@ fn validate_non_empty_vec(vec: &[String], context: &str) -> Result<()> {
 
     Ok(())
 }
-
-/// Validate unique language names (case-insensitive)
 fn validate_unique_language_names(languages: &[ProjectIndicator]) -> Result<()> {
     let mut names = HashSet::new();
 
@@ -261,8 +233,6 @@ fn validate_unique_language_names(languages: &[ProjectIndicator]) -> Result<()> 
 
     Ok(())
 }
-
-/// Check if a string is a valid hex color
 fn is_valid_hex_color(color: &str) -> bool {
     if !color.starts_with('#') {
         return false;
@@ -282,31 +252,32 @@ mod tests {
     use crate::types::{CacheConfig, ConfigMeta, DisplayConfig};
 
     fn create_valid_language() -> ProjectIndicator {
-        ProjectIndicator {
-            name: "Test Language".to_string(),
-            files: vec!["test.file".to_string()],
-            color: "#FF0000".to_string(),
-            icon: "🔥".to_string(),
-            priority: 1,
-            frameworks: vec![],
-        }
+        ProjectIndicator::new(
+            "Test Language".to_string(),
+            vec!["test.file".to_string()],
+            "#FF0000".to_string(),
+            "🔥".to_string(),
+            1,
+            vec![],
+        )
     }
 
     fn create_valid_framework() -> FrameworkDetector {
         FrameworkDetector {
             name: "Test Framework".to_string(),
-            detection: DetectionType::PackageJson {
+            detection: DetectionType::NodeEcosystem {
                 dependencies: vec!["test-dep".to_string()],
             },
             icon: Some("⚡".to_string()),
             color: Some("#00FF00".to_string()),
             priority: 1,
             files: vec![],
+            root_indicators: vec![],
         }
     }
 
     #[test]
-    fn test_validate_valid_config() {
+    fn test_validate_valid_config() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config {
             meta: ConfigMeta {
                 version: "2.0".to_string(),
@@ -318,10 +289,11 @@ mod tests {
         };
 
         assert!(validate_config(&config).is_ok());
+        Ok(())
     }
 
     #[test]
-    fn test_validate_invalid_version() {
+    fn test_validate_invalid_version() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config {
             meta: ConfigMeta {
                 version: "1.0".to_string(),
@@ -333,10 +305,11 @@ mod tests {
         };
 
         assert!(validate_config(&config).is_err());
+        Ok(())
     }
 
     #[test]
-    fn test_validate_empty_languages() {
+    fn test_validate_empty_languages() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config {
             meta: ConfigMeta::default(),
             display: DisplayConfig::default(),
@@ -346,114 +319,116 @@ mod tests {
         };
 
         assert!(validate_config(&config).is_err());
+        Ok(())
     }
 
     #[test]
-    fn test_validate_duplicate_language_names() {
+    fn test_validate_duplicate_language_names() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config {
             meta: ConfigMeta::default(),
             display: DisplayConfig::default(),
             cache: CacheConfig::default(),
             detection: DetectionConfig::default(),
-            languages: vec![
-                create_valid_language(),
-                create_valid_language(), // Same name
-            ],
+            languages: vec![create_valid_language(), create_valid_language()],
         };
 
         assert!(validate_config(&config).is_err());
+        Ok(())
     }
 
     #[test]
-    fn test_validate_hex_color() {
+    fn test_validate_hex_color() -> Result<(), Box<dyn std::error::Error>> {
         assert!(is_valid_hex_color("#FF0000"));
         assert!(is_valid_hex_color("#f0f"));
         assert!(is_valid_hex_color("#123ABC"));
 
-        assert!(!is_valid_hex_color("FF0000")); // Missing #
-        assert!(!is_valid_hex_color("#GG0000")); // Invalid hex
-        assert!(!is_valid_hex_color("#FF00")); // Wrong length
-        assert!(!is_valid_hex_color("#")); // Empty hex
+        assert!(!is_valid_hex_color("FF0000"));
+        assert!(!is_valid_hex_color("#GG0000"));
+        assert!(!is_valid_hex_color("#FF00"));
+        assert!(!is_valid_hex_color("#"));
+        Ok(())
     }
 
     #[test]
-    fn test_validate_language_with_invalid_color() {
+    fn test_validate_language_with_invalid_color() -> Result<(), Box<dyn std::error::Error>> {
         let mut language = create_valid_language();
         language.color = "invalid-color".to_string();
 
         assert!(validate_language(&language).is_err());
+        Ok(())
     }
 
     #[test]
-    fn test_validate_language_with_empty_files() {
+    fn test_validate_language_with_empty_files() -> Result<(), Box<dyn std::error::Error>> {
         let mut language = create_valid_language();
         language.files = vec![];
 
         assert!(validate_language(&language).is_err());
+        Ok(())
     }
 
     #[test]
-    fn test_validate_framework() {
+    fn test_validate_framework() -> Result<(), Box<dyn std::error::Error>> {
         let framework = create_valid_framework();
         assert!(validate_framework(&framework).is_ok());
+        Ok(())
     }
 
     #[test]
-    fn test_validate_framework_with_invalid_detection() {
+    fn test_validate_framework_with_invalid_detection() -> Result<(), Box<dyn std::error::Error>> {
         let framework = FrameworkDetector {
             name: "Test".to_string(),
-            detection: DetectionType::PackageJson {
-                dependencies: vec![], // Empty dependencies
+            detection: DetectionType::NodeEcosystem {
+                dependencies: vec![],
             },
             icon: None,
             color: None,
             priority: 1,
             files: vec![],
+            root_indicators: vec![],
         };
 
         assert!(validate_framework(&framework).is_err());
+        Ok(())
     }
 
     #[test]
-    fn test_validate_display_config() {
+    fn test_validate_display_config() -> Result<(), Box<dyn std::error::Error>> {
         let mut config = Config {
             languages: vec![create_valid_language()],
             ..Default::default()
         };
 
-        // Valid config
         assert!(validate_config(&config).is_ok());
 
-        // Invalid max_frameworks
         config.display.max_frameworks = 0;
         assert!(validate_config(&config).is_err());
 
-        // Reset and test empty separator
         config.display.max_frameworks = 2;
         config.display.framework_separator = "".to_string();
         assert!(validate_config(&config).is_err());
+        Ok(())
     }
 
     #[test]
-    fn test_validate_detection_types() {
-        // Test all detection types with valid data
+    fn test_validate_detection_types() -> Result<(), Box<dyn std::error::Error>> {
         let detection_types = vec![
-            DetectionType::PackageJson {
+            DetectionType::NodeEcosystem {
                 dependencies: vec!["react".to_string()],
             },
-            DetectionType::CargoToml {
+            DetectionType::RustEcosystem {
                 dependencies: vec!["serde".to_string()],
             },
-            DetectionType::GoMod {
+            DetectionType::GoEcosystem {
                 modules: vec!["github.com/gin-gonic/gin".to_string()],
             },
-            DetectionType::PyProjectToml {
+            DetectionType::PythonEcosystem {
                 dependencies: vec!["Django".to_string()],
             },
-            DetectionType::GemSpec {
+            DetectionType::RubyEcosystem {
                 gems: vec!["rails".to_string()],
             },
-            DetectionType::ComposerJson {
+            DetectionType::PHPEcosystem {
                 packages: vec!["laravel/framework".to_string()],
             },
             DetectionType::FileExists {
@@ -468,5 +443,6 @@ mod tests {
         for detection_type in detection_types {
             assert!(validate_detection_type(&detection_type).is_ok());
         }
+        Ok(())
     }
 }

@@ -1,88 +1,244 @@
-//! Configuration parsing and management
-
 mod parser;
+mod templates;
 mod validator;
 
 pub use self::parser::{ConfigError, ConfigParser};
+pub use self::templates::{
+    generate_root_indicators_simple_max_weight, vcs_root_indicators, ConfigTemplate,
+    TemplateGenerator,
+};
 pub use self::validator::validate_config;
 
 use crate::types::{CacheConfig, ConfigMeta, DetectionConfig, DisplayConfig, ProjectIndicator};
 use serde::{Deserialize, Serialize};
-
-/// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Config {
-    /// Configuration metadata
     #[serde(default)]
     pub meta: ConfigMeta,
-    /// Display settings
     #[serde(default)]
     pub display: DisplayConfig,
-    /// Cache settings
     #[serde(default)]
     pub cache: CacheConfig,
-    /// Detection settings for project root discovery
     #[serde(default)]
     pub detection: DetectionConfig,
-    /// Language definitions
     #[serde(rename = "languages")]
     pub languages: Vec<ProjectIndicator>,
 }
 
 impl Config {
-    /// Create a new config with the given languages
     pub fn new(languages: Vec<ProjectIndicator>) -> Self {
         Self {
             languages,
             ..Default::default()
         }
     }
-
-    /// Load configuration from the default locations
     pub fn load_default() -> crate::Result<Self> {
         ConfigParser::load_default()
     }
-
-    /// Load configuration from a specific file
     pub fn load_from_file<P: AsRef<std::path::Path>>(path: P) -> crate::Result<Self> {
         ConfigParser::load_from_file(path)
     }
-
-    /// Get languages sorted by priority
     pub fn languages_by_priority(&self) -> Vec<&ProjectIndicator> {
         let mut languages: Vec<&ProjectIndicator> = self.languages.iter().collect();
         languages.sort_by_key(|lang| lang.priority);
         languages
     }
-
-    /// Find a language by name
     pub fn find_language(&self, name: &str) -> Option<&ProjectIndicator> {
         self.languages
             .iter()
             .find(|lang| lang.name.eq_ignore_ascii_case(name))
     }
-
-    /// Get all unique file patterns from all languages
     pub fn all_file_patterns(&self) -> Vec<&String> {
         self.languages.iter().flat_map(|lang| &lang.files).collect()
     }
-
-    /// Get the configuration file path
     pub fn get_config_path() -> crate::Result<std::path::PathBuf> {
-        use dirs::config_dir;
-
-        let config_dir =
-            config_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine config directory"))?;
-
-        let path = config_dir.join("project-indicator").join("config.toml");
-        Ok(path)
+        ConfigParser::default_save_path()
     }
-
-    /// Get all frameworks from all languages
     pub fn frameworks(&self) -> Vec<&crate::types::FrameworkDetector> {
         self.languages
             .iter()
             .flat_map(|lang| &lang.frameworks)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::detection::matchers::test_helpers::helpers::{
+        create_test_framework_generic, create_test_language_with_priority,
+    };
+
+    #[test]
+    fn test_config_creation() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::new(vec![]);
+        assert!(config.languages.is_empty());
+        assert_eq!(config.meta.version, "2.0");
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_with_languages() -> Result<(), Box<dyn std::error::Error>> {
+        let languages = vec![
+            create_test_language_with_priority("Rust", vec!["Cargo.toml"], 1),
+            create_test_language_with_priority(
+                "TypeScript",
+                vec!["package.json", "tsconfig.json"],
+                2,
+            ),
+        ];
+
+        let config = Config::new(languages);
+
+        assert_eq!(config.languages.len(), 2);
+        assert_eq!(config.languages[0].name, "Rust");
+        assert_eq!(config.languages[1].name, "TypeScript");
+        Ok(())
+    }
+
+    #[test]
+    fn test_languages_by_priority() -> Result<(), Box<dyn std::error::Error>> {
+        let languages = vec![
+            create_test_language_with_priority("Low Priority", vec!["low.file"], 10),
+            create_test_language_with_priority("High Priority", vec!["high.file"], 1),
+            create_test_language_with_priority("Medium Priority", vec!["med.file"], 5),
+        ];
+
+        let config = Config::new(languages);
+        let sorted = config.languages_by_priority();
+
+        assert_eq!(sorted.len(), 3);
+        assert_eq!(sorted[0].name, "High Priority");
+        assert_eq!(sorted[1].name, "Medium Priority");
+        assert_eq!(sorted[2].name, "Low Priority");
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_language() -> Result<(), Box<dyn std::error::Error>> {
+        let languages = vec![
+            create_test_language_with_priority("Rust", vec!["Cargo.toml"], 1),
+            create_test_language_with_priority("TypeScript", vec!["package.json"], 2),
+        ];
+
+        let config = Config::new(languages);
+
+        assert!(config.find_language("rust").is_some());
+        assert!(config.find_language("Rust").is_some());
+        assert!(config.find_language("typescript").is_some());
+        assert!(config.find_language("nonexistent").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_all_file_patterns() -> Result<(), Box<dyn std::error::Error>> {
+        let languages = vec![
+            create_test_language_with_priority("Rust", vec!["Cargo.toml", "*.rs"], 1),
+            create_test_language_with_priority("TypeScript", vec!["package.json", "*.ts"], 2),
+        ];
+
+        let config = Config::new(languages);
+        let patterns = config.all_file_patterns();
+
+        assert_eq!(patterns.len(), 4);
+        assert!(patterns.contains(&&"Cargo.toml".to_string()));
+        assert!(patterns.contains(&&"*.rs".to_string()));
+        assert!(patterns.contains(&&"package.json".to_string()));
+        assert!(patterns.contains(&&"*.ts".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn test_frameworks() -> Result<(), Box<dyn std::error::Error>> {
+        let frameworks = vec![
+            create_test_framework_generic("React", 1),
+            create_test_framework_generic("Vue", 2),
+        ];
+
+        let mut languages = vec![create_test_language_with_priority(
+            "JavaScript",
+            vec!["package.json"],
+            1,
+        )];
+        languages[0].frameworks = frameworks;
+
+        let config = Config::new(languages);
+        let all_frameworks = config.frameworks();
+
+        assert_eq!(all_frameworks.len(), 2);
+        assert_eq!(all_frameworks[0].name, "React");
+        assert_eq!(all_frameworks[1].name, "Vue");
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_with_multiple_languages_and_frameworks() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let frameworks1 = vec![create_test_framework_generic("React", 1)];
+        let frameworks2 = vec![create_test_framework_generic("Express", 2)];
+
+        let mut languages = vec![
+            create_test_language_with_priority("JavaScript", vec!["package.json", "*.js"], 1),
+            create_test_language_with_priority("TypeScript", vec!["package.json", "*.ts"], 2),
+        ];
+        languages[0].frameworks = frameworks1;
+        languages[1].frameworks = frameworks2;
+
+        let config = Config::new(languages);
+
+        assert_eq!(config.languages.len(), 2);
+        assert_eq!(config.frameworks().len(), 2);
+
+        let sorted_languages = config.languages_by_priority();
+        assert_eq!(sorted_languages[0].name, "JavaScript");
+        assert_eq!(sorted_languages[1].name, "TypeScript");
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_serialization() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::new(vec![create_test_language_with_priority(
+            "Test",
+            vec!["test.file"],
+            1,
+        )]);
+
+        let serialized = toml::to_string(&config)?;
+        let deserialized: Config = toml::from_str(&serialized)?;
+
+        assert_eq!(config, deserialized);
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_defaults() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::default();
+
+        assert_eq!(config.meta.version, "2.0");
+        assert_eq!(config.display.max_frameworks, 2);
+        assert_eq!(config.cache.max_entries, 1000);
+        assert_eq!(config.detection.max_upward_traversal, 10);
+        assert!(config.languages.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_path_construction() -> Result<(), Box<dyn std::error::Error>> {
+        let path = Config::get_config_path()?;
+        let expected_path = ConfigParser::default_save_path()?;
+        assert_eq!(path, expected_path);
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_empty_languages() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::new(vec![]);
+
+        assert!(config.languages_by_priority().is_empty());
+        assert!(config.find_language("any").is_none());
+        assert!(config.all_file_patterns().is_empty());
+        assert!(config.frameworks().is_empty());
+        Ok(())
     }
 }

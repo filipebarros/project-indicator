@@ -1,7 +1,5 @@
-//! Performance benchmarks for project detection
-//!
-//! These benchmarks measure the performance of different aspects of the detection system
-//! to ensure optimizations provide measurable improvements.
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use project_indicator::{
@@ -13,15 +11,12 @@ use project_indicator::{
 use std::fs;
 use std::hint::black_box;
 use tempfile::TempDir;
-
-/// Create a realistic test project structure
-fn create_test_project(name: &str) -> TempDir {
-    let temp_dir = TempDir::new().unwrap();
+fn create_test_project(name: &str) -> Result<TempDir, Box<dyn std::error::Error>> {
+    let temp_dir = TempDir::new()?;
     let base_path = temp_dir.path();
 
     match name {
         "typescript_react" => {
-            // Large TypeScript React project
             fs::write(
                 base_path.join("package.json"),
                 r#"{
@@ -37,8 +32,7 @@ fn create_test_project(name: &str) -> TempDir {
     "eslint": "^8.0.0"
   }
 }"#,
-            )
-            .unwrap();
+            )?;
 
             fs::write(
                 base_path.join("tsconfig.json"),
@@ -48,32 +42,27 @@ fn create_test_project(name: &str) -> TempDir {
     "module": "ESNext"
   }
 }"#,
-            )
-            .unwrap();
+            )?;
 
-            // Create multiple source files
-            fs::create_dir_all(base_path.join("src/components")).unwrap();
-            fs::create_dir_all(base_path.join("src/hooks")).unwrap();
-            fs::create_dir_all(base_path.join("src/utils")).unwrap();
+            fs::create_dir_all(base_path.join("src/components"))?;
+            fs::create_dir_all(base_path.join("src/hooks"))?;
+            fs::create_dir_all(base_path.join("src/utils"))?;
 
             for i in 0..50 {
                 fs::write(
                     base_path.join(format!("src/components/Component{}.tsx", i)),
                     "export const Component = () => <div>Hello</div>;",
-                )
-                .unwrap();
+                )?;
             }
 
             for i in 0..20 {
                 fs::write(
                     base_path.join(format!("src/hooks/useHook{}.ts", i)),
                     "export const useHook = () => { return true; };",
-                )
-                .unwrap();
+                )?;
             }
         }
         "rust_rocket" => {
-            // Rust project with Rocket
             fs::write(
                 base_path.join("Cargo.toml"),
                 r#"[package]
@@ -86,45 +75,39 @@ rocket = "0.5"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 "#,
-            )
-            .unwrap();
+            )?;
 
-            fs::create_dir_all(base_path.join("src/handlers")).unwrap();
-            fs::create_dir_all(base_path.join("src/models")).unwrap();
+            fs::create_dir_all(base_path.join("src/handlers"))?;
+            fs::create_dir_all(base_path.join("src/models"))?;
 
-            fs::write(base_path.join("src/main.rs"), "fn main() {}").unwrap();
+            fs::write(base_path.join("src/main.rs"), "fn main() {}")?;
 
             for i in 0..30 {
                 fs::write(
                     base_path.join(format!("src/handlers/handler{}.rs", i)),
                     "pub fn handler() {}",
-                )
-                .unwrap();
+                )?;
             }
         }
         "python_django" => {
-            // Python Django project
             fs::write(
                 base_path.join("requirements.txt"),
                 "Django>=4.0\npsycopg2>=2.8\ncelery>=5.0",
-            )
-            .unwrap();
+            )?;
 
-            fs::write(base_path.join("manage.py"), "#!/usr/bin/env python").unwrap();
+            fs::write(base_path.join("manage.py"), "#!/usr/bin/env python")?;
 
-            fs::create_dir_all(base_path.join("myapp/models")).unwrap();
-            fs::create_dir_all(base_path.join("myapp/views")).unwrap();
+            fs::create_dir_all(base_path.join("myapp/models"))?;
+            fs::create_dir_all(base_path.join("myapp/views"))?;
 
             for i in 0..25 {
                 fs::write(
                     base_path.join(format!("myapp/models/model{}.py", i)),
                     "from django.db import models",
-                )
-                .unwrap();
+                )?;
             }
         }
         "go_gin" => {
-            // Go project with Gin
             fs::write(
                 base_path.join("go.mod"),
                 r#"module gin-app
@@ -136,133 +119,127 @@ require (
     github.com/golang/protobuf v1.5.3
 )
 "#,
-            )
-            .unwrap();
+            )?;
 
-            fs::create_dir_all(base_path.join("internal/handlers")).unwrap();
-            fs::create_dir_all(base_path.join("internal/models")).unwrap();
+            fs::create_dir_all(base_path.join("internal/handlers"))?;
+            fs::create_dir_all(base_path.join("internal/models"))?;
 
-            fs::write(base_path.join("main.go"), "package main").unwrap();
+            fs::write(base_path.join("main.go"), "package main")?;
 
             for i in 0..20 {
                 fs::write(
                     base_path.join(format!("internal/handlers/handler{}.go", i)),
                     "package handlers",
-                )
-                .unwrap();
+                )?;
             }
         }
         "mixed_large" => {
-            // Large mixed project with multiple languages
-            // JavaScript/TypeScript
-            fs::write(base_path.join("package.json"), r#"{"name": "mixed"}"#).unwrap();
-            fs::create_dir_all(base_path.join("frontend/src")).unwrap();
+            fs::write(base_path.join("package.json"), r#"{"name": "mixed"}"#)?;
+            fs::create_dir_all(base_path.join("frontend/src"))?;
             for i in 0..100 {
                 fs::write(
                     base_path.join(format!("frontend/src/file{}.js", i)),
                     "console.log('hello');",
-                )
-                .unwrap();
+                )?;
             }
 
-            // Python
-            fs::write(base_path.join("requirements.txt"), "flask>=2.0").unwrap();
-            fs::create_dir_all(base_path.join("backend")).unwrap();
+            fs::write(base_path.join("requirements.txt"), "flask>=2.0")?;
+            fs::create_dir_all(base_path.join("backend"))?;
             for i in 0..50 {
                 fs::write(
                     base_path.join(format!("backend/module{}.py", i)),
                     "print('hello')",
-                )
-                .unwrap();
+                )?;
             }
 
-            // Go
-            fs::write(base_path.join("go.mod"), "module mixed\ngo 1.19").unwrap();
+            fs::write(base_path.join("go.mod"), "module mixed\ngo 1.19")?;
             for i in 0..30 {
-                fs::write(base_path.join(format!("service{}.go", i)), "package main").unwrap();
+                fs::write(base_path.join(format!("service{}.go", i)), "package main")?;
             }
         }
         _ => panic!("Unknown test project type: {}", name),
     }
 
-    temp_dir
+    Ok(temp_dir)
 }
-
-/// Create a comprehensive test configuration
 fn create_benchmark_config() -> Config {
-    let typescript = ProjectIndicator {
-        name: "TypeScript".to_string(),
-        files: vec![
+    let typescript = ProjectIndicator::new(
+        "TypeScript".to_string(),
+        vec![
             "tsconfig.json".to_string(),
             "*.ts".to_string(),
             "*.tsx".to_string(),
         ],
-        color: "#3178C6".to_string(),
-        icon: "󰛦".to_string(),
-        priority: 1,
-        frameworks: vec![
+        "#3178C6".to_string(),
+        "󰛦".to_string(),
+        1,
+        vec![
             FrameworkDetector {
                 name: "React".to_string(),
-                detection: DetectionType::PackageJson {
+                detection: DetectionType::NodeEcosystem {
                     dependencies: vec!["react".to_string()],
                 },
                 icon: Some("⚛️".to_string()),
                 color: Some("#61DAFB".to_string()),
                 priority: 2,
                 files: vec![],
+                root_indicators: vec![],
             },
             FrameworkDetector {
                 name: "Next.js".to_string(),
-                detection: DetectionType::PackageJson {
+                detection: DetectionType::NodeEcosystem {
                     dependencies: vec!["next".to_string()],
                 },
                 icon: Some("▲".to_string()),
                 color: Some("#000000".to_string()),
                 priority: 1,
                 files: vec![],
+                root_indicators: vec![],
             },
             FrameworkDetector {
                 name: "Vue".to_string(),
-                detection: DetectionType::PackageJson {
+                detection: DetectionType::NodeEcosystem {
                     dependencies: vec!["vue".to_string()],
                 },
                 icon: Some("󰡄".to_string()),
                 color: Some("#4FC08D".to_string()),
                 priority: 2,
                 files: vec![],
+                root_indicators: vec![],
             },
         ],
-    };
+    );
 
-    let rust = ProjectIndicator {
-        name: "Rust".to_string(),
-        files: vec!["Cargo.toml".to_string(), "*.rs".to_string()],
-        color: "#DEA584".to_string(),
-        icon: "".to_string(),
-        priority: 1,
-        frameworks: vec![FrameworkDetector {
+    let rust = ProjectIndicator::new(
+        "Rust".to_string(),
+        vec!["Cargo.toml".to_string(), "*.rs".to_string()],
+        "#DEA584".to_string(),
+        "".to_string(),
+        1,
+        vec![FrameworkDetector {
             name: "Rocket".to_string(),
-            detection: DetectionType::CargoToml {
+            detection: DetectionType::RustEcosystem {
                 dependencies: vec!["rocket".to_string()],
             },
             icon: Some("🚀".to_string()),
             color: Some("#D33847".to_string()),
             priority: 1,
             files: vec![],
+            root_indicators: vec![],
         }],
-    };
+    );
 
-    let python = ProjectIndicator {
-        name: "Python".to_string(),
-        files: vec![
+    let python = ProjectIndicator::new(
+        "Python".to_string(),
+        vec![
             "*.py".to_string(),
             "requirements.txt".to_string(),
             "setup.py".to_string(),
         ],
-        color: "#3776AB".to_string(),
-        icon: "".to_string(),
-        priority: 2,
-        frameworks: vec![FrameworkDetector {
+        "#3776AB".to_string(),
+        "".to_string(),
+        2,
+        vec![FrameworkDetector {
             name: "Django".to_string(),
             detection: DetectionType::FileExists {
                 files: vec!["manage.py".to_string()],
@@ -271,44 +248,44 @@ fn create_benchmark_config() -> Config {
             color: Some("#092E20".to_string()),
             priority: 1,
             files: vec![],
+            root_indicators: vec![],
         }],
-    };
+    );
 
-    let go = ProjectIndicator {
-        name: "Go".to_string(),
-        files: vec!["go.mod".to_string(), "*.go".to_string()],
-        color: "#00ADD8".to_string(),
-        icon: "".to_string(),
-        priority: 1,
-        frameworks: vec![FrameworkDetector {
+    let go = ProjectIndicator::new(
+        "Go".to_string(),
+        vec!["go.mod".to_string(), "*.go".to_string()],
+        "#00ADD8".to_string(),
+        "".to_string(),
+        1,
+        vec![FrameworkDetector {
             name: "Gin".to_string(),
-            detection: DetectionType::GoMod {
+            detection: DetectionType::GoEcosystem {
                 modules: vec!["github.com/gin-gonic/gin".to_string()],
             },
             icon: Some("🍸".to_string()),
             color: Some("#00ADD8".to_string()),
             priority: 1,
             files: vec![],
+            root_indicators: vec![],
         }],
-    };
+    );
 
-    let javascript = ProjectIndicator {
-        name: "JavaScript".to_string(),
-        files: vec![
+    let javascript = ProjectIndicator::new(
+        "JavaScript".to_string(),
+        vec![
             "package.json".to_string(),
             "*.js".to_string(),
             "*.jsx".to_string(),
         ],
-        color: "#F7DF1E".to_string(),
-        icon: "".to_string(),
-        priority: 2,
-        frameworks: vec![],
-    };
+        "#F7DF1E".to_string(),
+        "".to_string(),
+        2,
+        vec![],
+    );
 
     Config::new(vec![typescript, rust, python, go, javascript])
 }
-
-/// Benchmark basic project detection
 fn bench_detection(c: &mut Criterion) {
     let mut group = c.benchmark_group("detection");
 
@@ -316,55 +293,53 @@ fn bench_detection(c: &mut Criterion) {
     let engine = DetectionEngine::new(config.languages.clone());
 
     let projects = [
-        ("typescript_react", create_test_project("typescript_react")),
-        ("rust_rocket", create_test_project("rust_rocket")),
-        ("python_django", create_test_project("python_django")),
-        ("go_gin", create_test_project("go_gin")),
-        ("mixed_large", create_test_project("mixed_large")),
+        (
+            "typescript_react",
+            create_test_project("typescript_react").unwrap(),
+        ),
+        ("rust_rocket", create_test_project("rust_rocket").unwrap()),
+        (
+            "python_django",
+            create_test_project("python_django").unwrap(),
+        ),
+        ("go_gin", create_test_project("go_gin").unwrap()),
+        ("mixed_large", create_test_project("mixed_large").unwrap()),
     ];
 
     for (name, project) in &projects {
         group.bench_with_input(
             BenchmarkId::new("detect_project", name),
             &project.path(),
-            |b, path| b.iter(|| engine.detect(black_box(path)).unwrap()),
+            |b, path| b.iter(|| engine.detect(black_box(path))),
         );
     }
 
     group.finish();
 }
-
-/// Benchmark file scanning performance
 fn bench_file_scanning(c: &mut Criterion) {
     let mut group = c.benchmark_group("file_scanning");
 
     let config = create_benchmark_config();
     let engine = DetectionEngine::new(config.languages.clone());
 
-    let large_project = create_test_project("mixed_large");
+    let large_project = create_test_project("mixed_large").unwrap();
 
     group.bench_function("scan_large_project", |b| {
-        b.iter(|| {
-            // This will call the internal file scanning method
-            engine.detect(black_box(large_project.path())).unwrap()
-        })
+        b.iter(|| engine.detect(black_box(large_project.path())))
     });
 
     group.finish();
 }
-
-/// Benchmark output formatting performance
 fn bench_formatting(c: &mut Criterion) {
     let mut group = c.benchmark_group("formatting");
 
     let config = create_benchmark_config();
     let engine = DetectionEngine::new(config.languages.clone());
-    let project = create_test_project("typescript_react");
+    let project = create_test_project("typescript_react").unwrap();
     let result = engine.detect(project.path()).unwrap();
 
     let display_config = DisplayConfig::default();
-    let theme = Box::new(project_indicator::output::themes::DefaultTheme);
-    let formatter = OutputFormatter::new(display_config, theme);
+    let formatter = OutputFormatter::new(display_config);
 
     let formats = [
         OutputFormat::Simple,
@@ -384,8 +359,6 @@ fn bench_formatting(c: &mut Criterion) {
 
     group.finish();
 }
-
-/// Benchmark configuration loading
 fn bench_config_loading(c: &mut Criterion) {
     let mut group = c.benchmark_group("config");
 
@@ -400,28 +373,23 @@ fn bench_config_loading(c: &mut Criterion) {
 
     group.finish();
 }
-
-/// Benchmark repeated detection (simulating shell prompt usage)
 fn bench_repeated_detection(c: &mut Criterion) {
     let mut group = c.benchmark_group("repeated_detection");
 
     let config = create_benchmark_config();
     let engine = DetectionEngine::new(config.languages.clone());
-    let project = create_test_project("typescript_react");
+    let project = create_test_project("typescript_react").unwrap();
 
-    // Simulate checking the same project multiple times (like in shell prompt)
     group.bench_function("same_project_10x", |b| {
         b.iter(|| {
             for _ in 0..10 {
-                engine.detect(black_box(project.path())).unwrap();
+                let _ = engine.detect(black_box(project.path()));
             }
         })
     });
 
     group.finish();
 }
-
-/// Benchmark memory usage patterns
 fn bench_memory_patterns(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory");
 
@@ -429,7 +397,6 @@ fn bench_memory_patterns(c: &mut Criterion) {
 
     group.bench_function("engine_creation_overhead", |b| {
         b.iter(|| {
-            // Create and immediately drop to measure creation cost
             let engine = DetectionEngine::new(black_box(config.languages.clone()));
             drop(engine);
         })

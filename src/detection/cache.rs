@@ -1,147 +1,107 @@
-//! Caching system for detection results
-//!
-//! This module provides memory-based caching of detection results with file modification
-//! time tracking to invalidate stale cache entries.
-
 use crate::types::{CacheConfig, DetectionResult};
 use crate::Result;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(test)]
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Cache key consisting of path and relevant file modification times
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct CacheKey {
-    /// The project path being detected
     pub path: PathBuf,
-    /// Hash of critical file modification times
+}
+
+#[derive(Debug, Clone)]
+pub struct CacheEntry {
+    pub result: DetectionResult,
+    pub created_at: SystemTime,
     pub file_hash: u64,
 }
 
-/// Cached detection result with metadata
-#[derive(Debug, Clone)]
-pub struct CacheEntry {
-    /// The cached detection result
-    pub result: DetectionResult,
-    /// When this entry was created
-    pub created_at: SystemTime,
-    /// File modification times that were used to create the hash
-    pub file_times: HashMap<PathBuf, SystemTime>,
-}
-
-/// High-performance in-memory cache for detection results
 pub struct DetectionCache {
-    /// The actual cache storage
     cache: DashMap<CacheKey, CacheEntry>,
-    /// Cache configuration
     config: CacheConfig,
-    /// Statistics
-    stats: Mutex<CacheStats>,
-    /// Additional dynamically supplied relevant paths (filenames or relative paths)
+    hits: AtomicU64,
+    misses: AtomicU64,
+    invalidations: AtomicU64,
     dynamic_relevant: DashMap<PathBuf, ()>,
 }
 
-/// Cache performance statistics
-#[derive(Debug, Default)]
+#[derive(Debug, Clone)]
 pub struct CacheStats {
     pub hits: u64,
     pub misses: u64,
     pub invalidations: u64,
     pub entries: usize,
+    pub hit_rate: f64,
 }
 
 impl DetectionCache {
-    /// Create a new cache with the given configuration
     pub fn new(config: CacheConfig) -> Self {
         Self {
             cache: DashMap::new(),
             config,
-            stats: Mutex::new(CacheStats::default()),
+            hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+            invalidations: AtomicU64::new(0),
             dynamic_relevant: DashMap::new(),
         }
     }
 
-    /// Get a cached result if it exists and is still valid
     pub fn get(&self, path: &Path) -> Result<Option<DetectionResult>> {
-        let path_buf = path.to_path_buf();
+        let key = CacheKey {
+            path: path.to_path_buf(),
+        };
 
-        // Find entry and determine what to do with it
-        let mut found_key: Option<CacheKey> = None;
-        let mut result: Option<DetectionResult> = None;
-        let mut should_remove = false;
+        if let Some(entry_ref) = self.cache.get(&key) {
+            let entry = entry_ref.value();
 
-        // Look for any entry with this path and do fast TTL check
-        for entry_ref in self.cache.iter() {
-            let (key, entry) = entry_ref.pair();
-            if key.path == path_buf {
-                found_key = Some(key.clone());
-
-                // Fast TTL check first (no filesystem operations)
-                if let Ok(age) = entry.created_at.elapsed() {
-                    if age > Duration::from_secs(self.config.ttl_seconds) {
-                        // Entry is too old
-                        should_remove = true;
-                        break;
-                    }
-                }
-
-                // TTL is still valid, now do expensive file validation
-                let current_key = self.calculate_cache_key(path)?;
-                if key.file_hash == current_key.file_hash {
-                    // Files haven't changed, cache hit
-                    result = Some(entry.result.clone());
-                    break;
-                } else {
-                    // Files changed, entry is stale
-                    should_remove = true;
-                    break;
+            if let Ok(age) = entry.created_at.elapsed() {
+                if age > Duration::from_secs(self.config.ttl_seconds) {
+                    drop(entry_ref);
+                    self.cache.remove(&key);
+                    self.invalidations.fetch_add(1, Ordering::Relaxed);
+                    self.misses.fetch_add(1, Ordering::Relaxed);
+                    return Ok(None);
                 }
             }
-        }
 
-        // Handle the result
-        if let Some(key) = found_key {
-            if should_remove {
+            let current_hash = self.calculate_file_hash(path)?;
+            if entry.file_hash == current_hash {
+                let result = entry.result.clone();
+                drop(entry_ref);
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                return Ok(Some(result));
+            } else {
+                drop(entry_ref);
                 self.cache.remove(&key);
-                if let Ok(mut stats) = self.stats.lock() {
-                    stats.invalidations = stats.invalidations.saturating_add(1);
-                    stats.misses = stats.misses.saturating_add(1);
-                }
+                self.invalidations.fetch_add(1, Ordering::Relaxed);
+                self.misses.fetch_add(1, Ordering::Relaxed);
                 return Ok(None);
-            } else if let Some(res) = result {
-                if let Ok(mut stats) = self.stats.lock() {
-                    stats.hits = stats.hits.saturating_add(1);
-                }
-                return Ok(Some(res));
             }
         }
 
-        // No entry found for this path
-        if let Ok(mut stats) = self.stats.lock() {
-            stats.misses = stats.misses.saturating_add(1);
-        }
+        self.misses.fetch_add(1, Ordering::Relaxed);
         Ok(None)
     }
 
-    /// Store a detection result in the cache
     pub fn put(&self, path: &Path, result: DetectionResult) -> Result<()> {
-        let cache_key = self.calculate_cache_key(path)?;
-        let file_times = self.get_relevant_file_times(path)?;
+        let file_hash = self.calculate_file_hash(path)?;
+        let key = CacheKey {
+            path: path.to_path_buf(),
+        };
 
         let entry = CacheEntry {
             result,
             created_at: SystemTime::now(),
-            file_times,
+            file_hash,
         };
 
-        self.cache.insert(cache_key, entry);
+        self.cache.insert(key, entry);
 
-        // Enforce size limits
         if self.cache.len() > self.config.max_entries {
             self.evict_oldest_entries();
         }
@@ -149,31 +109,31 @@ impl DetectionCache {
         Ok(())
     }
 
-    /// Calculate a cache key for the given path
-    fn calculate_cache_key(&self, path: &Path) -> Result<CacheKey> {
+    fn calculate_file_hash(&self, path: &Path) -> Result<u64> {
         let file_times = self.get_relevant_file_times(path)?;
-        let file_hash = self.hash_file_times(&file_times);
-
-        Ok(CacheKey {
-            path: path.to_path_buf(),
-            file_hash,
-        })
+        Ok(self.hash_file_times(&file_times))
     }
 
-    /// Get modification times for files relevant to detection
     fn get_relevant_file_times(&self, path: &Path) -> Result<HashMap<PathBuf, SystemTime>> {
         let mut file_times = HashMap::new();
 
-        // Key files that affect detection results
         let key_files = [
             "package.json",
+            "package-lock.json",
+            "yarn.lock",
+            "pnpm-lock.yaml",
             "Cargo.toml",
+            "Cargo.lock",
             "go.mod",
             "pyproject.toml",
+            "poetry.lock",
             "requirements.txt",
             "tsconfig.json",
             "setup.py",
             "composer.json",
+            "composer.lock",
+            "Gemfile",
+            "Gemfile.lock",
             "pom.xml",
             "build.gradle",
         ];
@@ -187,11 +147,6 @@ impl DetectionCache {
             }
         }
 
-        // Check only critical config directories that directly affect detection
-        // Removed .vscode, .idea, node_modules/.bin as they rarely invalidate detection results
-        // and cause significant filesystem overhead in cache operations
-
-        // Include dynamic relevant paths (relative to base path)
         for key in self.dynamic_relevant.iter() {
             let rel = key.key();
             let p = path.join(rel);
@@ -205,20 +160,17 @@ impl DetectionCache {
         Ok(file_times)
     }
 
-    /// Create a hash from file modification times
     fn hash_file_times(&self, file_times: &HashMap<PathBuf, SystemTime>) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
 
-        // Sort paths for consistent hashing
         let mut sorted_files: Vec<_> = file_times.iter().collect();
         sorted_files.sort_by_key(|(path, _)| *path);
 
         for (path, time) in sorted_files {
             path.hash(&mut hasher);
-            // Convert SystemTime to a comparable format
             if let Ok(duration) = time.duration_since(UNIX_EPOCH) {
                 duration.as_secs().hash(&mut hasher);
                 duration.subsec_nanos().hash(&mut hasher);
@@ -228,110 +180,96 @@ impl DetectionCache {
         hasher.finish()
     }
 
-    /// Remove oldest cache entries when cache is full
     fn evict_oldest_entries(&self) {
         let target_size = (self.config.max_entries as f32 * 0.8) as usize;
-        let mut entries_to_remove = Vec::new();
+        let current_size = self.cache.len();
+        let to_remove = current_size.saturating_sub(target_size);
 
-        // Collect entries with their creation times
-        for entry in self.cache.iter() {
-            entries_to_remove.push((entry.key().clone(), entry.value().created_at));
+        if to_remove == 0 {
+            return;
         }
 
-        // Sort by creation time (oldest first)
-        entries_to_remove.sort_by_key(|(_, created_at)| *created_at);
+        let mut candidates: Vec<(CacheKey, SystemTime)> = Vec::with_capacity(to_remove * 2);
 
-        // Remove oldest entries
-        let to_remove = self.cache.len().saturating_sub(target_size);
-        for (key, _) in entries_to_remove.into_iter().take(to_remove) {
-            self.cache.remove(&key);
+        for entry_ref in self.cache.iter().take(to_remove * 2) {
+            candidates.push((entry_ref.key().clone(), entry_ref.value().created_at));
         }
-        if to_remove > 0 {
-            if let Ok(mut stats) = self.stats.lock() {
-                stats.invalidations = stats.invalidations.saturating_add(to_remove as u64);
-            }
+
+        candidates.sort_by_key(|(_, created_at)| *created_at);
+
+        let removed_count = candidates
+            .into_iter()
+            .take(to_remove)
+            .filter(|(key, _)| self.cache.remove(key).is_some())
+            .count();
+
+        if removed_count > 0 {
+            self.invalidations
+                .fetch_add(removed_count as u64, Ordering::Relaxed);
         }
     }
 
-    /// Clear all cache entries
     pub fn clear(&self) {
+        let removed = self.cache.len();
         self.cache.clear();
-    }
-
-    /// Get cache statistics
-    pub fn stats(&self) -> CacheStats {
-        if let Ok(stats) = self.stats.lock() {
-            CacheStats {
-                hits: stats.hits,
-                misses: stats.misses,
-                invalidations: stats.invalidations,
-                entries: self.cache.len(),
-            }
-        } else {
-            CacheStats {
-                hits: 0,
-                misses: 0,
-                invalidations: 0,
-                entries: self.cache.len(),
-            }
+        if removed > 0 {
+            self.invalidations
+                .fetch_add(removed as u64, Ordering::Relaxed);
         }
     }
 
-    /// Get current cache size
+    pub fn stats(&self) -> CacheStats {
+        let hits = self.hits.load(Ordering::Relaxed);
+        let misses = self.misses.load(Ordering::Relaxed);
+        let total = hits + misses;
+        let hit_rate = if total > 0 {
+            (hits as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        CacheStats {
+            hits,
+            misses,
+            invalidations: self.invalidations.load(Ordering::Relaxed),
+            entries: self.cache.len(),
+            hit_rate,
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.cache.len()
     }
 
-    /// Check if cache is empty
     pub fn is_empty(&self) -> bool {
         self.cache.is_empty()
     }
 
-    /// Remove entries for a specific path (useful when files are known to have changed)
     pub fn invalidate_path(&self, path: &Path) -> usize {
-        let mut removed = 0;
-        let path_buf = path.to_path_buf();
+        let key = CacheKey {
+            path: path.to_path_buf(),
+        };
 
-        // Find all cache entries for this path
-        let keys_to_remove: Vec<_> = self
-            .cache
-            .iter()
-            .filter(|entry| entry.key().path == path_buf)
-            .map(|entry| entry.key().clone())
-            .collect();
-
-        // Remove them
-        for key in keys_to_remove {
-            if self.cache.remove(&key).is_some() {
-                removed += 1;
-            }
+        if self.cache.remove(&key).is_some() {
+            self.invalidations.fetch_add(1, Ordering::Relaxed);
+            1
+        } else {
+            0
         }
-
-        if removed > 0 {
-            if let Ok(mut stats) = self.stats.lock() {
-                stats.invalidations = stats.invalidations.saturating_add(removed as u64);
-            }
-        }
-
-        removed
     }
 
-    /// Add a dynamically relevant file or directory (relative path) to monitor
     pub fn add_dynamic_relevant<P: Into<PathBuf>>(&self, relative: P) {
         let p: PathBuf = relative.into();
         self.dynamic_relevant.insert(p, ());
     }
 
-    /// Clear all dynamically relevant paths
     pub fn clear_dynamic_relevant(&self) {
         self.dynamic_relevant.clear();
     }
 }
 
-/// Cache-aware detection trait
 pub trait CachedDetection {
-    /// Detect with caching support
-    fn detect_cached(&self, path: &Path, cache: &DetectionCache) -> Result<DetectionResult>;
+    fn detect_cached(&mut self, path: &Path, cache: &DetectionCache) -> Result<DetectionResult>;
 }
 
 #[cfg(test)]
@@ -346,169 +284,262 @@ mod tests {
         let config = CacheConfig {
             enabled: true,
             max_entries: 100,
-            ttl_seconds: 300, // 5 minutes
+            ttl_seconds: 300,
         };
         DetectionCache::new(config)
     }
 
     fn create_test_result() -> DetectionResult {
-        let language = ProjectIndicator {
-            name: "TypeScript".to_string(),
-            files: vec!["tsconfig.json".to_string()],
-            color: "#3178C6".to_string(),
-            icon: "󰛦".to_string(),
-            priority: 1,
-            frameworks: vec![],
-        };
+        let language = ProjectIndicator::new(
+            "TypeScript".to_string(),
+            vec!["tsconfig.json".to_string()],
+            "#3178C6".to_string(),
+            "󰛦".to_string(),
+            1,
+            vec![],
+        );
 
         DetectionResult::new(Some(Arc::new(language)), vec![], 0.9)
     }
 
     #[test]
-    fn test_cache_basic_operations() {
+    fn test_cache_basic_operations() -> Result<(), Box<dyn std::error::Error>> {
         let cache = create_test_cache();
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let result = create_test_result();
 
-        // Initially empty
-        assert!(cache.get(temp_dir.path()).unwrap().is_none());
+        assert!(cache.get(temp_dir.path())?.is_none());
 
-        // Store result
-        cache.put(temp_dir.path(), result.clone()).unwrap();
+        cache.put(temp_dir.path(), result.clone())?;
 
-        // Should retrieve the same result
-        let cached = cache.get(temp_dir.path()).unwrap().unwrap();
-        assert_eq!(cached.language.as_ref().unwrap().name, "TypeScript");
+        let cached = cache
+            .get(temp_dir.path())?
+            .ok_or("Failed to unwrap cached result")?;
+        assert_eq!(
+            cached
+                .language
+                .as_ref()
+                .ok_or("Failed to get language reference")?
+                .name,
+            "TypeScript"
+        );
         assert_eq!(cached.confidence, 0.9);
+
+        let stats = cache.stats();
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.misses, 1);
+        assert_eq!(stats.entries, 1);
+        Ok(())
     }
 
     #[test]
-    fn test_cache_file_modification_invalidation() {
+    fn test_cache_file_modification_invalidation() -> Result<(), Box<dyn std::error::Error>> {
         let cache = create_test_cache();
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let result = create_test_result();
 
-        // Create initial file
-        fs::write(temp_dir.path().join("package.json"), "{}").unwrap();
+        fs::write(temp_dir.path().join("package.json"), "{}")?;
 
-        // Store result
-        cache.put(temp_dir.path(), result.clone()).unwrap();
+        cache.put(temp_dir.path(), result.clone())?;
 
-        // Should get cached result
-        assert!(cache.get(temp_dir.path()).unwrap().is_some());
+        assert!(cache.get(temp_dir.path())?.is_some());
 
-        // Wait a bit and modify file
         thread::sleep(Duration::from_millis(10));
-        fs::write(temp_dir.path().join("package.json"), "{\"name\": \"test\"}").unwrap();
+        fs::write(temp_dir.path().join("package.json"), "{\"name\": \"test\"}")?;
 
-        // Cache should be invalidated
-        assert!(cache.get(temp_dir.path()).unwrap().is_none());
+        assert!(cache.get(temp_dir.path())?.is_none());
+
+        let stats = cache.stats();
+        assert_eq!(stats.invalidations, 1);
+        Ok(())
     }
 
     #[test]
-    fn test_cache_new_file_invalidation() {
+    fn test_cache_new_file_invalidation() -> Result<(), Box<dyn std::error::Error>> {
         let cache = create_test_cache();
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let result = create_test_result();
 
-        // Store result
-        cache.put(temp_dir.path(), result.clone()).unwrap();
+        cache.put(temp_dir.path(), result.clone())?;
 
-        // Should get cached result
-        assert!(cache.get(temp_dir.path()).unwrap().is_some());
+        assert!(cache.get(temp_dir.path())?.is_some());
 
-        // Add new relevant file
         fs::write(
             temp_dir.path().join("Cargo.toml"),
             "[package]\nname = \"test\"",
-        )
-        .unwrap();
+        )?;
 
-        // Cache should be invalidated due to new file
-        assert!(cache.get(temp_dir.path()).unwrap().is_none());
+        assert!(cache.get(temp_dir.path())?.is_none());
+
+        let stats = cache.stats();
+        assert_eq!(stats.invalidations, 1);
+        Ok(())
     }
 
     #[test]
-    fn test_cache_ttl_expiration() {
+    fn test_cache_ttl_expiration() -> Result<(), Box<dyn std::error::Error>> {
         let config = CacheConfig {
             enabled: true,
             max_entries: 100,
-            ttl_seconds: 1, // 1 second TTL
+            ttl_seconds: 1,
         };
         let cache = DetectionCache::new(config);
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let result = create_test_result();
 
-        // Store result
-        cache.put(temp_dir.path(), result.clone()).unwrap();
+        cache.put(temp_dir.path(), result.clone())?;
 
-        // Should get cached result immediately
-        assert!(cache.get(temp_dir.path()).unwrap().is_some());
+        assert!(cache.get(temp_dir.path())?.is_some());
 
-        // Wait for TTL to expire
         thread::sleep(Duration::from_secs(2));
 
-        // Cache should be expired
-        assert!(cache.get(temp_dir.path()).unwrap().is_none());
+        assert!(cache.get(temp_dir.path())?.is_none());
+
+        let stats = cache.stats();
+        assert!(stats.invalidations >= 1);
+        Ok(())
     }
 
     #[test]
-    fn test_cache_size_limit() {
+    fn test_cache_size_limit() -> Result<(), Box<dyn std::error::Error>> {
         let config = CacheConfig {
             enabled: true,
-            max_entries: 2, // Small limit
+            max_entries: 2,
             ttl_seconds: 300,
         };
         let cache = DetectionCache::new(config);
         let result = create_test_result();
 
-        // Create multiple temp directories
-        let temp1 = TempDir::new().unwrap();
-        let temp2 = TempDir::new().unwrap();
-        let temp3 = TempDir::new().unwrap();
+        let temp1 = TempDir::new()?;
+        let temp2 = TempDir::new()?;
+        let temp3 = TempDir::new()?;
 
-        // Fill cache beyond limit
-        cache.put(temp1.path(), result.clone()).unwrap();
-        cache.put(temp2.path(), result.clone()).unwrap();
+        cache.put(temp1.path(), result.clone())?;
+        cache.put(temp2.path(), result.clone())?;
         assert_eq!(cache.len(), 2);
 
-        cache.put(temp3.path(), result.clone()).unwrap();
+        cache.put(temp3.path(), result.clone())?;
 
-        // Cache should evict oldest entries
         assert!(cache.len() <= 2);
+
+        let stats = cache.stats();
+        assert!(stats.invalidations > 0);
+        Ok(())
     }
 
     #[test]
-    fn test_cache_invalidate_path() {
+    fn test_cache_invalidate_path() -> Result<(), Box<dyn std::error::Error>> {
         let cache = create_test_cache();
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let result = create_test_result();
 
-        // Store result
-        cache.put(temp_dir.path(), result.clone()).unwrap();
-        assert!(cache.get(temp_dir.path()).unwrap().is_some());
+        cache.put(temp_dir.path(), result.clone())?;
+        assert!(cache.get(temp_dir.path())?.is_some());
 
-        // Invalidate specific path
         let removed = cache.invalidate_path(temp_dir.path());
         assert_eq!(removed, 1);
 
-        // Should no longer be cached
-        assert!(cache.get(temp_dir.path()).unwrap().is_none());
+        assert!(cache.get(temp_dir.path())?.is_none());
+
+        let stats = cache.stats();
+        assert_eq!(stats.invalidations, 1);
+        Ok(())
     }
 
     #[test]
-    fn test_cache_clear() {
+    fn test_cache_clear() -> Result<(), Box<dyn std::error::Error>> {
         let cache = create_test_cache();
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let result = create_test_result();
 
-        // Store result
-        cache.put(temp_dir.path(), result.clone()).unwrap();
+        cache.put(temp_dir.path(), result.clone())?;
         assert!(!cache.is_empty());
 
-        // Clear cache
         cache.clear();
         assert!(cache.is_empty());
-        assert!(cache.get(temp_dir.path()).unwrap().is_none());
+        assert!(cache.get(temp_dir.path())?.is_none());
+
+        let stats = cache.stats();
+        assert_eq!(stats.invalidations, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cache_hit_rate() -> Result<(), Box<dyn std::error::Error>> {
+        let cache = create_test_cache();
+        let temp_dir = TempDir::new()?;
+        let result = create_test_result();
+
+        cache.put(temp_dir.path(), result.clone())?;
+
+        let _ = cache.get(temp_dir.path())?;
+        let _ = cache.get(temp_dir.path())?;
+        let _ = cache.get(temp_dir.path())?;
+
+        let temp_other = TempDir::new()?;
+        let _ = cache.get(temp_other.path())?;
+        let _ = cache.get(temp_other.path())?;
+
+        let stats = cache.stats();
+        assert_eq!(stats.hits, 3);
+        assert_eq!(stats.misses, 2);
+        assert_eq!((stats.hit_rate * 10.0).round() / 10.0, 60.0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cache_concurrent_access() -> Result<(), Box<dyn std::error::Error>> {
+        let cache = Arc::new(create_test_cache());
+        let temp_dir = Arc::new(TempDir::new()?);
+        let result = create_test_result();
+
+        cache.put(temp_dir.path(), result.clone())?;
+
+        let mut handles = vec![];
+
+        for _ in 0..10 {
+            let cache_clone = Arc::clone(&cache);
+            let temp_clone = Arc::clone(&temp_dir);
+            let handle = thread::spawn(move || {
+                for _ in 0..100 {
+                    let _ = cache_clone.get(temp_clone.path());
+                }
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().map_err(|_| "Thread join failed")?;
+        }
+
+        let stats = cache.stats();
+        assert_eq!(stats.hits, 1000);
+        assert!(stats.hit_rate > 99.0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_eviction_algorithm_efficiency() -> Result<(), Box<dyn std::error::Error>> {
+        let config = CacheConfig {
+            enabled: true,
+            max_entries: 100,
+            ttl_seconds: 300,
+        };
+        let cache = DetectionCache::new(config);
+        let result = create_test_result();
+
+        let mut temp_dirs = vec![];
+        for _ in 0..150 {
+            let temp = TempDir::new()?;
+            cache.put(temp.path(), result.clone())?;
+            temp_dirs.push(temp);
+        }
+
+        assert!(cache.len() <= 100);
+        assert!(cache.len() >= 80);
+
+        let stats = cache.stats();
+        assert!(stats.invalidations >= 50);
+        Ok(())
     }
 }
