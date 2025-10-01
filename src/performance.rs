@@ -1,10 +1,10 @@
 use anyhow::Result;
-use dashmap::DashMap;
+use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::fs;
 
 #[derive(Debug, Clone)]
 pub struct CachedMetadata {
@@ -42,9 +42,9 @@ impl CachedMetadata {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FileSystemCache {
-    metadata_cache: Arc<DashMap<PathBuf, CachedMetadata>>,
+    metadata_cache: Arc<Mutex<HashMap<PathBuf, CachedMetadata>>>,
     ttl_secs: u64,
     max_entries: usize,
     hits: Arc<AtomicU64>,
@@ -54,7 +54,7 @@ pub struct FileSystemCache {
 impl FileSystemCache {
     pub fn new(ttl_secs: u64, max_entries: usize) -> Self {
         Self {
-            metadata_cache: Arc::new(DashMap::new()),
+            metadata_cache: Arc::new(Mutex::new(HashMap::new())),
             ttl_secs,
             max_entries,
             hits: Arc::new(AtomicU64::new(0)),
@@ -64,12 +64,14 @@ impl FileSystemCache {
 
     pub fn get_metadata(&self, path: &Path) -> Option<CachedMetadata> {
         let path_buf = path.to_path_buf();
-        if let Some(cached) = self.metadata_cache.get(&path_buf) {
-            if cached.is_valid(self.ttl_secs) {
-                self.hits.fetch_add(1, Ordering::Relaxed);
-                return Some(cached.clone());
+        if let Ok(mut cache) = self.metadata_cache.lock() {
+            if let Some(cached) = cache.get(&path_buf) {
+                if cached.is_valid(self.ttl_secs) {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    return Some(cached.clone());
+                }
+                cache.remove(&path_buf);
             }
-            self.metadata_cache.remove(&path_buf);
         }
 
         self.misses.fetch_add(1, Ordering::Relaxed);
@@ -93,27 +95,30 @@ impl FileSystemCache {
             Err(_) => CachedMetadata::new(false, false, false, 0, 0),
         };
 
-        if self.metadata_cache.len() >= self.max_entries {
-            self.evict_oldest();
+        // Insert into cache
+        if let Ok(mut cache) = self.metadata_cache.lock() {
+            if cache.len() >= self.max_entries {
+                self.evict_oldest(&mut cache);
+            }
+            cache.insert(path_buf, metadata.clone());
         }
 
-        self.metadata_cache.insert(path_buf, metadata.clone());
         Some(metadata)
     }
 
-    fn evict_oldest(&self) {
+    fn evict_oldest(&self, cache: &mut HashMap<PathBuf, CachedMetadata>) {
         let mut oldest_key: Option<PathBuf> = None;
         let mut oldest_time = u64::MAX;
 
-        for entry in self.metadata_cache.iter() {
-            if entry.value().cached_at < oldest_time {
-                oldest_time = entry.value().cached_at;
-                oldest_key = Some(entry.key().clone());
+        for (key, value) in cache.iter() {
+            if value.cached_at < oldest_time {
+                oldest_time = value.cached_at;
+                oldest_key = Some(key.clone());
             }
         }
 
         if let Some(key) = oldest_key {
-            self.metadata_cache.remove(&key);
+            cache.remove(&key);
         }
     }
 
@@ -129,32 +134,26 @@ impl FileSystemCache {
         self.get_metadata(path).map(|m| m.is_dir).unwrap_or(false)
     }
 
-    pub async fn get_content_async(&self, path: &Path) -> Result<String> {
+    pub fn get_content(&self, path: &Path) -> Result<String> {
         let path_buf = path.to_path_buf();
         if let Some(metadata) = self.get_metadata(path) {
             if !metadata.exists || !metadata.is_file {
                 return Err(anyhow::anyhow!("File does not exist or is not a file"));
             }
         }
-        let content = fs::read_to_string(&path_buf).await?;
+        let content = fs::read_to_string(&path_buf)?;
         Ok(content)
     }
 
-    pub async fn batch_read_files(
-        &self,
-        paths: &[PathBuf],
-    ) -> Result<Vec<(PathBuf, Result<String>)>> {
-        use futures::future::join_all;
-        let read_futures: Vec<_> = paths
+    pub fn batch_read_files(&self, paths: &[PathBuf]) -> Vec<(PathBuf, Result<String>)> {
+        paths
             .iter()
-            .map(|path| async move {
+            .map(|path| {
                 let result = fs::read_to_string(path)
-                    .await
                     .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e));
                 (path.clone(), result)
             })
-            .collect();
-        Ok(join_all(read_futures).await)
+            .collect()
     }
 
     pub fn batch_get_metadata(&self, paths: &[PathBuf]) -> Vec<(PathBuf, Option<CachedMetadata>)> {
@@ -199,7 +198,9 @@ impl FileSystemCache {
     }
 
     pub fn clear(&self) {
-        self.metadata_cache.clear();
+        if let Ok(mut cache) = self.metadata_cache.lock() {
+            cache.clear();
+        }
     }
 
     pub fn stats(&self) -> CacheStats {
@@ -212,8 +213,14 @@ impl FileSystemCache {
             0.0
         };
 
+        let metadata_entries = if let Ok(cache) = self.metadata_cache.lock() {
+            cache.len()
+        } else {
+            0
+        };
+
         CacheStats {
-            metadata_entries: self.metadata_cache.len(),
+            metadata_entries,
             metadata_capacity: self.max_entries,
             hits,
             misses,
@@ -291,31 +298,31 @@ mod tests {
         assert_eq!(stats.metadata_capacity, 100);
     }
 
-    #[tokio::test]
-    async fn test_async_content_read() -> Result<(), Box<dyn std::error::Error>> {
+    #[test]
+    fn test_content_read() -> Result<(), Box<dyn std::error::Error>> {
         let cache = FileSystemCache::default();
         let temp_dir = TempDir::new()?;
         let test_file = temp_dir.path().join("test.txt");
-        tokio::fs::write(&test_file, "async content").await?;
+        std::fs::write(&test_file, "content")?;
 
-        let content = cache.get_content_async(&test_file).await?;
-        assert_eq!(content, "async content");
+        let content = cache.get_content(&test_file)?;
+        assert_eq!(content, "content");
 
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_batch_read_files() -> Result<(), Box<dyn std::error::Error>> {
+    #[test]
+    fn test_batch_read_files() -> Result<(), Box<dyn std::error::Error>> {
         let cache = FileSystemCache::default();
         let temp_dir = TempDir::new()?;
 
         let file1 = temp_dir.path().join("file1.txt");
         let file2 = temp_dir.path().join("file2.txt");
-        tokio::fs::write(&file1, "content1").await?;
-        tokio::fs::write(&file2, "content2").await?;
+        std::fs::write(&file1, "content1")?;
+        std::fs::write(&file2, "content2")?;
 
         let paths = vec![file1.clone(), file2.clone()];
-        let results = cache.batch_read_files(&paths).await?;
+        let results = cache.batch_read_files(&paths);
 
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|(_, result)| result.is_ok()));

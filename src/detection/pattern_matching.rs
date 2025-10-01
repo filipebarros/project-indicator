@@ -1,9 +1,56 @@
+//! Pattern matching with caching for efficient file pattern evaluation.
+//!
+//! # Ownership Model
+//!
+//! `PatternMatcher` is designed to be shared across multiple components via `Arc<PatternMatcher>`.
+//!
+//! ## Architecture
+//!
+//! - **Owner**: `DetectionEngine` creates a single `PatternMatcher` instance
+//! - **Shared with**:
+//!   - `ConfidenceScorer` - for language confidence calculations
+//!   - `FileScanner` -> `PatternProcessor` - for file discovery and filtering
+//!
+//! ## Why Arc?
+//!
+//! 1. **Thread Safety**: Uses `DashMap` internally for concurrent access
+//! 2. **Cache Sharing**: All components benefit from the same pattern match cache
+//! 3. **Zero Copy**: Arc clones are cheap (just reference count increments)
+//! 4. **Memory Efficiency**: Single cache instance across entire detection pipeline
+//!
+//! ## Usage Pattern
+//!
+//! ```rust,ignore
+//! // DetectionEngine creates and owns the matcher
+//! let shared_pattern_matcher = Arc::new(PatternMatcher::new());
+//!
+//! // Share with components (cheap Arc clone)
+//! let confidence_scorer = ConfidenceScorer::with_pattern_matcher(shared_pattern_matcher.clone());
+//! let file_scanner = FileScanner::with_shared_pattern_matcher(
+//!     shared_pattern_matcher.clone(),
+//!     patterns,
+//!     languages,
+//!     max_depth,
+//! );
+//! ```
+//!
+//! ## Cache Lifecycle
+//!
+//! - **Creation**: Single instance per `DetectionEngine`
+//! - **Lifetime**: Lives for entire detection run
+//! - **Clearing**: Cache is NOT cleared between language detections (intentional for performance)
+//! - **Eviction**: Automatic LRU-style eviction when cache exceeds `MAX_PATTERN_CACHE_ENTRIES`
+
 use crate::patterns::simple_wildcard_match;
 use dashmap::DashMap;
 use std::sync::Arc;
 
 const MAX_PATTERN_CACHE_ENTRIES: usize = 10000;
 
+/// Thread-safe pattern matcher with LRU-style cache eviction.
+///
+/// Designed to be wrapped in `Arc` and shared across detection components.
+/// See module-level documentation for ownership model details.
 pub struct PatternMatcher {
     cache: Arc<DashMap<(String, String), bool>>,
     max_entries: usize,

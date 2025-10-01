@@ -2,13 +2,12 @@ use crate::detection::pattern_matching::PatternMatcher;
 use crate::types::{
     ConfidenceFactor, DetectionEvidence, DirectoryType, MatchedFile, ProjectIndicator,
 };
-use dashmap::DashMap;
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 pub struct ConfidenceScorer {
     pattern_matcher: Arc<PatternMatcher>,
-    score_cache: DashMap<String, f32>,
+    score_cache: Mutex<HashMap<String, f32>>,
 }
 
 impl ConfidenceScorer {
@@ -19,16 +18,29 @@ impl ConfidenceScorer {
     pub fn with_pattern_matcher(pattern_matcher: Arc<PatternMatcher>) -> Self {
         Self {
             pattern_matcher,
-            score_cache: DashMap::new(),
+            score_cache: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn clear_cache(&self) {
-        self.score_cache.clear();
+        match self.score_cache.lock() {
+            Ok(mut cache) => {
+                cache.clear();
+            }
+            Err(e) => {
+                log::error!("ConfidenceScorer cache lock poisoned during clear: {}", e);
+            }
+        }
     }
 
     pub fn cache_stats(&self) -> usize {
-        self.score_cache.len()
+        match self.score_cache.lock() {
+            Ok(cache) => cache.len(),
+            Err(e) => {
+                log::warn!("ConfidenceScorer cache lock poisoned during stats: {}", e);
+                0
+            }
+        }
     }
 
     pub fn get_pattern_importance(
@@ -93,8 +105,20 @@ impl ConfidenceScorer {
 
         let cache_key = format!("{}:{}", language.name, matched_files.len());
 
-        if let Some(cached_score) = self.score_cache.get(&cache_key) {
-            return *cached_score.value();
+        match self.score_cache.lock() {
+            Ok(cache) => {
+                if let Some(&cached_score) = cache.get(&cache_key) {
+                    return cached_score;
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "ConfidenceScorer cache lock poisoned during read for '{}': {}",
+                    language.name,
+                    e
+                );
+                // Continue with score calculation as fallback
+            }
         }
 
         let mut weighted_score = 0.0;
@@ -135,7 +159,19 @@ impl ConfidenceScorer {
             0.0
         };
 
-        self.score_cache.insert(cache_key, final_score);
+        match self.score_cache.lock() {
+            Ok(mut cache) => {
+                cache.insert(cache_key, final_score);
+            }
+            Err(e) => {
+                log::warn!(
+                    "ConfidenceScorer cache lock poisoned during insert for '{}': {}",
+                    language.name,
+                    e
+                );
+                // Still return the computed score
+            }
+        }
         final_score
     }
 

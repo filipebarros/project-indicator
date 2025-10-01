@@ -2,35 +2,57 @@ use crate::constants::{
     EARLY_TERMINATION, EARLY_TERMINATION_MSG, FRAMEWORK_DETECTION_SKIPPED,
     FRAMEWORK_DETECTION_SKIPPED_MSG,
 };
-use crate::detection::cache::{CachedDetection, DetectionCache};
+use crate::detection::caches::{CachedDetection, DetectionCache, FileSystemCacheManager};
 use crate::detection::confidence_scorer::ConfidenceScorer;
 use crate::detection::file_scanner::FileScanner;
 use crate::detection::framework_detector::FrameworkDetector;
 use crate::detection::language_resolver::LanguageResolver;
-use crate::detection::parsed_file_cache::ParsedFileCache;
+use crate::detection::pattern_compiler::PatternCompiler;
 use crate::detection::pattern_matching::PatternMatcher;
 use crate::detection::root_indicators::RootIndicatorEngine;
-use crate::performance::FileSystemCache;
 use crate::types::{
     DetectionConfig, DetectionEvidence, DetectionResult, DetectionType, MatchedFile,
     ProjectIndicator,
 };
 use crate::Result;
 use anyhow::Context;
-use regex::Regex;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+/// Main detection engine for identifying project languages and frameworks.
+///
+/// The DetectionEngine coordinates multiple specialized components to analyze
+/// a project directory and determine its primary language and frameworks.
+///
+/// ## Architecture
+///
+/// - **PatternCompiler**: Extracts and compiles file patterns from language definitions
+/// - **FileSystemCacheManager**: Manages file existence and parsed file caches
+/// - **FileScanner**: Performs directory traversal and file matching
+/// - **LanguageResolver**: Resolves language conflicts when multiple languages detected
+/// - **ConfidenceScorer**: Calculates confidence scores for language matches
+/// - **FrameworkDetector**: Identifies frameworks within detected languages
+/// - **RootIndicatorEngine**: Fast path detection using root indicator files
+///
+/// ## Shared Resources
+///
+/// ### PatternMatcher Ownership
+///
+/// DetectionEngine creates a single `Arc<PatternMatcher>` instance and shares it with:
+/// - `ConfidenceScorer` - for calculating language match confidence
+/// - `FileScanner` (via `PatternProcessor`) - for efficient file pattern matching
+///
+/// This design ensures:
+/// 1. **Single cache instance** - All pattern matches benefit from shared cache
+/// 2. **Memory efficiency** - No duplicate matcher instances
+/// 3. **Thread safety** - PatternMatcher uses DashMap for concurrent access
+/// 4. **Performance** - Cache hits across entire detection pipeline
 pub struct DetectionEngine {
     languages: Vec<Arc<ProjectIndicator>>,
-    pattern_cache: HashMap<String, Regex>,
-    unique_patterns: Vec<String>,
     config: DetectionConfig,
 
-    file_existence_cache: FileSystemCache,
-    parsed_file_cache: ParsedFileCache,
-
+    // Specialized components
+    cache_manager: FileSystemCacheManager,
     confidence_scorer: ConfidenceScorer,
     language_resolver: LanguageResolver,
     framework_detector: FrameworkDetector,
@@ -48,60 +70,40 @@ impl DetectionEngine {
         detection_config: DetectionConfig,
     ) -> Self {
         let languages: Vec<Arc<ProjectIndicator>> = languages.into_iter().map(Arc::new).collect();
+
+        // Create a single shared PatternMatcher instance for all components
         let shared_pattern_matcher = Arc::new(PatternMatcher::new());
 
-        let mut engine = Self {
+        // Create specialized components
+        let pattern_compiler = PatternCompiler::new(&languages);
+        let cache_manager = FileSystemCacheManager::new();
+
+        let file_scanner = FileScanner::with_shared_pattern_matcher(
+            shared_pattern_matcher.clone(),
+            pattern_compiler.unique_patterns(),
+            languages.clone(),
+            detection_config.max_depth,
+        );
+
+        Self {
             languages: languages.clone(),
-            pattern_cache: HashMap::new(),
-            unique_patterns: Vec::new(),
             config: detection_config.clone(),
-            file_existence_cache: FileSystemCache::new(300, 10000),
-            parsed_file_cache: ParsedFileCache::new(),
+            cache_manager,
             confidence_scorer: ConfidenceScorer::with_pattern_matcher(
                 shared_pattern_matcher.clone(),
             ),
             language_resolver: LanguageResolver::new(),
             framework_detector: FrameworkDetector::new(),
-            file_scanner: FileScanner::new(Vec::new()),
+            file_scanner,
             root_indicator_engine: RootIndicatorEngine::from_arc_languages(
-                languages.clone(),
+                languages,
                 detection_config,
             ),
-        };
-        engine.precompute_patterns();
-        engine
-    }
-
-    fn precompute_patterns(&mut self) {
-        let mut all_patterns = std::collections::HashSet::new();
-
-        for language in &self.languages {
-            for pattern in &language.files {
-                all_patterns.insert(pattern.clone());
-            }
-        }
-
-        self.unique_patterns = all_patterns.into_iter().collect();
-
-        self.file_scanner = FileScanner::with_languages_and_depth(
-            self.unique_patterns.clone(),
-            self.languages.clone(),
-            self.config.max_depth,
-        );
-
-        for pattern in &self.unique_patterns {
-            if pattern.contains('*') {
-                if let Some(regex_pattern) = crate::patterns::pattern_to_regex(pattern) {
-                    if let Ok(regex) = regex::Regex::new(&regex_pattern) {
-                        self.pattern_cache.insert(pattern.clone(), regex);
-                    }
-                }
-            }
         }
     }
 
     pub fn cached_file_exists(&self, path: &Path) -> bool {
-        self.file_existence_cache.exists(path)
+        self.cache_manager.file_exists(path)
     }
 
     pub fn detect(&self, path: &Path) -> Result<DetectionResult> {
@@ -110,7 +112,7 @@ impl DetectionEngine {
 
         if let Some(early_result) = self
             .root_indicator_engine
-            .detect_with_early_termination(path, &self.file_existence_cache)
+            .detect_with_early_termination(path, self.cache_manager.file_existence_cache())
             .with_context(|| "Failed to check root indicators")?
         {
             evidence.add_confidence_factor(crate::types::ConfidenceFactor::new(
@@ -139,8 +141,8 @@ impl DetectionEngine {
                             path,
                             language,
                             &mut evidence,
-                            &self.file_existence_cache,
-                            &self.parsed_file_cache,
+                            self.cache_manager.file_existence_cache(),
+                            self.cache_manager.parsed_file_cache(),
                         )
                         .with_context(|| "Failed to detect frameworks")?
                 } else {
@@ -213,8 +215,8 @@ impl DetectionEngine {
                     path,
                     &language,
                     &mut evidence,
-                    &self.file_existence_cache,
-                    &self.parsed_file_cache,
+                    self.cache_manager.file_existence_cache(),
+                    self.cache_manager.parsed_file_cache(),
                 )
                 .with_context(|| "Failed to detect frameworks")?
         } else {
@@ -251,14 +253,8 @@ impl DetectionEngine {
         self.languages.iter().flat_map(|lang| &lang.files).collect()
     }
 
-    pub fn batch_collect_files(
-        &self,
-        base_path: &Path,
-        patterns: &[String],
-    ) -> Result<Vec<MatchedFile>> {
-        let pattern_refs: Vec<&String> = patterns.iter().collect();
-        self.file_scanner
-            .batch_collect_files(base_path, &pattern_refs)
+    pub fn batch_collect_files(&self, base_path: &Path) -> Result<Vec<MatchedFile>> {
+        self.file_scanner.batch_collect_files(base_path)
     }
 
     pub fn get_performance_stats(&self) -> crate::performance::CacheStats {
@@ -267,8 +263,7 @@ impl DetectionEngine {
 
     pub fn clear_caches(&mut self) {
         self.file_scanner.clear_caches();
-        self.file_existence_cache.clear();
-        self.parsed_file_cache.clear();
+        self.cache_manager.clear_all();
     }
 
     pub fn get_root_indicator_stats(
@@ -356,7 +351,7 @@ mod tests {
         let engine = DetectionEngine::with_config(languages, config);
 
         assert_eq!(engine.languages.len(), 1);
-        assert!(!engine.unique_patterns.is_empty());
+        // Pattern compilation is handled internally during initialization
         Ok(())
     }
 
@@ -455,8 +450,7 @@ mod tests {
         let engine = DetectionEngine::new(languages);
         let temp_dir = create_test_directory()?;
 
-        let patterns = vec!["Cargo.toml".to_string(), "*.rs".to_string()];
-        let files = engine.batch_collect_files(temp_dir.path(), &patterns)?;
+        let files = engine.batch_collect_files(temp_dir.path())?;
 
         assert!(!files.is_empty());
         let filenames: Vec<&str> = files.iter().map(|f| f.filename.as_str()).collect();

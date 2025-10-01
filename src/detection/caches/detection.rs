@@ -21,6 +21,28 @@ pub struct CacheEntry {
     pub file_hash: u64,
 }
 
+/// High-level cache for complete detection results.
+///
+/// ## Architecture Note
+///
+/// This cache operates at the **application level** and is separate from
+/// `CacheManager` (in `cache_manager.rs`), which handles low-level file operations:
+///
+/// - **DetectionCache** (this module): High-level result cache
+///   - Caches: Entire `DetectionResult` objects (language, frameworks, confidence)
+///   - Lifetime: Persistent across CLI invocations
+///   - Purpose: Avoid re-detecting unchanged projects
+///   - Invalidation: Based on file modification times and TTL
+///
+/// - **CacheManager**: Low-level infrastructure cache
+///   - Caches: File existence, file metadata, parsed file contents
+///   - Lifetime: Single detection run only
+///   - Purpose: Avoid redundant file system operations during detection
+///
+/// ## Usage
+///
+/// Used by CLI commands to cache detection results between invocations,
+/// significantly speeding up repeated detections of the same project.
 pub struct DetectionCache {
     cache: DashMap<CacheKey, CacheEntry>,
     config: CacheConfig,

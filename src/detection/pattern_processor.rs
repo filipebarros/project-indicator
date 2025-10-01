@@ -1,33 +1,29 @@
 use crate::detection::pattern_matching::PatternMatcher;
 use crate::types::{MatchedFile, ProjectIndicator};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct PatternProcessor {
     pattern_matcher: Arc<PatternMatcher>,
-    unique_patterns: Vec<String>,
+    unique_patterns: Arc<Vec<String>>,
     extension_filter: HashSet<String>,
     exact_patterns: HashSet<String>,
     high_priority_files: Arc<HashSet<String>>,
-    extension_cache: Arc<HashMap<String, bool>>,
-    exact_cache: Arc<HashMap<String, bool>>,
 }
 
 impl PatternProcessor {
     pub fn new(
         pattern_matcher: Arc<PatternMatcher>,
-        patterns: Vec<String>,
+        patterns: Arc<Vec<String>>,
         languages: Vec<Arc<ProjectIndicator>>,
     ) -> Self {
         let mut extension_filter = HashSet::new();
         let mut exact_patterns = HashSet::new();
         let mut high_priority_files = HashSet::new();
-        let mut extension_cache = HashMap::new();
-        let mut exact_cache = HashMap::new();
 
-        for pattern in &patterns {
+        for pattern in patterns.iter() {
             if pattern.contains('*') || pattern.contains('?') {
                 if let Some(ext) = pattern.strip_prefix("*.") {
                     extension_filter.insert(ext.to_string());
@@ -47,40 +43,22 @@ impl PatternProcessor {
             }
         }
 
-        for ext in &extension_filter {
-            extension_cache.insert(ext.clone(), true);
-        }
-
-        for filename in &exact_patterns {
-            exact_cache.insert(filename.clone(), true);
-        }
-
         Self {
             pattern_matcher,
             unique_patterns: patterns,
             extension_filter,
             exact_patterns,
             high_priority_files: Arc::new(high_priority_files),
-            extension_cache: Arc::new(extension_cache),
-            exact_cache: Arc::new(exact_cache),
         }
     }
 
     pub fn should_scan_file(&self, filename: &str) -> bool {
-        if let Some(&should_scan) = self.exact_cache.get(filename) {
-            return should_scan;
-        }
-
         if self.exact_patterns.contains(filename) {
             return true;
         }
 
         if let Some(ext) = filename.split('.').next_back() {
-            if let Some(&should_scan) = self.extension_cache.get(ext) {
-                if should_scan {
-                    return true;
-                }
-            } else if self.extension_filter.contains(ext) {
+            if self.extension_filter.contains(ext) {
                 return true;
             }
         }

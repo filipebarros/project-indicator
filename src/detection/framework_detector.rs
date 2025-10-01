@@ -1,5 +1,5 @@
+use crate::detection::caches::ParsedFileCache;
 use crate::detection::matchers::DependencyMatcher;
-use crate::detection::parsed_file_cache::ParsedFileCache;
 use crate::performance::FileSystemCache;
 use crate::types::{
     DetectionEvidence, DetectionType, EvidenceItem, FrameworkMatch, ProjectIndicator,
@@ -288,7 +288,7 @@ mod tests {
 
         let temp_dir = TempDir::new()?;
         let file_cache = FileSystemCache::new(300, 1000);
-        let parsed_cache = crate::detection::parsed_file_cache::ParsedFileCache::new();
+        let parsed_cache = crate::detection::caches::ParsedFileCache::new();
         let result = detector.detect_frameworks(
             temp_dir.path(),
             &empty_language,
@@ -315,7 +315,7 @@ mod tests {
 
         let temp_dir = TempDir::new()?;
         let file_cache = FileSystemCache::new(300, 1000);
-        let parsed_cache = crate::detection::parsed_file_cache::ParsedFileCache::new();
+        let parsed_cache = crate::detection::caches::ParsedFileCache::new();
         let frameworks =
             detector.detect_frameworks(temp_dir.path(), &language, &file_cache, &parsed_cache)?;
 
@@ -517,7 +517,7 @@ tokio = "1.0"
         let mut evidence = DetectionEvidence::new();
 
         let file_cache = FileSystemCache::new(300, 1000);
-        let parsed_cache = crate::detection::parsed_file_cache::ParsedFileCache::new();
+        let parsed_cache = crate::detection::caches::ParsedFileCache::new();
         let frameworks = detector.detect_frameworks_with_evidence(
             temp_dir.path(),
             &language,
