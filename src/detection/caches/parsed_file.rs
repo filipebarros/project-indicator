@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use dashmap::DashMap;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 const MAX_FILE_SIZE: u64 = 1_048_576;
 const MAX_CACHE_SIZE: usize = 52_428_800;
@@ -11,7 +11,7 @@ const MAX_ENTRIES: usize = 1000;
 
 #[derive(Debug)]
 pub struct ParsedFileCache {
-    content_cache: DashMap<PathBuf, Option<Arc<String>>>,
+    content_cache: Mutex<HashMap<PathBuf, Option<Arc<String>>>>,
     total_size: Arc<AtomicUsize>,
     max_cache_size: usize,
     max_entries: usize,
@@ -26,7 +26,7 @@ impl Default for ParsedFileCache {
 impl ParsedFileCache {
     pub fn new() -> Self {
         Self {
-            content_cache: DashMap::new(),
+            content_cache: Mutex::new(HashMap::new()),
             total_size: Arc::new(AtomicUsize::new(0)),
             max_cache_size: MAX_CACHE_SIZE,
             max_entries: MAX_ENTRIES,
@@ -35,7 +35,7 @@ impl ParsedFileCache {
 
     pub fn with_limits(max_cache_size: usize, max_entries: usize) -> Self {
         Self {
-            content_cache: DashMap::new(),
+            content_cache: Mutex::new(HashMap::new()),
             total_size: Arc::new(AtomicUsize::new(0)),
             max_cache_size,
             max_entries,
@@ -45,21 +45,51 @@ impl ParsedFileCache {
     pub fn get_file_content<P: AsRef<Path>>(&self, file_path: P) -> Result<Option<Arc<String>>> {
         let file_path = file_path.as_ref().to_path_buf();
 
-        if let Some(cached_result) = self.content_cache.get(&file_path) {
-            return Ok(cached_result.value().clone());
+        // Check cache first (short-lived read lock)
+        match self.content_cache.lock() {
+            Ok(cache) => {
+                if let Some(cached_result) = cache.get(&file_path) {
+                    return Ok(cached_result.clone());
+                }
+                // Drop lock before expensive I/O
+            }
+            Err(e) => {
+                log::warn!(
+                    "ParsedFileCache lock poisoned during read for {:?}: {}",
+                    file_path,
+                    e
+                );
+                // Continue with file read as fallback
+            }
         }
 
+        // Check if file exists (no lock held)
         if !file_path.exists() {
-            self.content_cache.insert(file_path, None);
+            let result = None;
+            // Single lock acquisition to insert None
+            match self.content_cache.lock() {
+                Ok(mut cache) => {
+                    cache.insert(file_path, result);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "ParsedFileCache lock poisoned during None insert for {:?}: {}",
+                        file_path,
+                        e
+                    );
+                }
+            }
             return Ok(None);
         }
 
+        // Read metadata and file content (no lock held - expensive I/O)
         let metadata = fs::metadata(&file_path)
             .with_context(|| format!("Failed to get metadata for: {}", file_path.display()))?;
 
         if metadata.len() > MAX_FILE_SIZE {
             let content = fs::read_to_string(&file_path)
                 .with_context(|| format!("Failed to read large file: {}", file_path.display()))?;
+            // Don't cache large files
             return Ok(Some(Arc::new(content)));
         }
 
@@ -69,18 +99,30 @@ impl ParsedFileCache {
         let content_size = content.len();
         let result = Some(Arc::new(content));
 
-        if self.content_cache.len() >= self.max_entries {
-            self.evict_entries();
+        // Single lock acquisition for final insert
+        match self.content_cache.lock() {
+            Ok(mut cache) => {
+                if cache.len() >= self.max_entries {
+                    self.evict_entries_locked(&mut cache);
+                }
+                cache.insert(file_path, result.clone());
+                self.total_size.fetch_add(content_size, Ordering::Relaxed);
+            }
+            Err(e) => {
+                log::warn!(
+                    "ParsedFileCache lock poisoned during content insert for {:?}: {}",
+                    file_path,
+                    e
+                );
+                // Still return the content we read
+            }
         }
-
-        self.content_cache.insert(file_path, result.clone());
-        self.total_size.fetch_add(content_size, Ordering::Relaxed);
 
         Ok(result)
     }
 
-    fn evict_entries(&self) {
-        let current_entries = self.content_cache.len();
+    fn evict_entries_locked(&self, cache: &mut HashMap<PathBuf, Option<Arc<String>>>) {
+        let current_entries = cache.len();
         let target_size = (self.max_entries as f64 * 0.75) as usize;
         let to_remove = current_entries.saturating_sub(target_size);
 
@@ -89,19 +131,14 @@ impl ParsedFileCache {
         }
 
         let mut removed_size = 0;
+        let mut keys_to_remove: Vec<PathBuf> = cache.keys().take(to_remove).cloned().collect();
 
-        for (count, entry) in self.content_cache.iter().enumerate() {
-            if count >= to_remove {
-                break;
+        for key in keys_to_remove.drain(..) {
+            if let Some(entry) = cache.remove(&key) {
+                if let Some(content) = entry.as_ref() {
+                    removed_size += content.len();
+                }
             }
-
-            let key = entry.key().clone();
-            if let Some(content) = entry.value().as_ref() {
-                removed_size += content.len();
-            }
-            drop(entry);
-
-            self.content_cache.remove(&key);
         }
 
         if removed_size > 0 {
@@ -226,13 +263,28 @@ impl ParsedFileCache {
     }
 
     pub fn clear(&self) {
-        self.content_cache.clear();
-        self.total_size.store(0, Ordering::Relaxed);
+        match self.content_cache.lock() {
+            Ok(mut cache) => {
+                cache.clear();
+                self.total_size.store(0, Ordering::Relaxed);
+            }
+            Err(e) => {
+                log::error!("ParsedFileCache lock poisoned during clear: {}", e);
+            }
+        }
     }
 
     pub fn stats(&self) -> CacheStats {
+        let entries = match self.content_cache.lock() {
+            Ok(cache) => cache.len(),
+            Err(e) => {
+                log::warn!("ParsedFileCache lock poisoned during stats: {}", e);
+                0
+            }
+        };
+
         CacheStats {
-            entries: self.content_cache.len(),
+            entries,
             total_size_bytes: self.total_size.load(Ordering::Relaxed),
             max_size_bytes: self.max_cache_size,
             max_entries: self.max_entries,
