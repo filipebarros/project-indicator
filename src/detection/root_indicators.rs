@@ -295,7 +295,9 @@ impl RootIndicatorEngine {
         &self,
         indicators: &'a [FoundRootIndicator],
     ) -> Option<&'a FoundRootIndicator> {
-        debug_assert!(!indicators.is_empty(), "indicators should not be empty");
+        if indicators.is_empty() {
+            return None;
+        }
 
         indicators.iter().max_by(|a, b| {
             a.certainty

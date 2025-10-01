@@ -105,7 +105,11 @@ impl ParsedFileCache {
         }
 
         if removed_size > 0 {
-            self.total_size.fetch_sub(removed_size, Ordering::Relaxed);
+            self.total_size
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                    Some(current.saturating_sub(removed_size))
+                })
+                .ok();
         }
     }
 

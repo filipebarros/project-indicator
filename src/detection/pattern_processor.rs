@@ -11,9 +11,6 @@ pub struct PatternProcessor {
     extension_filter: HashSet<String>,
     exact_patterns: HashSet<String>,
     high_priority_files: Arc<HashSet<String>>,
-
-    compiled_patterns: Arc<HashMap<String, bool>>,
-
     extension_cache: Arc<HashMap<String, bool>>,
     exact_cache: Arc<HashMap<String, bool>>,
 }
@@ -24,21 +21,49 @@ impl PatternProcessor {
         patterns: Vec<String>,
         languages: Vec<Arc<ProjectIndicator>>,
     ) -> Self {
-        let mut processor = Self {
+        let mut extension_filter = HashSet::new();
+        let mut exact_patterns = HashSet::new();
+        let mut high_priority_files = HashSet::new();
+        let mut extension_cache = HashMap::new();
+        let mut exact_cache = HashMap::new();
+
+        for pattern in &patterns {
+            if pattern.contains('*') || pattern.contains('?') {
+                if let Some(ext) = pattern.strip_prefix("*.") {
+                    extension_filter.insert(ext.to_string());
+                }
+            } else {
+                exact_patterns.insert(pattern.clone());
+            }
+        }
+
+        for language in &languages {
+            if language.priority <= 2 {
+                for file_pattern in &language.files {
+                    if !file_pattern.contains('*') && !file_pattern.contains('?') {
+                        high_priority_files.insert(file_pattern.clone());
+                    }
+                }
+            }
+        }
+
+        for ext in &extension_filter {
+            extension_cache.insert(ext.clone(), true);
+        }
+
+        for filename in &exact_patterns {
+            exact_cache.insert(filename.clone(), true);
+        }
+
+        Self {
             pattern_matcher,
             unique_patterns: patterns,
-            extension_filter: HashSet::new(),
-            exact_patterns: HashSet::new(),
-            high_priority_files: Arc::new(HashSet::new()),
-            compiled_patterns: Arc::new(HashMap::new()),
-            extension_cache: Arc::new(HashMap::new()),
-            exact_cache: Arc::new(HashMap::new()),
-        };
-
-        processor.precompute_patterns();
-        processor.precompute_high_priority_files(languages);
-        processor.precompute_caches();
-        processor
+            extension_filter,
+            exact_patterns,
+            high_priority_files: Arc::new(high_priority_files),
+            extension_cache: Arc::new(extension_cache),
+            exact_cache: Arc::new(exact_cache),
+        }
     }
 
     pub fn should_scan_file(&self, filename: &str) -> bool {
@@ -131,63 +156,6 @@ impl PatternProcessor {
         }
 
         0.7
-    }
-
-    fn precompute_patterns(&mut self) {
-        let mut extensions = HashSet::new();
-        let mut exact = HashSet::new();
-
-        for pattern in &self.unique_patterns {
-            if pattern.contains('*') || pattern.contains('?') {
-                if let Some(ext) = pattern.strip_prefix("*.") {
-                    extensions.insert(ext.to_string());
-                }
-            } else {
-                exact.insert(pattern.clone());
-            }
-        }
-
-        self.extension_filter = extensions;
-        self.exact_patterns = exact;
-    }
-
-    fn precompute_high_priority_files(&mut self, languages: Vec<Arc<ProjectIndicator>>) {
-        let mut high_priority_files = HashSet::new();
-
-        for language in &languages {
-            if language.priority <= 2 {
-                for file_pattern in &language.files {
-                    if !file_pattern.contains('*') && !file_pattern.contains('?') {
-                        high_priority_files.insert(file_pattern.clone());
-                    }
-                }
-            }
-        }
-
-        self.high_priority_files = Arc::new(high_priority_files);
-    }
-
-    fn precompute_caches(&mut self) {
-        let mut compiled_patterns = HashMap::new();
-        let mut extension_cache = HashMap::new();
-        let mut exact_cache = HashMap::new();
-
-        for pattern in &self.unique_patterns {
-            let has_wildcards = pattern.contains('*') || pattern.contains('?');
-            compiled_patterns.insert(pattern.clone(), has_wildcards);
-        }
-
-        for ext in &self.extension_filter {
-            extension_cache.insert(ext.clone(), true);
-        }
-
-        for filename in &self.exact_patterns {
-            exact_cache.insert(filename.clone(), true);
-        }
-
-        self.compiled_patterns = Arc::new(compiled_patterns);
-        self.extension_cache = Arc::new(extension_cache);
-        self.exact_cache = Arc::new(exact_cache);
     }
 
     pub fn get_patterns(&self) -> &[String] {
