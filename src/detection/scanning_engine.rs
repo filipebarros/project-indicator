@@ -203,7 +203,7 @@ impl ScanningEngine {
                                 if engine.pattern_processor.is_strong_evidence(filename) {
                                     let current_count = strong_evidence_count
                                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                    if current_count >= config.early_termination_threshold {
+                                    if current_count + 1 >= config.early_termination_threshold {
                                         should_stop
                                             .store(true, std::sync::atomic::Ordering::Relaxed);
                                         return ignore::WalkState::Quit;

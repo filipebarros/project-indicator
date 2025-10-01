@@ -85,9 +85,12 @@ pub fn simple_wildcard_match(text: &str, pattern: &str) -> bool {
         }
     }
 
-    let mut parts = pattern.split('*');
-    let first_part = parts.next().unwrap_or("");
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.is_empty() {
+        return true;
+    }
 
+    let first_part = parts[0];
     let mut search_start = if first_part.is_empty() {
         0
     } else {
@@ -97,7 +100,7 @@ pub fn simple_wildcard_match(text: &str, pattern: &str) -> bool {
         first_part.len()
     };
 
-    for part in parts {
+    for part in &parts[1..] {
         if part.is_empty() {
             continue;
         }
