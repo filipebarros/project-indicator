@@ -135,7 +135,8 @@ impl FileScanner {
     }
 
     fn scan_priority_files(&self, path: &Path) -> Result<Option<Vec<MatchedFile>>> {
-        let mut matches = Vec::new();
+        let high_priority_files = self.pattern_processor.get_high_priority_files();
+        let mut matches = Vec::with_capacity(high_priority_files.len());
 
         for filename in self.pattern_processor.get_high_priority_files() {
             let file_path = path.join(filename);
