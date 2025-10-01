@@ -53,9 +53,9 @@ impl FrameworkDetector {
 
         let mut all_matches = Vec::new();
 
-        let mut file_exists_frameworks = Vec::new();
-        let mut config_file_frameworks = Vec::new();
-        let mut dependency_frameworks = Vec::new();
+        let mut file_exists_frameworks = Vec::with_capacity(language.frameworks.len());
+        let mut config_file_frameworks = Vec::with_capacity(language.frameworks.len());
+        let mut dependency_frameworks = Vec::with_capacity(language.frameworks.len());
 
         for framework in &language.frameworks {
             match &framework.detection {

@@ -75,7 +75,8 @@ impl ConflictResolver {
         languages: &[ProjectIndicator],
         vcs_indicators: &[RootIndicator],
     ) -> Vec<RootIndicator> {
-        let mut pattern_sources: HashMap<String, Vec<ConflictSource>> = HashMap::new();
+        let mut pattern_sources: HashMap<String, Vec<ConflictSource>> =
+            HashMap::with_capacity(vcs_indicators.len());
 
         for indicator in vcs_indicators {
             pattern_sources
