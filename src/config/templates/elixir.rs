@@ -11,12 +11,16 @@ pub fn create_elixir_language() -> ProjectIndicator {
             "mix.lock".to_string(),
         ],
         "#6e4a7e".to_string(),
-        nerd_icon("e62d"),
+        nerd_icon("e7cd"),
         8,
         vec![framework(
             "Phoenix",
-            DetectionType::FileExists {
-                files: vec!["lib/*_web".to_string(), "assets".to_string()],
+            DetectionType::ElixirEcosystem {
+                dependencies: vec![
+                    "phoenix".to_string(),
+                    "phoenix_html".to_string(),
+                    "phoenix_live_view".to_string(),
+                ],
             },
             Some(nerd_icon("e860")),
             Some("#ff6600"),

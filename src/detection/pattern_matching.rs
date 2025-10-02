@@ -9,7 +9,7 @@
 //! - **Owner**: `DetectionEngine` creates a single `PatternMatcher` instance
 //! - **Shared with**:
 //!   - `ConfidenceScorer` - for language confidence calculations
-//!   - `FileScanner` -> `PatternProcessor` - for file discovery and filtering
+//!   - `ScanningEngine` -> `PatternProcessor` - for file discovery and filtering
 //!
 //! ## Why Arc?
 //!
@@ -20,18 +20,21 @@
 //!
 //! ## Usage Pattern
 //!
-//! ```rust,ignore
+//! ```rust
+//! use project_indicator::detection::pattern_matching::PatternMatcher;
+//! use std::sync::Arc;
+//!
 //! // DetectionEngine creates and owns the matcher
 //! let shared_pattern_matcher = Arc::new(PatternMatcher::new());
 //!
 //! // Share with components (cheap Arc clone)
-//! let confidence_scorer = ConfidenceScorer::with_pattern_matcher(shared_pattern_matcher.clone());
-//! let file_scanner = FileScanner::with_shared_pattern_matcher(
-//!     shared_pattern_matcher.clone(),
-//!     patterns,
-//!     languages,
-//!     max_depth,
-//! );
+//! // This allows multiple components to use the same cache
+//! let matcher_clone1 = shared_pattern_matcher.clone();
+//! let matcher_clone2 = shared_pattern_matcher.clone();
+//!
+//! // Test pattern matching
+//! assert!(matcher_clone1.matches_pattern("src/main.rs", "*.rs"));
+//! assert!(matcher_clone2.matches_pattern("test.py", "*.py"));
 //! ```
 //!
 //! ## Cache Lifecycle
@@ -43,6 +46,7 @@
 
 use crate::patterns::simple_wildcard_match;
 use dashmap::DashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 const MAX_PATTERN_CACHE_ENTRIES: usize = 10000;
@@ -51,9 +55,17 @@ const MAX_PATTERN_CACHE_ENTRIES: usize = 10000;
 ///
 /// Designed to be wrapped in `Arc` and shared across detection components.
 /// See module-level documentation for ownership model details.
+///
+/// Cache structure: `DashMap<pattern, DashMap<filename, bool>>`
+/// This reduces allocations since patterns are reused heavily across many files.
 pub struct PatternMatcher {
-    cache: Arc<DashMap<(String, String), bool>>,
+    cache: Arc<DashMap<String, DashMap<String, bool>>>,
     max_entries: usize,
+    total_entries: AtomicUsize,
+    cache_hits: AtomicUsize,
+    cache_misses: AtomicUsize,
+    // Memory tracking
+    total_memory_bytes: AtomicUsize,
 }
 
 impl PatternMatcher {
@@ -61,23 +73,49 @@ impl PatternMatcher {
         Self {
             cache: Arc::new(DashMap::new()),
             max_entries: MAX_PATTERN_CACHE_ENTRIES,
+            total_entries: AtomicUsize::new(0),
+            cache_hits: AtomicUsize::new(0),
+            cache_misses: AtomicUsize::new(0),
+            total_memory_bytes: AtomicUsize::new(0),
         }
     }
 
-    pub fn clear_cache(&self) {
-        self.cache.clear();
+    /// Returns (entry_count, memory_bytes, hit_rate)
+    pub fn cache_stats(&self) -> (usize, usize, f64) {
+        let entries = self.total_entries.load(Ordering::Relaxed);
+        let memory = self.total_memory_bytes.load(Ordering::Relaxed);
+        let hits = self.cache_hits.load(Ordering::Relaxed);
+        let misses = self.cache_misses.load(Ordering::Relaxed);
+        let total_accesses = hits + misses;
+        let hit_rate = if total_accesses > 0 {
+            (hits as f64 / total_accesses as f64) * 100.0
+        } else {
+            0.0
+        };
+        (entries, memory, hit_rate)
     }
 
-    pub fn cache_stats(&self) -> usize {
-        self.cache.len()
+    /// Estimate memory usage of a cache entry
+    /// String overhead (3 words) + capacity + filename + bool
+    fn estimate_entry_size(pattern: &str, filename: &str) -> usize {
+        const STRING_OVERHEAD: usize = 24; // 3 words on 64-bit systems
+        const BOOL_SIZE: usize = 1;
+        STRING_OVERHEAD + pattern.len() + STRING_OVERHEAD + filename.len() + BOOL_SIZE
     }
 
     pub fn matches_pattern(&self, file_name: &str, pattern: &str) -> bool {
-        let cache_key = (file_name.to_string(), pattern.to_string());
-
-        if let Some(cached_result) = self.cache.get(&cache_key) {
-            return *cached_result;
+        // Check cache: pattern -> filename -> result
+        // Using &str for lookup avoids allocating the pattern string on cache hits
+        if let Some(pattern_cache) = self.cache.get(pattern) {
+            if let Some(result) = pattern_cache.value().get(file_name) {
+                self.cache_hits.fetch_add(1, Ordering::Relaxed);
+                return *result;
+            }
+            // Pattern exists but filename doesn't - compute result and insert
+            drop(pattern_cache); // Release lock before computing
         }
+
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
 
         let result = if pattern.contains('*') {
             self.optimized_wildcard_match(file_name, pattern)
@@ -85,26 +123,67 @@ impl PatternMatcher {
             file_name == pattern
         };
 
-        if self.cache.len() >= self.max_entries {
+        // Insert into cache - ensure pattern cache exists first
+        self.cache
+            .entry(pattern.to_string())
+            .or_default()
+            .value()
+            .insert(file_name.to_string(), result);
+
+        // Track memory and entry count
+        let entry_size = Self::estimate_entry_size(pattern, file_name);
+        self.total_memory_bytes
+            .fetch_add(entry_size, Ordering::Relaxed);
+
+        // Increment total entries counter and check for eviction
+        let new_total = self.total_entries.fetch_add(1, Ordering::Relaxed) + 1;
+        if new_total >= self.max_entries {
             self.evict_entries();
         }
-
-        self.cache.insert(cache_key, result);
 
         result
     }
 
     fn evict_entries(&self) {
         let target_size = (self.max_entries as f64 * 0.75) as usize;
-        let to_remove = self.cache.len().saturating_sub(target_size);
+        let current_size = self.total_entries.load(Ordering::Relaxed);
 
-        for (removed, entry) in self.cache.iter().enumerate() {
-            if removed >= to_remove {
+        if current_size <= target_size {
+            return;
+        }
+
+        // Remove entire pattern caches until we're under the target
+        // This is simpler and faster than removing individual entries
+        let mut patterns_to_remove = Vec::new();
+        let mut removed_count = 0;
+        let to_remove = current_size.saturating_sub(target_size);
+
+        for entry in self.cache.iter() {
+            if removed_count >= to_remove {
                 break;
             }
-            let key = entry.key().clone();
-            drop(entry);
-            self.cache.remove(&key);
+            let pattern_cache_size = entry.value().len();
+            patterns_to_remove.push(entry.key().clone());
+            removed_count += pattern_cache_size;
+        }
+
+        // Remove patterns and update counters (both entry count and memory)
+        for pattern in patterns_to_remove {
+            if let Some((pattern_key, removed_cache)) = self.cache.remove(&pattern) {
+                let removed_entry_count = removed_cache.len();
+
+                // Calculate total memory freed
+                let mut freed_memory = 0;
+                for entry in removed_cache.iter() {
+                    let filename = entry.key();
+                    freed_memory += Self::estimate_entry_size(&pattern_key, filename);
+                }
+
+                self.total_entries
+                    .fetch_sub(removed_entry_count, Ordering::Relaxed);
+                self.total_memory_bytes
+                    .fetch_sub(freed_memory, Ordering::Relaxed);
+            }
         }
     }
 
@@ -249,6 +328,56 @@ mod tests {
         assert!(matcher.matches_pattern(long_file, short_pattern));
         assert!(matcher.matches_pattern(long_file, complex_pattern));
         assert!(!matcher.matches_pattern(short_file, complex_pattern));
+        Ok(())
+    }
+
+    #[test]
+    fn test_memory_tracking() -> Result<(), Box<dyn std::error::Error>> {
+        let matcher = create_matcher();
+
+        // Initially should have zero memory
+        let (entries_1, memory_1, _) = matcher.cache_stats();
+        assert_eq!(entries_1, 0);
+        assert_eq!(memory_1, 0);
+
+        // Add some patterns
+        matcher.matches_pattern("test.rs", "*.rs");
+        matcher.matches_pattern("main.rs", "*.rs");
+        matcher.matches_pattern("package.json", "*.json");
+
+        let (entries_2, memory_2, hit_rate) = matcher.cache_stats();
+
+        // Should have 3 entries
+        assert_eq!(entries_2, 3);
+
+        // Memory should be non-zero and proportional to string sizes
+        assert!(memory_2 > 0, "Memory should be tracked");
+
+        // Rough estimate: each entry has at least the string length
+        let min_expected = "test.rs".len()
+            + "*.rs".len()
+            + "main.rs".len()
+            + "*.rs".len()
+            + "package.json".len()
+            + "*.json".len();
+        assert!(
+            memory_2 > min_expected,
+            "Memory {} should be at least {}",
+            memory_2,
+            min_expected
+        );
+
+        // Cache hits should work - hit the same pattern again
+        matcher.matches_pattern("test.rs", "*.rs");
+        let (entries_3, memory_3, hit_rate_2) = matcher.cache_stats();
+
+        // Should still have 3 entries (cache hit)
+        assert_eq!(entries_3, 3);
+        assert_eq!(memory_3, memory_2); // Memory unchanged on cache hit
+
+        // Hit rate should increase
+        assert!(hit_rate_2 > hit_rate, "Hit rate should increase");
+
         Ok(())
     }
 }

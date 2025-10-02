@@ -1,5 +1,5 @@
-use super::shared::{nerd_icon, root_indicator, simple_framework};
-use crate::types::{DetectionType, IndicatorContext, ProjectIndicator};
+use super::shared::{nerd_icon, root_indicator};
+use crate::types::{IndicatorContext, ProjectIndicator};
 
 pub fn create_lua_language() -> ProjectIndicator {
     ProjectIndicator::with_root_indicators(
@@ -15,28 +15,9 @@ pub fn create_lua_language() -> ProjectIndicator {
             "luarocks.lock".to_string(),
         ],
         "#000080".to_string(),
-        nerd_icon("e620"),
+        nerd_icon("e826"),
         8,
-        vec![
-            simple_framework(
-                "OpenResty",
-                DetectionType::LuaEcosystem {
-                    packages: vec!["lua-resty-core".to_string(), "lua-resty-http".to_string()],
-                },
-                Some(nerd_icon("f0f7b")),
-                Some("#269539"),
-                2,
-            ),
-            simple_framework(
-                "Lapis",
-                DetectionType::LuaEcosystem {
-                    packages: vec!["lapis".to_string()],
-                },
-                Some(nerd_icon("f448")),
-                Some("#ff6b35"),
-                3,
-            ),
-        ],
+        vec![],
         vec![
             root_indicator("init.lua", 0.95, IndicatorContext::LanguageRoot),
             root_indicator("main.lua", 0.9, IndicatorContext::LanguageRoot),

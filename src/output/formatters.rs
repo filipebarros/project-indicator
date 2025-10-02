@@ -5,8 +5,6 @@ use crate::output::rich::RichFormatter;
 use crate::types::{DetectionResult, DisplayConfig};
 #[cfg(test)]
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
-use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq)]
 pub enum OutputFormat {
     Simple,
@@ -65,7 +63,8 @@ pub fn format_result(result: &DetectionResult, format: OutputFormat) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{DetectionType, FrameworkDetector, FrameworkMatch, ProjectIndicator};
+    use crate::test_utils::create_test_result;
+    use crate::types::{DetectionType, FrameworkDetector, FrameworkMatch};
 
     #[derive(Debug, Serialize, Deserialize)]
     struct JsonOutput {
@@ -75,33 +74,6 @@ mod tests {
         pub color: Option<String>,
         pub confidence: f32,
         pub evidence: Vec<String>,
-    }
-
-    fn create_test_result() -> DetectionResult {
-        let language = ProjectIndicator::new(
-            "TypeScript".to_string(),
-            vec!["package.json".to_string()],
-            "#3178C6".to_string(),
-            "󰛦".to_string(),
-            1,
-            vec![],
-        );
-
-        let framework = FrameworkDetector {
-            name: "React".to_string(),
-            detection: DetectionType::NodeEcosystem {
-                dependencies: vec!["react".to_string()],
-            },
-            icon: Some("⚛️".to_string()),
-            color: Some("#61DAFB".to_string()),
-            priority: 1,
-            files: vec![],
-            root_indicators: vec![],
-        };
-
-        let framework_match = FrameworkMatch::new(framework, 0.9, vec!["package.json".to_string()]);
-
-        DetectionResult::new(Some(Arc::new(language)), vec![framework_match], 0.9)
     }
 
     #[test]

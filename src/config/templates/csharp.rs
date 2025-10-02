@@ -23,7 +23,7 @@ pub fn create_csharp_language() -> ProjectIndicator {
                         "Microsoft.AspNetCore.Mvc".to_string(),
                     ],
                 },
-                Some(nerd_icon("e7c6")),
+                Some(nerd_icon("e77f")),
                 Some("#512bd4"),
                 1,
             ),
@@ -40,23 +40,6 @@ pub fn create_csharp_language() -> ProjectIndicator {
                 3,
                 vec![root_indicator(
                     "*.xaml",
-                    0.9,
-                    IndicatorContext::FrameworkRoot,
-                )],
-            ),
-            framework(
-                ".NET MAUI",
-                DetectionType::DotNetEcosystem {
-                    packages: vec![
-                        "Microsoft.Maui".to_string(),
-                        "Microsoft.Maui.Controls".to_string(),
-                    ],
-                },
-                Some(nerd_icon("e77f")),
-                Some("#512bd4"),
-                4,
-                vec![root_indicator(
-                    "Platforms/",
                     0.9,
                     IndicatorContext::FrameworkRoot,
                 )],

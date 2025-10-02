@@ -1,0 +1,56 @@
+use super::helpers::{check_gradle_dependencies, check_pom_xml_dependencies, try_config_file_deps};
+use crate::constants::{BUILD_GRADLE_KTS, POM_XML, SETTINGS_GRADLE_KTS};
+use crate::detection::caches::ParsedFileCache;
+use crate::Result;
+use std::path::Path;
+
+/// Detect Kotlin ecosystem dependencies
+pub fn check_kotlin_ecosystem<P: AsRef<Path>>(
+    path: P,
+    dependencies: &[String],
+    parsed_cache: &ParsedFileCache,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let mut found_deps = Vec::new();
+    let mut evidence = Vec::new();
+
+    // Check build.gradle.kts (Kotlin DSL for Gradle)
+    if try_config_file_deps(
+        parsed_cache,
+        &path,
+        BUILD_GRADLE_KTS,
+        dependencies,
+        check_gradle_dependencies,
+        &mut found_deps,
+        &mut evidence,
+    )? {
+        return Ok((found_deps, evidence));
+    }
+
+    // Check settings.gradle.kts
+    if try_config_file_deps(
+        parsed_cache,
+        &path,
+        SETTINGS_GRADLE_KTS,
+        dependencies,
+        check_gradle_dependencies,
+        &mut found_deps,
+        &mut evidence,
+    )? {
+        return Ok((found_deps, evidence));
+    }
+
+    // Check pom.xml (Maven for Kotlin)
+    if try_config_file_deps(
+        parsed_cache,
+        &path,
+        POM_XML,
+        dependencies,
+        check_pom_xml_dependencies,
+        &mut found_deps,
+        &mut evidence,
+    )? {
+        return Ok((found_deps, evidence));
+    }
+
+    Ok((found_deps, evidence))
+}

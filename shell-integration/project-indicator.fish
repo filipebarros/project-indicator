@@ -3,10 +3,19 @@
 
 # Global variables for caching
 set -g __project_indicator_cache_dir "$HOME/.cache/project-indicator-fish"
-set -g __project_indicator_cache_ttl 300  # 5 minutes in seconds
+set -g __project_indicator_cache_ttl 300 # 5 minutes in seconds
 set -g __project_indicator_last_pwd ""
 set -g __project_indicator_last_result ""
 set -g __project_indicator_last_time 0
+
+# Async mode variables
+set -g __project_indicator_async_enabled 0
+set -g __project_indicator_async_result ""
+set -g __project_indicator_async_pid 0
+
+# Cache prewarming (runs detection in background on cd)
+set -g __project_indicator_prewarm_enabled 0
+set -g __project_indicator_prewarm_pid 0
 
 # Initialize cache directory
 function __project_indicator_init_cache
@@ -84,14 +93,9 @@ function __project_indicator_execute -a directory
         return 1
     end
 
-    # Try to execute project-indicator with timeout protection
+    # Try to execute project-indicator (binary is already optimized at 3-5ms)
     if command -q project-indicator
-        # Use timeout if available to prevent hanging
-        if command -q timeout
-            set result (timeout 10s project-indicator --format full "$directory" 2>/dev/null)
-        else
-            set result (project-indicator --format full "$directory" 2>/dev/null)
-        end
+        set result (project-indicator --format full "$directory" 2>/dev/null)
         set -l exit_code $status
 
         # Only cache successful results
@@ -106,13 +110,107 @@ function __project_indicator_execute -a directory
             end
 
             # Write to cache atomically with error handling
-            if echo "$result" > "$cache_file.tmp" 2>/dev/null
+            if echo "$result" >"$cache_file.tmp" 2>/dev/null
                 mv "$cache_file.tmp" "$cache_file" 2>/dev/null
             end
         end
     end
 
     echo "$result"
+end
+
+# Async worker function (runs in background)
+function __project_indicator_async_worker -a directory result_file
+    set -l result (__project_indicator_execute "$directory")
+    echo "$result" > "$result_file" 2>/dev/null
+end
+
+# Start async execution
+function __project_indicator_async_start -a directory
+    set directory (test -n "$directory"; and echo "$directory"; or pwd)
+    set -l result_file "$__project_indicator_cache_dir/.async_result_$fish_pid"
+
+    # Kill existing worker if any
+    if test $__project_indicator_async_pid -ne 0
+        kill $__project_indicator_async_pid 2>/dev/null
+        set -g __project_indicator_async_pid 0
+    end
+
+    # Remove old result file
+    rm -f "$result_file" 2>/dev/null
+
+    # Start async worker in background
+    fish -c "__project_indicator_async_worker '$directory' '$result_file'" &
+    set -g __project_indicator_async_pid (jobs -l | string match -r '\d+' | head -1)
+end
+
+# Check if async result is ready
+function __project_indicator_async_check
+    set -l result_file "$__project_indicator_cache_dir/.async_result_$fish_pid"
+
+    if test -f "$result_file"
+        set -g __project_indicator_async_result (string trim < "$result_file" 2>/dev/null)
+
+        # Update caches
+        set -g __project_indicator_last_pwd (pwd)
+        set -g __project_indicator_last_result "$__project_indicator_async_result"
+        set -g __project_indicator_last_time (date +%s)
+
+        # Cleanup
+        rm -f "$result_file" 2>/dev/null
+        set -g __project_indicator_async_pid 0
+
+        return 0
+    end
+
+    return 1
+end
+
+# Async version of project indicator get
+function __project_indicator_get_async -a directory
+    set directory (test -n "$directory"; and echo "$directory"; or pwd)
+
+    # Initialize cache
+    __project_indicator_init_cache
+
+    # Check if async result is ready
+    if __project_indicator_async_check
+        echo "$__project_indicator_async_result"
+        return
+    end
+
+    # Memory cache check (for same directory)
+    set -l current_time (date +%s)
+    if test "$directory" = "$__project_indicator_last_pwd" \
+            -a (math "$current_time - $__project_indicator_last_time") -lt 30
+        echo "$__project_indicator_last_result"
+        return
+    end
+
+    # Disk cache check
+    set -l pwd_hash (__project_indicator_hash_pwd "$directory")
+    set -l cache_file (__project_indicator_cache_file "$pwd_hash")
+
+    if __project_indicator_cache_valid "$cache_file" "$directory"
+        set -l cached_result (string trim < "$cache_file" 2>/dev/null)
+        if test -n "$cached_result"
+            # Update memory cache
+            set -g __project_indicator_last_pwd "$directory"
+            set -g __project_indicator_last_result "$cached_result"
+            set -g __project_indicator_last_time "$current_time"
+
+            echo "$cached_result"
+            return
+        end
+    end
+
+    # Start async execution if not already running
+    if test $__project_indicator_async_pid -eq 0
+        __project_indicator_async_start "$directory"
+    end
+
+    # Return cached result while async loads
+    echo "$__project_indicator_last_result"
 end
 
 # Main project indicator function with caching
@@ -126,7 +224,7 @@ function __project_indicator_get -a directory
     # Memory cache check (for same directory)
     set current_time (date +%s)
     if test "$directory" = "$__project_indicator_last_pwd" \
-       -a (math "$current_time - $__project_indicator_last_time") -lt 30
+            -a (math "$current_time - $__project_indicator_last_time") -lt 30
         echo "$__project_indicator_last_result"
         return
     end
@@ -136,7 +234,7 @@ function __project_indicator_get -a directory
     set -l cache_file (__project_indicator_cache_file "$pwd_hash")
 
     if __project_indicator_cache_valid "$cache_file" "$directory"
-        set -l cached_result (cat "$cache_file" 2>/dev/null)
+        set -l cached_result (string trim < "$cache_file" 2>/dev/null)
         if test -n "$cached_result"
             # Update memory cache
             set -g __project_indicator_last_pwd "$directory"
@@ -179,7 +277,12 @@ end
 
 # Right prompt function (example usage) - handles new format
 function fish_right_prompt_project_indicator
-    set -l project_info (__project_indicator_get)
+    set -l project_info
+    if test $__project_indicator_async_enabled -eq 1
+        set project_info (__project_indicator_get_async)
+    else
+        set project_info (__project_indicator_get)
+    end
     if test -n "$project_info"
         set_color brblack
         echo -n "["
@@ -247,32 +350,152 @@ end
 # Configuration function
 function project_indicator_config
     switch "$argv[1]"
-        case "ttl"
+        case ttl
             if test -n "$argv[2]"
                 set -g __project_indicator_cache_ttl "$argv[2]"
                 echo "Cache TTL set to $argv[2] seconds"
             else
                 echo "Current TTL: $__project_indicator_cache_ttl seconds"
             end
-        case "status"
+        case status
             echo "Project Indicator Fish Integration Status:"
             echo "Cache directory: $__project_indicator_cache_dir"
             echo "Cache TTL: $__project_indicator_cache_ttl seconds"
+            if test $__project_indicator_async_enabled -eq 1
+                echo "Async mode: enabled"
+            else
+                echo "Async mode: disabled"
+            end
+            if test $__project_indicator_prewarm_enabled -eq 1
+                echo "Cache prewarming: enabled"
+            else
+                echo "Cache prewarming: disabled"
+            end
             echo "Last directory: $__project_indicator_last_pwd"
             echo "Binary available: "(command -q project-indicator; and echo "yes"; or echo "no")
             if test -d "$__project_indicator_cache_dir"
-                set cache_files (count "$__project_indicator_cache_dir"/*.cache 2>/dev/null)
+                set cache_files (count "$__project_indicator_cache_dir"/*.cache 2>/dev/null; or echo 0)
                 echo "Cached directories: $cache_files"
             else
                 echo "Cached directories: 0"
             end
+        case info
+            set -l pwd_hash (__project_indicator_hash_pwd (pwd))
+            set -l cache_file (__project_indicator_cache_file "$pwd_hash")
+
+            if test -f "$cache_file"
+                set -l cache_time (stat -f %m "$cache_file" 2>/dev/null; or stat -c %Y "$cache_file" 2>/dev/null; or echo 0)
+                set -l current_time (date +%s)
+                set -l age (math "$current_time - $cache_time")
+                set -l ttl_remaining (math "$__project_indicator_cache_ttl - $age")
+
+                echo "Cache info for current directory:"
+                if __project_indicator_cache_valid "$cache_file" (pwd)
+                    echo "  Status: valid"
+                else
+                    echo "  Status: expired"
+                end
+                echo "  Age: "$age"s"
+                echo "  TTL remaining: "$ttl_remaining"s"
+                echo "  Content: "(string trim < "$cache_file" 2>/dev/null)
+            else
+                echo "No cache for current directory"
+            end
+        case why-slow
+            set -l pwd_hash (__project_indicator_hash_pwd (pwd))
+            set -l cache_file (__project_indicator_cache_file "$pwd_hash")
+
+            if not test -f "$cache_file"
+                echo "No cache exists for current directory (cold start)"
+            else if not __project_indicator_cache_valid "$cache_file" (pwd)
+                echo "Cache invalidated because:"
+                set -l cache_time (stat -f %m "$cache_file" 2>/dev/null; or stat -c %Y "$cache_file" 2>/dev/null; or echo 0)
+
+                # Check each project file
+                for file in package.json Cargo.toml pyproject.toml go.mod composer.json
+                    if test -f "$file"
+                        set -l file_time (stat -f %m "$file" 2>/dev/null; or stat -c %Y "$file" 2>/dev/null; or echo 0)
+                        if test "$file_time" -gt "$cache_time"
+                            echo "  - $file was modified"
+                        end
+                    end
+                end
+
+                # Check TTL expiry
+                set -l current_time (date +%s)
+                set -l age (math "$current_time - $cache_time")
+                if test "$age" -gt "$__project_indicator_cache_ttl"
+                    echo "  - Cache TTL expired (age: "$age"s, TTL: "$__project_indicator_cache_ttl"s)"
+                end
+            else
+                echo "Cache is valid (using cached result)"
+            end
+        case async
+            if test "$argv[2]" = "on"
+                set -g __project_indicator_async_enabled 1
+                set -g __project_indicator_prewarm_enabled 0  # Disable prewarm when enabling async
+                echo "Async mode enabled (non-blocking prompts)"
+            else if test "$argv[2]" = "off"
+                set -g __project_indicator_async_enabled 0
+                # Kill any running worker
+                if test $__project_indicator_async_pid -ne 0
+                    kill $__project_indicator_async_pid 2>/dev/null
+                    set -g __project_indicator_async_pid 0
+                end
+                echo "Async mode disabled (synchronous prompts)"
+            else
+                if test $__project_indicator_async_enabled -eq 1
+                    echo "Async mode: enabled"
+                else
+                    echo "Async mode: disabled"
+                end
+            end
+        case prewarm
+            if test "$argv[2]" = "on"
+                set -g __project_indicator_prewarm_enabled 1
+                set -g __project_indicator_async_enabled 0  # Disable async when enabling prewarm
+                echo "Cache prewarming enabled (background cache refresh)"
+            else if test "$argv[2]" = "off"
+                set -g __project_indicator_prewarm_enabled 0
+                # Kill any running prewarm worker
+                if test $__project_indicator_prewarm_pid -ne 0
+                    kill $__project_indicator_prewarm_pid 2>/dev/null
+                    set -g __project_indicator_prewarm_pid 0
+                end
+                echo "Cache prewarming disabled"
+            else
+                if test $__project_indicator_prewarm_enabled -eq 1
+                    echo "Cache prewarming: enabled"
+                else
+                    echo "Cache prewarming: disabled"
+                end
+            end
         case "*"
-            echo "Usage: project_indicator_config [ttl SECONDS|status]"
+            echo "Usage: project_indicator_config [ttl SECONDS|status|info|why-slow|async on|off|prewarm on|off]"
             echo ""
             echo "Commands:"
-            echo "  ttl SECONDS  Set cache TTL (time-to-live) in seconds"
-            echo "  status       Show current configuration and status"
+            echo "  ttl SECONDS    Set cache TTL (time-to-live) in seconds"
+            echo "  status         Show current configuration and status"
+            echo "  info           Show cache info for current directory"
+            echo "  why-slow       Explain why detection is slow (cache status)"
+            echo "  async on|off   Enable/disable async mode (non-blocking prompts)"
+            echo "  prewarm on|off Enable/disable cache prewarming (background refresh on cd)"
     end
+end
+
+# Cache prewarming - runs detection in background on directory change
+function __project_indicator_prewarm_start -a directory
+    set directory (test -n "$directory"; and echo "$directory"; or pwd)
+
+    # Kill existing prewarm worker if any
+    if test $__project_indicator_prewarm_pid -ne 0
+        kill $__project_indicator_prewarm_pid 2>/dev/null
+        set -g __project_indicator_prewarm_pid 0
+    end
+
+    # Run detection in background to populate cache
+    fish -c "__project_indicator_execute '$directory'" >/dev/null 2>&1 &
+    set -g __project_indicator_prewarm_pid (jobs -l | string match -r '\d+' | head -1)
 end
 
 # Event handler to clear memory cache on directory change
@@ -282,6 +505,14 @@ function __project_indicator_pwd_changed --on-variable PWD
     if test "$PWD" != "$__project_indicator_last_pwd"
         # Keep the cache but mark it as potentially stale
         set -g __project_indicator_last_time 0
+
+        # Start async worker if async mode enabled
+        if test $__project_indicator_async_enabled -eq 1
+            __project_indicator_async_start "$PWD"
+        # Start prewarm worker if prewarm mode enabled (and async is off)
+        else if test $__project_indicator_prewarm_enabled -eq 1
+            __project_indicator_prewarm_start "$PWD"
+        end
     end
 end
 
@@ -307,14 +538,29 @@ function __project_indicator_validate_setup
     return 0
 end
 
-# Check setup on load but don't fail
-if not __project_indicator_validate_setup
-    # Define fallback functions that do nothing
+# Check setup on load - use silent fallback if binary not available
+if not command -q project-indicator
+    # Define no-op fallback functions (silent mode)
     function project_info -a directory
         echo ""
     end
 
     function fish_right_prompt_project_indicator
-        # Return empty string for broken setups
+        # Return empty for missing binary
+    end
+
+    # Exit integration script silently
+    return 0
+end
+
+# Validate binary works correctly (only if present)
+if not project-indicator --help >/dev/null 2>&1
+    echo "Warning: project-indicator found but not working correctly" >&2
+    # Define fallback functions
+    function project_info -a directory
+        echo ""
+    end
+
+    function fish_right_prompt_project_indicator
     end
 end

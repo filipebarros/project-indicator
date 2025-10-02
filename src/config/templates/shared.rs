@@ -1,3 +1,4 @@
+use crate::constants::*;
 use crate::types::{
     CacheConfig, ConfigMeta, DetectionConfig, DetectionType, DisplayConfig, FrameworkDetector,
     IndicatorContext, ProjectIndicator, RootIndicator,
@@ -40,16 +41,26 @@ pub fn simple_framework(
     framework(name, detection, icon, color, priority, vec![])
 }
 
-pub fn create_react_framework(typescript: bool) -> FrameworkDetector {
-    let dependencies = if typescript {
-        vec!["react".to_string(), "@types/react".to_string()]
-    } else {
-        vec!["react".to_string()]
-    };
-
+pub fn create_react_framework() -> FrameworkDetector {
     FrameworkDetector {
         name: "React".to_string(),
-        detection: DetectionType::NodeEcosystem { dependencies },
+        detection: DetectionType::NodeEcosystem {
+            dependencies: vec!["react".to_string()],
+        },
+        icon: Some(nerd_icon("e7ba")),
+        color: Some("#61dafb".to_string()),
+        priority: 1,
+        files: vec![],
+        root_indicators: vec![],
+    }
+}
+
+pub fn create_react_typescript_framework() -> FrameworkDetector {
+    FrameworkDetector {
+        name: "React".to_string(),
+        detection: DetectionType::NodeEcosystem {
+            dependencies: vec!["react".to_string(), "@types/react".to_string()],
+        },
         icon: Some(nerd_icon("e7ba")),
         color: Some("#61dafb".to_string()),
         priority: 1,
@@ -76,19 +87,7 @@ pub fn create_angular_framework() -> FrameworkDetector {
     }
 }
 
-pub fn create_nextjs_framework(typescript: bool) -> FrameworkDetector {
-    let (files, root_pattern) = if typescript {
-        (
-            vec!["next.config.js".to_string(), "next.config.ts".to_string()],
-            "next.config.ts".to_string(),
-        )
-    } else {
-        (
-            vec!["next.config.js".to_string(), "next.config.mjs".to_string()],
-            "next.config.js".to_string(),
-        )
-    };
-
+pub fn create_nextjs_framework() -> FrameworkDetector {
     FrameworkDetector {
         name: "Next.js".to_string(),
         detection: DetectionType::NodeEcosystem {
@@ -97,9 +96,27 @@ pub fn create_nextjs_framework(typescript: bool) -> FrameworkDetector {
         icon: Some(nerd_icon("e83e")),
         color: Some("#000000".to_string()),
         priority: 3,
-        files,
+        files: vec!["next.config.js".to_string(), "next.config.mjs".to_string()],
         root_indicators: vec![RootIndicator {
-            pattern: root_pattern,
+            pattern: "next.config.js".to_string(),
+            weight: 0.9,
+            context: IndicatorContext::FrameworkRoot,
+        }],
+    }
+}
+
+pub fn create_nextjs_typescript_framework() -> FrameworkDetector {
+    FrameworkDetector {
+        name: "Next.js".to_string(),
+        detection: DetectionType::NodeEcosystem {
+            dependencies: vec!["next".to_string()],
+        },
+        icon: Some(nerd_icon("e83e")),
+        color: Some("#000000".to_string()),
+        priority: 3,
+        files: vec!["next.config.js".to_string(), "next.config.ts".to_string()],
+        root_indicators: vec![RootIndicator {
+            pattern: "next.config.ts".to_string(),
             weight: 0.9,
             context: IndicatorContext::FrameworkRoot,
         }],
@@ -112,7 +129,7 @@ pub fn create_vue_framework() -> FrameworkDetector {
         detection: DetectionType::NodeEcosystem {
             dependencies: vec!["vue".to_string()],
         },
-        icon: Some(nerd_icon("e6a0")),
+        icon: Some(nerd_icon("e8dc")),
         color: Some("#4fc08d".to_string()),
         priority: 2,
         files: vec![],
@@ -138,6 +155,28 @@ pub fn create_nestjs_framework() -> FrameworkDetector {
     }
 }
 
+pub fn create_astro_framework() -> FrameworkDetector {
+    FrameworkDetector {
+        name: "Astro".to_string(),
+        detection: DetectionType::NodeEcosystem {
+            dependencies: vec!["astro".to_string()],
+        },
+        icon: Some(nerd_icon("e735")),
+        color: Some("#ff5d01".to_string()),
+        priority: 3,
+        files: vec![
+            "astro.config.mjs".to_string(),
+            "astro.config.js".to_string(),
+            "astro.config.ts".to_string(),
+        ],
+        root_indicators: vec![RootIndicator {
+            pattern: "astro.config.mjs".to_string(),
+            weight: 0.9,
+            context: IndicatorContext::FrameworkRoot,
+        }],
+    }
+}
+
 pub fn nerd_icon(hex_code: &str) -> String {
     if let Ok(code_point) = u32::from_str_radix(hex_code, 16) {
         if let Some(character) = char::from_u32(code_point) {
@@ -149,32 +188,32 @@ pub fn nerd_icon(hex_code: &str) -> String {
 
 pub fn node_lockfiles() -> Vec<String> {
     vec![
-        "package.json".to_string(),
-        "package-lock.json".to_string(),
-        "yarn.lock".to_string(),
-        "pnpm-lock.yaml".to_string(),
+        PACKAGE_JSON.to_string(),
+        PACKAGE_LOCK_JSON.to_string(),
+        YARN_LOCK.to_string(),
+        PNPM_LOCK_YAML.to_string(),
     ]
 }
 
 pub fn node_lockfile_root_indicators() -> Vec<RootIndicator> {
     vec![
         RootIndicator {
-            pattern: "package.json".to_string(),
+            pattern: PACKAGE_JSON.to_string(),
             weight: 0.95,
             context: IndicatorContext::LanguageRoot,
         },
         RootIndicator {
-            pattern: "package-lock.json".to_string(),
+            pattern: PACKAGE_LOCK_JSON.to_string(),
             weight: 0.8,
             context: IndicatorContext::LanguageRoot,
         },
         RootIndicator {
-            pattern: "yarn.lock".to_string(),
+            pattern: YARN_LOCK.to_string(),
             weight: 0.8,
             context: IndicatorContext::LanguageRoot,
         },
         RootIndicator {
-            pattern: "pnpm-lock.yaml".to_string(),
+            pattern: PNPM_LOCK_YAML.to_string(),
             weight: 0.8,
             context: IndicatorContext::LanguageRoot,
         },
@@ -184,7 +223,7 @@ pub fn node_lockfile_root_indicators() -> Vec<RootIndicator> {
 pub fn vcs_root_indicators() -> Vec<RootIndicator> {
     vec![
         RootIndicator {
-            pattern: ".git".to_string(),
+            pattern: DOT_GIT.to_string(),
             weight: 1.0,
             context: IndicatorContext::VersionControl,
         },
@@ -329,6 +368,9 @@ impl ConfigBuilder {
             root_indicators: vcs_root_indicators(),
             max_depth: 1,
             detection_mode: crate::types::DetectionMode::default(),
+            max_matches_per_pattern: 15,
+            small_project_threshold: 50,
+            extreme_size_threshold: 500,
         };
 
         (meta, display, cache, detection)

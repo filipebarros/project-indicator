@@ -1,4 +1,7 @@
-use super::helpers::{check_pubspec_dependencies, check_pubspec_lock_dependencies};
+use super::helpers::{
+    check_pubspec_dependencies, check_pubspec_lock_dependencies, try_config_file_deps,
+};
+use crate::constants::{PUBSPEC_LOCK, PUBSPEC_YAML};
 use crate::detection::caches::ParsedFileCache;
 use crate::Result;
 use std::path::Path;
@@ -12,21 +15,28 @@ pub fn check_dart_ecosystem<P: AsRef<Path>>(
     let mut found_deps = Vec::new();
     let mut evidence = Vec::new();
 
-    if let Some(yaml_content) = parsed_cache.get_config_file(&path, "pubspec.yaml")? {
-        let pubspec_deps = check_pubspec_dependencies(&yaml_content, dependencies);
-        if !pubspec_deps.is_empty() {
-            found_deps.extend(pubspec_deps);
-            evidence.push("pubspec.yaml".to_owned());
-            return Ok((found_deps, evidence));
-        }
+    if try_config_file_deps(
+        parsed_cache,
+        &path,
+        PUBSPEC_YAML,
+        dependencies,
+        check_pubspec_dependencies,
+        &mut found_deps,
+        &mut evidence,
+    )? {
+        return Ok((found_deps, evidence));
     }
 
-    if let Some(content) = parsed_cache.get_config_file(&path, "pubspec.lock")? {
-        let lock_deps = check_pubspec_lock_dependencies(&content, dependencies);
-        if !lock_deps.is_empty() {
-            found_deps.extend(lock_deps);
-            evidence.push("pubspec.lock".to_owned());
-        }
+    if try_config_file_deps(
+        parsed_cache,
+        &path,
+        PUBSPEC_LOCK,
+        dependencies,
+        check_pubspec_lock_dependencies,
+        &mut found_deps,
+        &mut evidence,
+    )? {
+        return Ok((found_deps, evidence));
     }
 
     Ok((found_deps, evidence))

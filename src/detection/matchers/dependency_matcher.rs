@@ -3,6 +3,7 @@ use super::ecosystems::*;
 use crate::detection::caches::ParsedFileCache;
 use crate::types::{DetectionType, FrameworkDetector, FrameworkMatch};
 use crate::Result;
+use rayon::prelude::*;
 use std::path::Path;
 
 pub struct DependencyMatcher;
@@ -13,18 +14,23 @@ impl DependencyMatcher {
         frameworks: &[FrameworkDetector],
         parsed_cache: &ParsedFileCache,
     ) -> Result<Vec<FrameworkMatch>> {
-        let mut matches = Vec::with_capacity(frameworks.len());
+        // Convert path to PathBuf for thread safety (Sync)
+        let path_buf = path.as_ref().to_path_buf();
 
-        for framework in frameworks {
-            if let Some(framework_match) =
-                Self::try_detect_ecosystem_framework(&path, framework, parsed_cache)?
-            {
-                matches.push(framework_match);
-            }
-        }
+        // Parallel detection: Each framework can be checked concurrently
+        // The ParsedFileCache is thread-safe (uses Mutex internally)
+        let matches: Vec<FrameworkMatch> = frameworks
+            .par_iter()
+            .filter_map(|framework| {
+                Self::try_detect_ecosystem_framework(&path_buf, framework, parsed_cache)
+                    .ok()
+                    .flatten()
+            })
+            .collect();
 
-        sort_framework_matches(&mut matches);
-        Ok(matches)
+        let mut sorted_matches = matches;
+        sort_framework_matches(&mut sorted_matches);
+        Ok(sorted_matches)
     }
 
     fn try_detect_ecosystem_framework<P: AsRef<Path>>(
@@ -66,6 +72,15 @@ impl DependencyMatcher {
             DetectionType::LuaEcosystem { packages } => {
                 check_lua_ecosystem(&path, packages, parsed_cache)?
             }
+            DetectionType::KotlinEcosystem { dependencies } => {
+                check_kotlin_ecosystem(&path, dependencies, parsed_cache)?
+            }
+            DetectionType::SwiftEcosystem { dependencies } => {
+                check_swift_ecosystem(&path, dependencies, parsed_cache)?
+            }
+            DetectionType::ElixirEcosystem { dependencies } => {
+                check_elixir_ecosystem(&path, dependencies, parsed_cache)?
+            }
             _ => return Ok(None),
         };
 
@@ -89,7 +104,10 @@ impl DependencyMatcher {
             | DetectionType::RustEcosystem { dependencies }
             | DetectionType::JavaEcosystem { dependencies }
             | DetectionType::ScalaEcosystem { dependencies }
-            | DetectionType::DartEcosystem { dependencies } => dependencies.clone(),
+            | DetectionType::DartEcosystem { dependencies }
+            | DetectionType::KotlinEcosystem { dependencies }
+            | DetectionType::SwiftEcosystem { dependencies }
+            | DetectionType::ElixirEcosystem { dependencies } => dependencies.clone(),
             DetectionType::GoEcosystem { modules } => modules.clone(),
             DetectionType::PHPEcosystem { packages }
             | DetectionType::DotNetEcosystem { packages }

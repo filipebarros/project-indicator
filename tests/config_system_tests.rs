@@ -34,6 +34,9 @@ fn test_custom_root_indicators() -> Result<(), Box<dyn std::error::Error>> {
         root_indicators: custom_indicators.clone(),
         max_depth: 3,
         detection_mode: project_indicator::types::DetectionMode::default(),
+        max_matches_per_pattern: 15,
+        small_project_threshold: 50,
+        extreme_size_threshold: 500,
     };
 
     assert_eq!(config.root_indicators.len(), 2);
@@ -52,6 +55,9 @@ fn test_detection_engine_with_custom_config() -> Result<(), Box<dyn std::error::
         root_indicators: vec![],
         max_depth: 3,
         detection_mode: project_indicator::types::DetectionMode::default(),
+        max_matches_per_pattern: 15,
+        small_project_threshold: 50,
+        extreme_size_threshold: 500,
     };
 
     let engine = DetectionEngine::with_config(vec![], detection_config);
@@ -78,6 +84,9 @@ fn test_custom_root_indicators_replace_builtin() -> Result<(), Box<dyn std::erro
         }],
         max_depth: 3,
         detection_mode: project_indicator::types::DetectionMode::default(),
+        max_matches_per_pattern: 15,
+        small_project_threshold: 50,
+        extreme_size_threshold: 500,
     };
 
     let engine = DetectionEngine::with_config(vec![], detection_config);
@@ -126,6 +135,9 @@ fn test_detection_config_serialization() -> Result<(), Box<dyn std::error::Error
         }],
         max_depth: 3,
         detection_mode: project_indicator::types::DetectionMode::default(),
+        max_matches_per_pattern: 15,
+        small_project_threshold: 50,
+        extreme_size_threshold: 500,
     };
 
     let toml_str = toml::to_string(&original_config)?;

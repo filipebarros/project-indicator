@@ -1,4 +1,6 @@
-use super::helpers::{check_gemfile_lock_dependencies, check_text_dependencies};
+use super::helpers::{
+    check_gemfile_lock_dependencies, check_text_dependencies, try_config_file_deps,
+};
 use crate::constants::{GEMFILE, GEMFILE_LOCK};
 use crate::detection::caches::ParsedFileCache;
 use crate::Result;
@@ -13,13 +15,16 @@ pub fn check_ruby_ecosystem<P: AsRef<Path>>(
     let mut found_deps = Vec::new();
     let mut evidence = Vec::new();
 
-    if let Some(content) = parsed_cache.get_config_file(&path, "Gemfile")? {
-        let gemfile_deps = check_text_dependencies(&content, gems);
-        if !gemfile_deps.is_empty() {
-            found_deps.extend(gemfile_deps);
-            evidence.push(GEMFILE.to_owned());
-            return Ok((found_deps, evidence));
-        }
+    if try_config_file_deps(
+        parsed_cache,
+        &path,
+        GEMFILE,
+        gems,
+        check_text_dependencies,
+        &mut found_deps,
+        &mut evidence,
+    )? {
+        return Ok((found_deps, evidence));
     }
 
     if let Some(content) = parsed_cache.get_gemfile_lock(&path)? {
