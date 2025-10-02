@@ -8,8 +8,8 @@ use std::sync::Arc;
 pub struct PatternProcessor {
     pattern_matcher: Arc<PatternMatcher>,
     unique_patterns: Arc<Vec<String>>,
-    extension_filter: HashSet<String>,
-    exact_patterns: HashSet<String>,
+    extension_filter: Arc<HashSet<String>>,
+    exact_patterns: Arc<HashSet<String>>,
     high_priority_files: Arc<HashSet<String>>,
 }
 
@@ -46,8 +46,8 @@ impl PatternProcessor {
         Self {
             pattern_matcher,
             unique_patterns: patterns,
-            extension_filter,
-            exact_patterns,
+            extension_filter: Arc::new(extension_filter),
+            exact_patterns: Arc::new(exact_patterns),
             high_priority_files: Arc::new(high_priority_files),
         }
     }
