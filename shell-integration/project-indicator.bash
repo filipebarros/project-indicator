@@ -10,6 +10,15 @@ __PROJECT_INDICATOR_LAST_PWD=""
 __PROJECT_INDICATOR_LAST_RESULT=""
 __PROJECT_INDICATOR_LAST_TIME=0
 
+# Async mode variables (Bash 4.0+ with coproc support)
+__PROJECT_INDICATOR_ASYNC_ENABLED=0
+__PROJECT_INDICATOR_ASYNC_RESULT=""
+__PROJECT_INDICATOR_ASYNC_PID=0
+
+# Cache prewarming (runs detection in background on cd)
+__PROJECT_INDICATOR_PREWARM_ENABLED=0
+__PROJECT_INDICATOR_PREWARM_PID=0
+
 # Initialize cache directory
 __project_indicator_init_cache() {
     [[ -d "$__PROJECT_INDICATOR_CACHE_DIR" ]] || mkdir -p "$__PROJECT_INDICATOR_CACHE_DIR" 2>/dev/null
@@ -111,6 +120,108 @@ __project_indicator_execute() {
     echo "$result"
 }
 
+# Async worker function (runs in background)
+__project_indicator_async_worker() {
+    local directory="$1"
+    local result_file="$2"
+    local result
+
+    result=$(__project_indicator_execute "$directory")
+    echo "$result" > "$result_file" 2>/dev/null
+}
+
+# Start async execution
+__project_indicator_async_start() {
+    local directory="${1:-$PWD}"
+    local result_file="$__PROJECT_INDICATOR_CACHE_DIR/.async_result_$$"
+
+    # Kill existing worker if any
+    if (( __PROJECT_INDICATOR_ASYNC_PID )); then
+        kill "$__PROJECT_INDICATOR_ASYNC_PID" 2>/dev/null
+        wait "$__PROJECT_INDICATOR_ASYNC_PID" 2>/dev/null
+        __PROJECT_INDICATOR_ASYNC_PID=0
+    fi
+
+    # Remove old result file
+    rm -f "$result_file" 2>/dev/null
+
+    # Start async worker in background
+    __project_indicator_async_worker "$directory" "$result_file" &
+    __PROJECT_INDICATOR_ASYNC_PID=$!
+}
+
+# Check if async result is ready
+__project_indicator_async_check() {
+    local result_file="$__PROJECT_INDICATOR_CACHE_DIR/.async_result_$$"
+
+    if [[ -f "$result_file" ]]; then
+        __PROJECT_INDICATOR_ASYNC_RESULT=$(<"$result_file" 2>/dev/null)
+
+        # Update caches
+        __PROJECT_INDICATOR_LAST_PWD="$PWD"
+        __PROJECT_INDICATOR_LAST_RESULT="$__PROJECT_INDICATOR_ASYNC_RESULT"
+        __PROJECT_INDICATOR_LAST_TIME=$(date +%s)
+
+        # Cleanup
+        rm -f "$result_file" 2>/dev/null
+        wait "$__PROJECT_INDICATOR_ASYNC_PID" 2>/dev/null
+        __PROJECT_INDICATOR_ASYNC_PID=0
+
+        return 0
+    fi
+
+    return 1
+}
+
+# Async version of project indicator get
+__project_indicator_get_async() {
+    local directory="${1:-$PWD}"
+    local current_time pwd_hash cache_file cached_result
+
+    # Initialize cache
+    __project_indicator_init_cache
+
+    current_time=$(date +%s)
+
+    # Check if async result is ready
+    if __project_indicator_async_check; then
+        echo "$__PROJECT_INDICATOR_ASYNC_RESULT"
+        return
+    fi
+
+    # Memory cache check (for same directory)
+    if [[ "$directory" == "$__PROJECT_INDICATOR_LAST_PWD" ]] && \
+       (( current_time - __PROJECT_INDICATOR_LAST_TIME < 30 )); then
+        echo "$__PROJECT_INDICATOR_LAST_RESULT"
+        return
+    fi
+
+    # Disk cache check
+    pwd_hash=$(__project_indicator_hash_pwd "$directory")
+    cache_file=$(__project_indicator_cache_file "$pwd_hash")
+
+    if __project_indicator_cache_valid "$cache_file" "$directory"; then
+        cached_result=$(<"$cache_file" 2>/dev/null)
+        if [[ -n "$cached_result" ]]; then
+            # Update memory cache
+            __PROJECT_INDICATOR_LAST_PWD="$directory"
+            __PROJECT_INDICATOR_LAST_RESULT="$cached_result"
+            __PROJECT_INDICATOR_LAST_TIME="$current_time"
+
+            echo "$cached_result"
+            return
+        fi
+    fi
+
+    # Start async execution if not already running
+    if ! (( __PROJECT_INDICATOR_ASYNC_PID )); then
+        __project_indicator_async_start "$directory"
+    fi
+
+    # Return cached result while async loads
+    echo "$__PROJECT_INDICATOR_LAST_RESULT"
+}
+
 # Main project indicator function with caching
 __project_indicator_get() {
     local directory="${1:-$PWD}"
@@ -191,6 +302,16 @@ project_indicator_config() {
             echo "Project Indicator Bash Integration Status:"
             echo "Cache directory: $__PROJECT_INDICATOR_CACHE_DIR"
             echo "Cache TTL: $__PROJECT_INDICATOR_CACHE_TTL seconds"
+            if (( __PROJECT_INDICATOR_ASYNC_ENABLED )); then
+                echo "Async mode: enabled"
+            else
+                echo "Async mode: disabled"
+            fi
+            if (( __PROJECT_INDICATOR_PREWARM_ENABLED )); then
+                echo "Cache prewarming: enabled"
+            else
+                echo "Cache prewarming: disabled"
+            fi
             echo "Last directory: $__PROJECT_INDICATOR_LAST_PWD"
             if command -v project-indicator >/dev/null 2>&1; then
                 echo "Binary available: yes"
@@ -198,16 +319,123 @@ project_indicator_config() {
                 echo "Binary available: no"
             fi
             if [[ -d "$__PROJECT_INDICATOR_CACHE_DIR" ]]; then
-                cache_count=$(find "$__PROJECT_INDICATOR_CACHE_DIR" -name "*.cache" 2>/dev/null | wc -l)
+                shopt -s nullglob
+                local cache_files=("$__PROJECT_INDICATOR_CACHE_DIR"/*.cache)
+                cache_count=${#cache_files[@]}
+                shopt -u nullglob
             fi
             echo "Cached directories: $cache_count"
             ;;
+        "info")
+            local pwd_hash cache_file cache_time current_time age ttl_remaining
+            pwd_hash=$(__project_indicator_hash_pwd "$PWD")
+            cache_file=$(__project_indicator_cache_file "$pwd_hash")
+
+            if [[ -f "$cache_file" ]]; then
+                cache_time=$(__project_indicator_get_mtime "$cache_file")
+                current_time=$(date +%s)
+                age=$((current_time - cache_time))
+                ttl_remaining=$((__PROJECT_INDICATOR_CACHE_TTL - age))
+
+                echo "Cache info for current directory:"
+                if __project_indicator_cache_valid "$cache_file" "$PWD"; then
+                    echo "  Status: valid"
+                else
+                    echo "  Status: expired"
+                fi
+                echo "  Age: ${age}s"
+                echo "  TTL remaining: ${ttl_remaining}s"
+                echo "  Content: $(<"$cache_file" 2>/dev/null)"
+            else
+                echo "No cache for current directory"
+            fi
+            ;;
+        "why-slow")
+            local pwd_hash cache_file cache_time current_time age file_time
+            pwd_hash=$(__project_indicator_hash_pwd "$PWD")
+            cache_file=$(__project_indicator_cache_file "$pwd_hash")
+
+            if [[ ! -f "$cache_file" ]]; then
+                echo "No cache exists for current directory (cold start)"
+            elif ! __project_indicator_cache_valid "$cache_file" "$PWD"; then
+                echo "Cache invalidated because:"
+                cache_time=$(__project_indicator_get_mtime "$cache_file")
+
+                # Check each project file
+                local project_files=("package.json" "Cargo.toml" "pyproject.toml" "go.mod" "composer.json")
+                for file in "${project_files[@]}"; do
+                    if [[ -f "$file" ]]; then
+                        file_time=$(__project_indicator_get_mtime "$file")
+                        if (( file_time > cache_time )); then
+                            echo "  - $file was modified"
+                        fi
+                    fi
+                done
+
+                # Check TTL expiry
+                current_time=$(date +%s)
+                age=$((current_time - cache_time))
+                if (( age > __PROJECT_INDICATOR_CACHE_TTL )); then
+                    echo "  - Cache TTL expired (age: ${age}s, TTL: ${__PROJECT_INDICATOR_CACHE_TTL}s)"
+                fi
+            else
+                echo "Cache is valid (using cached result)"
+            fi
+            ;;
+        "async")
+            if [[ "${2:-}" == "on" ]]; then
+                __PROJECT_INDICATOR_ASYNC_ENABLED=1
+                __PROJECT_INDICATOR_PREWARM_ENABLED=0  # Disable prewarm when enabling async
+                echo "Async mode enabled (non-blocking prompts)"
+            elif [[ "${2:-}" == "off" ]]; then
+                __PROJECT_INDICATOR_ASYNC_ENABLED=0
+                # Kill any running worker
+                if (( __PROJECT_INDICATOR_ASYNC_PID )); then
+                    kill "$__PROJECT_INDICATOR_ASYNC_PID" 2>/dev/null
+                    wait "$__PROJECT_INDICATOR_ASYNC_PID" 2>/dev/null
+                    __PROJECT_INDICATOR_ASYNC_PID=0
+                fi
+                echo "Async mode disabled (synchronous prompts)"
+            else
+                if (( __PROJECT_INDICATOR_ASYNC_ENABLED )); then
+                    echo "Async mode: enabled"
+                else
+                    echo "Async mode: disabled"
+                fi
+            fi
+            ;;
+        "prewarm")
+            if [[ "${2:-}" == "on" ]]; then
+                __PROJECT_INDICATOR_PREWARM_ENABLED=1
+                __PROJECT_INDICATOR_ASYNC_ENABLED=0  # Disable async when enabling prewarm
+                echo "Cache prewarming enabled (background cache refresh)"
+            elif [[ "${2:-}" == "off" ]]; then
+                __PROJECT_INDICATOR_PREWARM_ENABLED=0
+                # Kill any running prewarm worker
+                if (( __PROJECT_INDICATOR_PREWARM_PID )); then
+                    kill "$__PROJECT_INDICATOR_PREWARM_PID" 2>/dev/null
+                    wait "$__PROJECT_INDICATOR_PREWARM_PID" 2>/dev/null
+                    __PROJECT_INDICATOR_PREWARM_PID=0
+                fi
+                echo "Cache prewarming disabled"
+            else
+                if (( __PROJECT_INDICATOR_PREWARM_ENABLED )); then
+                    echo "Cache prewarming: enabled"
+                else
+                    echo "Cache prewarming: disabled"
+                fi
+            fi
+            ;;
         *)
-            echo "Usage: project_indicator_config [ttl SECONDS|status]"
+            echo "Usage: project_indicator_config [ttl SECONDS|status|info|why-slow|async on|off|prewarm on|off]"
             echo ""
             echo "Commands:"
-            echo "  ttl SECONDS  Set cache TTL (time-to-live) in seconds"
-            echo "  status       Show current configuration and status"
+            echo "  ttl SECONDS    Set cache TTL (time-to-live) in seconds"
+            echo "  status         Show current configuration and status"
+            echo "  info           Show cache info for current directory"
+            echo "  why-slow       Explain why detection is slow (cache status)"
+            echo "  async on|off   Enable/disable async mode (non-blocking prompts)"
+            echo "  prewarm on|off Enable/disable cache prewarming (background refresh on cd)"
             ;;
     esac
 }
@@ -272,7 +500,11 @@ __project_indicator_format() {
 # Ready-to-use right prompt function for PS1
 __project_indicator_ps1() {
     local info
-    info=$(__project_indicator_get)
+    if (( __PROJECT_INDICATOR_ASYNC_ENABLED )); then
+        info=$(__project_indicator_get_async)
+    else
+        info=$(__project_indicator_get)
+    fi
     __project_indicator_format "$info"
 }
 
@@ -282,8 +514,28 @@ __project_indicator_ps1() {
 # Alternative: function to get formatted project info for custom prompts
 project_indicator_prompt() {
     local info
-    info=$(__project_indicator_get)
+    if (( __PROJECT_INDICATOR_ASYNC_ENABLED )); then
+        info=$(__project_indicator_get_async)
+    else
+        info=$(__project_indicator_get)
+    fi
     __project_indicator_format "$info"
+}
+
+# Cache prewarming - runs detection in background on directory change
+__project_indicator_prewarm_start() {
+    local directory="${1:-$PWD}"
+
+    # Kill existing prewarm worker if any
+    if (( __PROJECT_INDICATOR_PREWARM_PID )); then
+        kill "$__PROJECT_INDICATOR_PREWARM_PID" 2>/dev/null
+        wait "$__PROJECT_INDICATOR_PREWARM_PID" 2>/dev/null
+        __PROJECT_INDICATOR_PREWARM_PID=0
+    fi
+
+    # Run detection in background to populate cache
+    (__project_indicator_execute "$directory" >/dev/null 2>&1) &
+    __PROJECT_INDICATOR_PREWARM_PID=$!
 }
 
 # PROMPT_COMMAND integration for dynamic prompts
@@ -291,6 +543,14 @@ __project_indicator_prompt_command() {
     # Clear memory cache if directory changed (for performance)
     if [[ "$PWD" != "$__PROJECT_INDICATOR_LAST_PWD" ]]; then
         __PROJECT_INDICATOR_LAST_TIME=0
+
+        # Start async worker if async mode enabled
+        if (( __PROJECT_INDICATOR_ASYNC_ENABLED )); then
+            __project_indicator_async_start "$PWD"
+        # Start prewarm worker if prewarm mode enabled (and async is off)
+        elif (( __PROJECT_INDICATOR_PREWARM_ENABLED )); then
+            __project_indicator_prewarm_start "$PWD"
+        fi
     fi
 }
 
@@ -306,8 +566,11 @@ fi
 # Initialization
 __project_indicator_init_cache
 
-# Check if project-indicator is available and show warning if not
+# Silent fallback if binary not available
 if ! command -v project-indicator >/dev/null 2>&1; then
-    echo "Warning: project-indicator binary not found in PATH" >&2
-    echo "Install it from: https://github.com/filipebarros/project-indicator" >&2
+    # Define no-op stub functions (silent mode)
+    project_info() { echo ""; }
+    project_indicator_prompt() { echo ""; }
+    __project_indicator_ps1() { echo ""; }
+    return 0  # Exit integration script silently
 fi

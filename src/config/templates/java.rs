@@ -1,14 +1,15 @@
 use super::shared::{framework, nerd_icon, root_indicator};
+use crate::constants::{BUILD_GRADLE, BUILD_GRADLE_KTS, JAVA_EXTENSION, POM_XML};
 use crate::types::{DetectionType, IndicatorContext, ProjectIndicator};
 
 pub fn create_java_language() -> ProjectIndicator {
     ProjectIndicator::with_root_indicators(
         "Java".to_string(),
         vec![
-            "*.java".to_string(),
-            "pom.xml".to_string(),
-            "build.gradle".to_string(),
-            "build.gradle.kts".to_string(),
+            JAVA_EXTENSION.to_string(),
+            POM_XML.to_string(),
+            BUILD_GRADLE.to_string(),
+            BUILD_GRADLE_KTS.to_string(),
         ],
         "#ed8b00".to_string(),
         nerd_icon("e738"),
@@ -40,9 +41,9 @@ pub fn create_java_language() -> ProjectIndicator {
             ],
         )],
         vec![
-            root_indicator("pom.xml", 0.95, IndicatorContext::BuildSystem),
-            root_indicator("build.gradle", 0.95, IndicatorContext::BuildSystem),
-            root_indicator("build.gradle.kts", 0.95, IndicatorContext::BuildSystem),
+            root_indicator(POM_XML, 0.95, IndicatorContext::BuildSystem),
+            root_indicator(BUILD_GRADLE, 0.95, IndicatorContext::BuildSystem),
+            root_indicator(BUILD_GRADLE_KTS, 0.95, IndicatorContext::BuildSystem),
             root_indicator("settings.gradle", 0.8, IndicatorContext::BuildSystem),
         ],
     )

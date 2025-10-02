@@ -234,6 +234,9 @@ pub fn create_python_dev_template() -> ConfigTemplate {
             root_indicators: vcs_root_indicators(),
             max_depth: 3,
             detection_mode: crate::types::DetectionMode::default(),
+            max_matches_per_pattern: 15,
+            small_project_threshold: 50,
+            extreme_size_threshold: 500,
         },
         languages: vec![create_python_language()],
     };
@@ -268,6 +271,9 @@ pub fn create_web_dev_template() -> ConfigTemplate {
             root_indicators: vcs_root_indicators(),
             max_depth: 3,
             detection_mode: crate::types::DetectionMode::default(),
+            max_matches_per_pattern: 15,
+            small_project_threshold: 50,
+            extreme_size_threshold: 500,
         },
         languages: vec![create_javascript_language(), create_typescript_language()],
     };
@@ -301,6 +307,9 @@ pub fn create_mobile_dev_template() -> ConfigTemplate {
             root_indicators: vcs_root_indicators(),
             max_depth: 3,
             detection_mode: crate::types::DetectionMode::default(),
+            max_matches_per_pattern: 15,
+            small_project_threshold: 50,
+            extreme_size_threshold: 500,
         },
         languages: vec![
             create_javascript_language(),
@@ -341,6 +350,9 @@ pub fn create_data_science_template() -> ConfigTemplate {
             root_indicators: vcs_root_indicators(),
             max_depth: 3,
             detection_mode: crate::types::DetectionMode::default(),
+            max_matches_per_pattern: 15,
+            small_project_threshold: 50,
+            extreme_size_threshold: 500,
         },
         languages: vec![
             create_python_language(),
@@ -380,6 +392,9 @@ pub fn create_enterprise_template() -> ConfigTemplate {
             root_indicators: vcs_root_indicators(),
             max_depth: 4,
             detection_mode: crate::types::DetectionMode::default(),
+            max_matches_per_pattern: 15,
+            small_project_threshold: 50,
+            extreme_size_threshold: 500,
         },
         languages: vec![
             create_rust_language(),

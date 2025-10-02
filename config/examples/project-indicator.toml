@@ -1121,3 +1121,103 @@ context = "BuildSystem"
 pattern = "project/build.properties"
 weight = 0.8
 context = "BuildSystem"
+[[languages]]
+name = "Kotlin"
+files = [
+    "*.kt",
+    "*.kts",
+    "build.gradle.kts",
+    "settings.gradle.kts",
+]
+color = "#7f52ff"
+icon = ""
+priority = 6
+
+[[languages.frameworks]]
+name = "Ktor"
+icon = ""
+color = "#087cfa"
+priority = 1
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "KotlinEcosystem"
+dependencies = ["ktor-server-core", "ktor-server-netty", "ktor-server-cio"]
+
+[[languages.frameworks]]
+name = "Spring Boot"
+icon = ""
+color = "#6db33f"
+priority = 2
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "KotlinEcosystem"
+dependencies = ["spring-boot-starter", "spring-boot-starter-web"]
+
+[[languages.root_indicators]]
+pattern = "build.gradle.kts"
+weight = 0.95
+context = "BuildSystem"
+
+[[languages.root_indicators]]
+pattern = "settings.gradle.kts"
+weight = 0.8
+context = "BuildSystem"
+
+[[languages]]
+name = "Swift"
+files = [
+    "*.swift",
+    "Package.swift",
+]
+color = "#fa7343"
+icon = ""
+priority = 6
+
+[[languages.frameworks]]
+name = "Vapor"
+icon = ""
+color = "#5aa9e6"
+priority = 1
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "SwiftEcosystem"
+dependencies = ["vapor", "fluent"]
+
+[[languages.root_indicators]]
+pattern = "Package.swift"
+weight = 0.95
+context = "PackageManagement"
+
+[[languages]]
+name = "Elixir"
+files = [
+    "*.ex",
+    "*.exs",
+    "mix.exs",
+]
+color = "#6e4a7e"
+icon = ""
+priority = 6
+
+[[languages.frameworks]]
+name = "Phoenix"
+icon = ""
+color = "#ff6600"
+priority = 1
+files = []
+root_indicators = []
+
+[languages.frameworks.detection]
+type = "ElixirEcosystem"
+dependencies = ["phoenix", "phoenix_html", "phoenix_live_view"]
+
+[[languages.root_indicators]]
+pattern = "mix.exs"
+weight = 0.95
+context = "BuildSystem"

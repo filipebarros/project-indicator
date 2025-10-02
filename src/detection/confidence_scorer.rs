@@ -87,10 +87,8 @@ impl ConfidenceScorer {
             }
         }
 
-        match pattern.to_lowercase().as_str() {
-            pattern if pattern.starts_with("*.") => 0.5,
-            _ => 0.5,
-        }
+        // Default weight for patterns not matching any root indicator
+        0.5
     }
 
     pub fn calculate_language_score(

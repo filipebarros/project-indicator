@@ -1,100 +1,12 @@
+mod common;
+
+use common::{create_test_config, create_test_project};
 use project_indicator::{
-    config::Config,
     detection::DetectionEngine,
     output::{OutputFormat, OutputFormatter},
-    types::{DetectionType, DisplayConfig, FrameworkDetector, ProjectIndicator},
+    types::DisplayConfig,
 };
 use serde_json::Value;
-use std::fs;
-use tempfile::TempDir;
-fn create_test_project(files: &[(&str, &str)]) -> Result<TempDir, Box<dyn std::error::Error>> {
-    let temp_dir = TempDir::new()?;
-
-    for (path, content) in files {
-        let file_path = temp_dir.path().join(path);
-
-        if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        fs::write(file_path, content)?;
-    }
-
-    Ok(temp_dir)
-}
-fn create_test_config() -> Config {
-    let typescript = ProjectIndicator::new(
-        "TypeScript".to_string(),
-        vec!["tsconfig.json".to_string(), "*.ts".to_string()],
-        "#3178C6".to_string(),
-        "󰛦".to_string(),
-        1,
-        vec![
-            FrameworkDetector {
-                name: "React".to_string(),
-                detection: DetectionType::NodeEcosystem {
-                    dependencies: vec!["react".to_string()],
-                },
-                icon: Some("⚛️".to_string()),
-                color: Some("#61DAFB".to_string()),
-                priority: 1,
-                files: vec![],
-                root_indicators: vec![],
-            },
-            FrameworkDetector {
-                name: "Next.js".to_string(),
-                detection: DetectionType::NodeEcosystem {
-                    dependencies: vec!["next".to_string()],
-                },
-                icon: Some("▲".to_string()),
-                color: Some("#000000".to_string()),
-                priority: 0,
-                files: vec![],
-                root_indicators: vec![],
-            },
-        ],
-    );
-
-    let rust = ProjectIndicator::new(
-        "Rust".to_string(),
-        vec!["Cargo.toml".to_string(), "*.rs".to_string()],
-        "#DEA584".to_string(),
-        "".to_string(),
-        1,
-        vec![FrameworkDetector {
-            name: "Rocket".to_string(),
-            detection: DetectionType::RustEcosystem {
-                dependencies: vec!["rocket".to_string()],
-            },
-            icon: Some("🚀".to_string()),
-            color: Some("#D33847".to_string()),
-            priority: 1,
-            files: vec![],
-            root_indicators: vec![],
-        }],
-    );
-
-    let python = ProjectIndicator::new(
-        "Python".to_string(),
-        vec!["*.py".to_string(), "requirements.txt".to_string()],
-        "#3776AB".to_string(),
-        "".to_string(),
-        2,
-        vec![FrameworkDetector {
-            name: "Django".to_string(),
-            detection: DetectionType::PythonEcosystem {
-                dependencies: vec!["django".to_string()],
-            },
-            icon: Some("📝".to_string()),
-            color: Some("#1E293B".to_string()),
-            priority: 1,
-            files: vec![],
-            root_indicators: vec![],
-        }],
-    );
-
-    Config::new(vec![typescript, rust, python])
-}
 
 #[test]
 fn test_typescript_react_detection() -> Result<(), Box<dyn std::error::Error>> {

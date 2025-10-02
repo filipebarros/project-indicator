@@ -7,6 +7,9 @@ pub mod patterns;
 pub mod performance;
 pub mod types;
 
+#[cfg(test)]
+pub mod test_utils;
+
 pub use types::{
     DetectionResult, DetectionType, FrameworkDetector, FrameworkMatch, ProjectIndicator,
 };

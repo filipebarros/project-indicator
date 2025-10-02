@@ -1,6 +1,7 @@
 use crate::detection::caches::parsed_file::ParsedFileCache;
 use crate::performance::{CacheStats, FileSystemCache};
 use std::path::Path;
+use std::sync::Arc;
 
 /// Manages file system and parsed file caches for the detection engine.
 ///
@@ -10,7 +11,7 @@ use std::path::Path;
 /// Note: This is separate from `DetectionCache` which caches complete
 /// detection results across CLI invocations.
 pub struct FileSystemCacheManager {
-    file_existence_cache: FileSystemCache,
+    file_existence_cache: Arc<FileSystemCache>,
     parsed_file_cache: ParsedFileCache,
 }
 
@@ -22,7 +23,7 @@ impl FileSystemCacheManager {
     /// - Max entries: 10,000
     pub fn new() -> Self {
         Self {
-            file_existence_cache: FileSystemCache::new(300, 10000),
+            file_existence_cache: Arc::new(FileSystemCache::new(300, 10000)),
             parsed_file_cache: ParsedFileCache::new(),
         }
     }
@@ -30,7 +31,7 @@ impl FileSystemCacheManager {
     /// Creates a new FileSystemCacheManager with custom settings.
     pub fn with_config(ttl_secs: u64, max_entries: usize) -> Self {
         Self {
-            file_existence_cache: FileSystemCache::new(ttl_secs, max_entries),
+            file_existence_cache: Arc::new(FileSystemCache::new(ttl_secs, max_entries)),
             parsed_file_cache: ParsedFileCache::new(),
         }
     }
@@ -40,9 +41,12 @@ impl FileSystemCacheManager {
         self.file_existence_cache.exists(path)
     }
 
-    /// Gets a reference to the file existence cache.
-    pub fn file_existence_cache(&self) -> &FileSystemCache {
-        &self.file_existence_cache
+    /// Gets a shared reference to the file existence cache.
+    ///
+    /// Returns an Arc clone (cheap reference count increment) allowing
+    /// the cache to be shared across multiple components.
+    pub fn file_existence_cache(&self) -> Arc<FileSystemCache> {
+        Arc::clone(&self.file_existence_cache)
     }
 
     /// Gets a reference to the parsed file cache.

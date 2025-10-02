@@ -1,4 +1,7 @@
-use super::helpers::{check_luarocks_lock_dependencies, check_rockspec_dependencies};
+use super::helpers::{
+    check_luarocks_lock_dependencies, check_rockspec_dependencies, try_config_file_deps,
+};
+use crate::constants::LUAROCKS_LOCK;
 use crate::detection::caches::ParsedFileCache;
 use crate::Result;
 use std::path::Path;
@@ -21,12 +24,16 @@ pub fn check_lua_ecosystem<P: AsRef<Path>>(
         }
     }
 
-    if let Some(lock_content) = parsed_cache.get_config_file(&path, "luarocks.lock")? {
-        let lock_deps = check_luarocks_lock_dependencies(&lock_content, packages);
-        if !lock_deps.is_empty() {
-            found_deps.extend(lock_deps);
-            evidence.push("luarocks.lock".to_owned());
-        }
+    if try_config_file_deps(
+        parsed_cache,
+        &path,
+        LUAROCKS_LOCK,
+        packages,
+        check_luarocks_lock_dependencies,
+        &mut found_deps,
+        &mut evidence,
+    )? {
+        return Ok((found_deps, evidence));
     }
 
     Ok((found_deps, evidence))

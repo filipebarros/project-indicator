@@ -1,7 +1,8 @@
 use super::helpers::{
     check_poetry_lock_dependencies, check_pyproject_dependencies, check_text_dependencies,
+    try_config_file_deps,
 };
-use crate::constants::{POETRY_LOCK, PYPROJECT_TOML};
+use crate::constants::{PIPFILE, POETRY_LOCK, PYPROJECT_TOML, REQUIREMENTS_TXT};
 use crate::detection::caches::ParsedFileCache;
 use crate::Result;
 use std::path::Path;
@@ -24,22 +25,28 @@ pub fn check_python_ecosystem<P: AsRef<Path>>(
         }
     }
 
-    if let Some(content) = parsed_cache.get_config_file(&path, "requirements.txt")? {
-        let req_deps = check_text_dependencies(&content, dependencies);
-        if !req_deps.is_empty() {
-            found_deps.extend(req_deps);
-            evidence.push("requirements.txt".to_owned());
-            return Ok((found_deps, evidence));
-        }
+    if try_config_file_deps(
+        parsed_cache,
+        &path,
+        REQUIREMENTS_TXT,
+        dependencies,
+        check_text_dependencies,
+        &mut found_deps,
+        &mut evidence,
+    )? {
+        return Ok((found_deps, evidence));
     }
 
-    if let Some(content) = parsed_cache.get_config_file(&path, "Pipfile")? {
-        let pipfile_deps = check_text_dependencies(&content, dependencies);
-        if !pipfile_deps.is_empty() {
-            found_deps.extend(pipfile_deps);
-            evidence.push("Pipfile".to_owned());
-            return Ok((found_deps, evidence));
-        }
+    if try_config_file_deps(
+        parsed_cache,
+        &path,
+        PIPFILE,
+        dependencies,
+        check_text_dependencies,
+        &mut found_deps,
+        &mut evidence,
+    )? {
+        return Ok((found_deps, evidence));
     }
 
     if let Some(content) = parsed_cache.get_poetry_lock(&path)? {

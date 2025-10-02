@@ -1,26 +1,12 @@
+mod common;
+
+use common::create_test_project;
 use project_indicator::{
     output::{format_result, OutputFormat},
     types::*,
     Config, DetectionEngine,
 };
-use std::fs;
 use std::sync::Arc;
-use tempfile::TempDir;
-fn create_test_project(files: &[(&str, &str)]) -> Result<TempDir, Box<dyn std::error::Error>> {
-    let temp_dir = TempDir::new()?;
-
-    for (file_path, content) in files {
-        let file_path = temp_dir.path().join(file_path);
-
-        if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        fs::write(file_path, content)?;
-    }
-
-    Ok(temp_dir)
-}
 
 #[test]
 fn test_config_serialization() -> Result<(), Box<dyn std::error::Error>> {

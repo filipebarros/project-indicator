@@ -189,6 +189,15 @@ fn validate_detection_type(detection: &DetectionType) -> Result<()> {
         DetectionType::LuaEcosystem { packages } => {
             validate_non_empty_vec(packages, "LuaEcosystem packages")?;
         }
+        DetectionType::KotlinEcosystem { dependencies } => {
+            validate_non_empty_vec(dependencies, "KotlinEcosystem dependencies")?;
+        }
+        DetectionType::SwiftEcosystem { dependencies } => {
+            validate_non_empty_vec(dependencies, "SwiftEcosystem dependencies")?;
+        }
+        DetectionType::ElixirEcosystem { dependencies } => {
+            validate_non_empty_vec(dependencies, "ElixirEcosystem dependencies")?;
+        }
         DetectionType::FileExists { files } => {
             validate_non_empty_vec(files, "FileExists files")?;
         }

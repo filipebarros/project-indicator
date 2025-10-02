@@ -1,3 +1,4 @@
+use crate::constants::*;
 use crate::types::{CacheConfig, DetectionResult};
 use crate::Result;
 use dashmap::DashMap;
@@ -140,24 +141,24 @@ impl DetectionCache {
         let mut file_times = HashMap::new();
 
         let key_files = [
-            "package.json",
-            "package-lock.json",
-            "yarn.lock",
-            "pnpm-lock.yaml",
-            "Cargo.toml",
-            "Cargo.lock",
-            "go.mod",
-            "pyproject.toml",
-            "poetry.lock",
-            "requirements.txt",
-            "tsconfig.json",
-            "setup.py",
-            "composer.json",
-            "composer.lock",
-            "Gemfile",
-            "Gemfile.lock",
-            "pom.xml",
-            "build.gradle",
+            PACKAGE_JSON,
+            PACKAGE_LOCK_JSON,
+            YARN_LOCK,
+            PNPM_LOCK_YAML,
+            CARGO_TOML,
+            CARGO_LOCK,
+            GO_MOD,
+            PYPROJECT_TOML,
+            POETRY_LOCK,
+            REQUIREMENTS_TXT,
+            TSCONFIG_JSON,
+            SETUP_PY,
+            COMPOSER_JSON,
+            COMPOSER_LOCK,
+            GEMFILE,
+            GEMFILE_LOCK,
+            POM_XML,
+            BUILD_GRADLE,
         ];
 
         for file_name in &key_files {
@@ -297,32 +298,10 @@ pub trait CachedDetection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ProjectIndicator;
+    use crate::test_utils::{create_test_cache, create_test_result};
     use std::fs;
     use std::thread;
     use tempfile::TempDir;
-
-    fn create_test_cache() -> DetectionCache {
-        let config = CacheConfig {
-            enabled: true,
-            max_entries: 100,
-            ttl_seconds: 300,
-        };
-        DetectionCache::new(config)
-    }
-
-    fn create_test_result() -> DetectionResult {
-        let language = ProjectIndicator::new(
-            "TypeScript".to_string(),
-            vec!["tsconfig.json".to_string()],
-            "#3178C6".to_string(),
-            "󰛦".to_string(),
-            1,
-            vec![],
-        );
-
-        DetectionResult::new(Some(Arc::new(language)), vec![], 0.9)
-    }
 
     #[test]
     fn test_cache_basic_operations() -> Result<(), Box<dyn std::error::Error>> {

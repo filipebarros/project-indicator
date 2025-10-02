@@ -1,10 +1,11 @@
 use super::shared::{framework, nerd_icon, root_indicator};
+use crate::constants::{DART_EXTENSION, PUBSPEC_YAML};
 use crate::types::{DetectionType, IndicatorContext, ProjectIndicator};
 
 pub fn create_dart_language() -> ProjectIndicator {
     ProjectIndicator::with_root_indicators(
         "Dart".to_string(),
-        vec!["*.dart".to_string(), "pubspec.yaml".to_string()],
+        vec![DART_EXTENSION.to_string(), PUBSPEC_YAML.to_string()],
         "#0175c2".to_string(),
         nerd_icon("e798"),
         8,

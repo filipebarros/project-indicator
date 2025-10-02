@@ -5,6 +5,53 @@ use project_indicator::{
 };
 use std::env;
 
+/// Validates the EDITOR environment variable for security
+fn validate_editor(editor: &str) -> Result<()> {
+    // Check for shell injection attempts
+    if editor.contains(';') || editor.contains('&') || editor.contains('|') {
+        anyhow::bail!("Invalid EDITOR: contains shell operators (;, &, |). Please use a direct path to an editor binary.");
+    }
+
+    // Known safe editors
+    const KNOWN_EDITORS: &[&str] = &[
+        "vim",
+        "nvim",
+        "vi",
+        "emacs",
+        "emacsclient",
+        "nano",
+        "pico",
+        "code",
+        "code-insiders",
+        "subl",
+        "sublime_text",
+        "atom",
+        "gedit",
+        "kate",
+        "kwrite",
+        "micro",
+        "helix",
+        "hx",
+    ];
+
+    // Extract base command name (handle paths and arguments)
+    let base_cmd = editor.split_whitespace().next().unwrap_or(editor);
+    let base_name = std::path::Path::new(base_cmd)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(base_cmd);
+
+    // Check if it's a known editor
+    if !KNOWN_EDITORS.contains(&base_name) {
+        log::warn!("⚠️  Unknown editor '{}'. Proceeding with caution.", editor);
+        log::warn!("💡 Recommended editors: {}", KNOWN_EDITORS.join(", "));
+        println!("⚠️  Warning: Using unknown editor '{}'", editor);
+        println!("💡 Recommended: vim, nvim, emacs, nano, code, subl");
+    }
+
+    Ok(())
+}
+
 pub fn handle_config_command(action: ConfigAction) -> Result<()> {
     match action {
         ConfigAction::Validate => {
@@ -126,7 +173,9 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             println!("📍 Configuration file location: {}", config_path.display());
 
             if let Ok(editor) = env::var("EDITOR") {
-                std::process::Command::new(editor)
+                validate_editor(&editor)?;
+
+                std::process::Command::new(&editor)
                     .arg(&config_path)
                     .status()
                     .map_err(|e| anyhow::anyhow!("Failed to open editor: {}", e))?;

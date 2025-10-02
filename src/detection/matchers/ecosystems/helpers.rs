@@ -434,6 +434,41 @@ pub fn check_packages_config_dependencies(content: &str, package_names: &[String
     found_deps
 }
 
+/// Check Package.swift dependencies (Swift Package Manager)
+pub fn check_swift_package_dependencies(content: &str, dep_names: &[String]) -> Vec<String> {
+    let mut found_deps = Vec::with_capacity(dep_names.len());
+
+    for dep_name in dep_names {
+        // Match patterns like: .package(url: "https://github.com/vapor/vapor.git", ...)
+        // or .package(name: "Vapor", ...)
+        if content.contains(&format!("/{}.git", dep_name))
+            || content.contains(&format!("name: \"{}\"", dep_name))
+            || content.contains(&format!("name: '{}'", dep_name))
+            || content.contains(&format!("\"{}\"", dep_name))
+        {
+            found_deps.push(dep_name.to_string());
+        }
+    }
+
+    found_deps
+}
+
+/// Check mix.exs dependencies (Elixir)
+pub fn check_mix_dependencies(content: &str, dep_names: &[String]) -> Vec<String> {
+    let mut found_deps = Vec::with_capacity(dep_names.len());
+
+    for dep_name in dep_names {
+        // Match patterns like: {:phoenix, "~> 1.7"} or {:phoenix, github: "phoenixframework/phoenix"}
+        if content.contains(&format!("{{:{}", dep_name))
+            || content.contains(&format!("{{:\"{}\"", dep_name))
+        {
+            found_deps.push(dep_name.to_string());
+        }
+    }
+
+    found_deps
+}
+
 /// Check .rockspec dependencies
 pub fn check_rockspec_dependencies(content: &str, package_names: &[String]) -> Vec<String> {
     let mut found_deps = Vec::with_capacity(package_names.len());
@@ -465,4 +500,64 @@ pub fn check_luarocks_lock_dependencies(content: &str, package_names: &[String])
     }
 
     found_deps
+}
+
+/// Generic helper to check and collect dependencies from a config file
+///
+/// This reduces duplication across ecosystem matchers by providing a common pattern:
+/// 1. Try to get config file from the cache
+/// 2. Check for dependencies in that file using the provided check function
+/// 3. If found, collect them and add the filename to evidence
+/// 4. Return true to indicate early termination
+///
+/// # Parameters
+/// - `parsed_cache`: Cache for parsed config files
+/// - `path`: Directory path to search in
+/// - `file_name`: Name of the config file to check
+/// - `dependencies`: List of dependency names to search for
+/// - `check_fn`: Function that checks file content for dependencies
+/// - `found_deps`: Accumulator for found dependency names
+/// - `evidence`: Accumulator for evidence file names
+///
+/// # Returns
+/// - `Ok(true)` if dependencies were found and added
+/// - `Ok(false)` if file doesn't exist or no dependencies found
+///
+/// # Example
+/// Within an ecosystem matcher, you would use this as:
+/// ```text
+/// if try_config_file_deps(
+///     parsed_cache,
+///     &path,
+///     BUILD_GRADLE,
+///     dependencies,
+///     check_gradle_dependencies,
+///     &mut found_deps,
+///     &mut evidence,
+/// )? {
+///     return Ok((found_deps, evidence));
+/// }
+/// ```
+pub fn try_config_file_deps<P, F>(
+    parsed_cache: &crate::detection::caches::ParsedFileCache,
+    path: P,
+    file_name: &str,
+    dependencies: &[String],
+    check_fn: F,
+    found_deps: &mut Vec<String>,
+    evidence: &mut Vec<String>,
+) -> crate::Result<bool>
+where
+    P: AsRef<std::path::Path>,
+    F: FnOnce(&str, &[String]) -> Vec<String>,
+{
+    if let Some(content) = parsed_cache.get_config_file(&path, file_name)? {
+        let deps = check_fn(&content, dependencies);
+        if !deps.is_empty() {
+            found_deps.extend(deps);
+            evidence.push(file_name.to_owned());
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

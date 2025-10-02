@@ -1,18 +1,22 @@
 use super::shared::{framework, nerd_icon, root_indicator, simple_framework};
+use crate::constants::{
+    PIPFILE, POETRY_LOCK, PYPROJECT_TOML, PYTHON_INTERFACE_EXTENSION, PYTHON_WINDOWS_EXTENSION,
+    PY_EXTENSION, REQUIREMENTS_TXT, SETUP_PY,
+};
 use crate::types::{DetectionType, IndicatorContext, ProjectIndicator};
 
 pub fn create_python_language() -> ProjectIndicator {
     ProjectIndicator::with_root_indicators(
         "Python".to_string(),
         vec![
-            "*.py".to_string(),
-            "*.pyw".to_string(),
-            "*.pyi".to_string(),
-            "requirements.txt".to_string(),
-            "pyproject.toml".to_string(),
-            "setup.py".to_string(),
-            "Pipfile".to_string(),
-            "poetry.lock".to_string(),
+            PY_EXTENSION.to_string(),
+            PYTHON_WINDOWS_EXTENSION.to_string(),
+            PYTHON_INTERFACE_EXTENSION.to_string(),
+            REQUIREMENTS_TXT.to_string(),
+            PYPROJECT_TOML.to_string(),
+            SETUP_PY.to_string(),
+            PIPFILE.to_string(),
+            POETRY_LOCK.to_string(),
         ],
         "#3776ab".to_string(),
         nerd_icon("e73c"),
@@ -50,13 +54,40 @@ pub fn create_python_language() -> ProjectIndicator {
                 Some("#009688"),
                 3,
             ),
+            simple_framework(
+                "Tornado",
+                DetectionType::PythonEcosystem {
+                    dependencies: vec!["tornado".to_string()],
+                },
+                None,
+                Some("#3bb9ff"),
+                4,
+            ),
+            simple_framework(
+                "Pyramid",
+                DetectionType::PythonEcosystem {
+                    dependencies: vec!["pyramid".to_string()],
+                },
+                None,
+                Some("#ff0000"),
+                5,
+            ),
+            simple_framework(
+                "Sanic",
+                DetectionType::PythonEcosystem {
+                    dependencies: vec!["sanic".to_string()],
+                },
+                None,
+                Some("#ff8c00"),
+                6,
+            ),
         ],
         vec![
-            root_indicator("pyproject.toml", 0.95, IndicatorContext::LanguageRoot),
-            root_indicator("requirements.txt", 0.9, IndicatorContext::LanguageRoot),
-            root_indicator("setup.py", 0.85, IndicatorContext::LanguageRoot),
-            root_indicator("Pipfile", 0.9, IndicatorContext::LanguageRoot),
-            root_indicator("poetry.lock", 0.8, IndicatorContext::LanguageRoot),
+            root_indicator(PYPROJECT_TOML, 0.95, IndicatorContext::LanguageRoot),
+            root_indicator(REQUIREMENTS_TXT, 0.9, IndicatorContext::LanguageRoot),
+            root_indicator(SETUP_PY, 0.85, IndicatorContext::LanguageRoot),
+            root_indicator(PIPFILE, 0.9, IndicatorContext::LanguageRoot),
+            root_indicator(POETRY_LOCK, 0.8, IndicatorContext::LanguageRoot),
         ],
     )
 }

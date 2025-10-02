@@ -1,4 +1,7 @@
-use super::helpers::{check_csproj_dependencies, check_packages_config_dependencies};
+use super::helpers::{
+    check_csproj_dependencies, check_packages_config_dependencies, try_config_file_deps,
+};
+use crate::constants::PACKAGES_CONFIG;
 use crate::detection::caches::ParsedFileCache;
 use crate::Result;
 use std::path::Path;
@@ -22,48 +25,61 @@ pub fn check_dotnet_ecosystem<P: AsRef<Path>>(
     ];
 
     for csproj_name in &common_csproj_names {
-        if let Some(content) = parsed_cache.get_config_file(&path, csproj_name)? {
-            let csproj_deps = check_csproj_dependencies(&content, packages);
-            if !csproj_deps.is_empty() {
-                found_deps.extend(csproj_deps);
-                evidence.push(csproj_name.to_string());
-                return Ok((found_deps, evidence));
-            }
+        if try_config_file_deps(
+            parsed_cache,
+            &path,
+            csproj_name,
+            packages,
+            check_csproj_dependencies,
+            &mut found_deps,
+            &mut evidence,
+        )? {
+            return Ok((found_deps, evidence));
         }
     }
 
     if let Ok(entries) = std::fs::read_dir(&path) {
         for entry in entries.flatten() {
             if let Some(filename) = entry.file_name().to_str() {
-                if filename.ends_with(".csproj") {
-                    if let Some(content) = parsed_cache.get_config_file(&path, filename)? {
-                        let csproj_deps = check_csproj_dependencies(&content, packages);
-                        if !csproj_deps.is_empty() {
-                            found_deps.extend(csproj_deps);
-                            evidence.push(filename.to_string());
-                            return Ok((found_deps, evidence));
-                        }
-                    }
+                if filename.ends_with(".csproj")
+                    && try_config_file_deps(
+                        parsed_cache,
+                        &path,
+                        filename,
+                        packages,
+                        check_csproj_dependencies,
+                        &mut found_deps,
+                        &mut evidence,
+                    )?
+                {
+                    return Ok((found_deps, evidence));
                 }
             }
         }
     }
 
-    if let Some(content) = parsed_cache.get_config_file(&path, "packages.config")? {
-        let package_config_deps = check_packages_config_dependencies(&content, packages);
-        if !package_config_deps.is_empty() {
-            found_deps.extend(package_config_deps);
-            evidence.push("packages.config".to_owned());
-            return Ok((found_deps, evidence));
-        }
+    if try_config_file_deps(
+        parsed_cache,
+        &path,
+        PACKAGES_CONFIG,
+        packages,
+        check_packages_config_dependencies,
+        &mut found_deps,
+        &mut evidence,
+    )? {
+        return Ok((found_deps, evidence));
     }
 
-    if let Some(content) = parsed_cache.get_config_file(&path, "Directory.Build.props")? {
-        let props_deps = check_csproj_dependencies(&content, packages);
-        if !props_deps.is_empty() {
-            found_deps.extend(props_deps);
-            evidence.push("Directory.Build.props".to_owned());
-        }
+    if try_config_file_deps(
+        parsed_cache,
+        &path,
+        "Directory.Build.props",
+        packages,
+        check_csproj_dependencies,
+        &mut found_deps,
+        &mut evidence,
+    )? {
+        return Ok((found_deps, evidence));
     }
 
     Ok((found_deps, evidence))
