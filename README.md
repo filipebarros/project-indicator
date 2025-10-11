@@ -7,13 +7,23 @@
 
 Project Indicator is a high-performance replacement for shell-based project detection tools, designed to be integrated into your shell prompt or status line. It quickly identifies what type of project you're working on and displays relevant information with customizable formatting and colors.
 
+## Key Features
+
+- ✨ **Rich Output Format**: Detailed table format for comprehensive project information
+- 🔒 **Enhanced Security**: EDITOR validation to prevent shell injection attacks
+- 📊 **Lock Contention Metrics**: Monitor cache performance with detailed lock contention tracking
+- ⚙️ **Configurable Thresholds**: Fine-tune detection with configurable performance thresholds
+- 🧪 **Property-Based Testing**: 274 total tests including rigorous property-based testing with proptest
+- 🔗 **Symlink Handling**: Comprehensive edge case handling for Unix symlinks
+- ⚡ **Performance**: Optimized cache eviction algorithm (O(n log k) complexity)
+
 ## Features
 
-- 🔍 **Multi-language Detection**: Supports 18+ programming languages (Rust, JavaScript/TypeScript, Python, Go, Java, PHP, Ruby, and more)
-- 🏗️ **Framework Recognition**: Detects 50+ popular frameworks like React, Next.js, Django, Flask, Gin, Spring Boot, Laravel, Rails
-- ⚡ **Blazing Performance**: 3-5ms typical detection, ~3µs shell prompt scenario (20x improvement from optimization work)
-- 🎨 **Multiple Output Formats**: Simple, Full, JSON, Compact, and Debug formats
-- 📁 **Intelligent Caching**: DashMap-based concurrent caching with pattern matching, parsed files, and filesystem metadata
+- 🔍 **Multi-language Detection**: Supports 19 programming languages (Rust, JavaScript/TypeScript, Python, Go, Java, PHP, Ruby, and more)
+- 🏗️ **Framework Recognition**: Detects 51+ popular frameworks like React, Next.js, Django, Flask, Gin, Spring Boot, Laravel, Rails
+- ⚡ **Blazing Performance**: 3-5ms typical detection, ~3µs shell prompt scenario
+- 🎨 **Multiple Output Formats**: Simple, Full, JSON, Compact, Debug, and Rich formats
+- 📁 **Unified Cache Architecture**: Single DashMap with progressive enhancement (raw → parsed), lock-free concurrency, and smart upgrades
 - 🔧 **Comprehensive CLI**: Configuration management, cache control, debugging tools, and root indicator analysis
 - 🧠 **Advanced Detection**: Confidence-based scoring with weighted root indicators and early termination
 - 🔧 **Configuration Templates**: Pre-built templates for different development environments
@@ -73,6 +83,7 @@ project-indicator --format json
 project-indicator --format full
 project-indicator --format compact
 project-indicator --format debug
+project-indicator --format rich
 ```
 
 ## CLI Reference
@@ -87,7 +98,7 @@ project-indicator [OPTIONS] [PATH]
 - `PATH` - Directory to analyze (defaults to current directory)
 
 **Options:**
-- `--format <FORMAT>` - Output format: simple (default), full, json, compact, debug
+- `--format <FORMAT>` - Output format: simple (default), full, json, compact, debug, rich
 - `--max-depth <N>` - Maximum scan depth (default: 3)
 - `--mode <MODE>` - Detection mode: thorough (default) or fast
 - `-v, --verbose` - Enable verbose logging
@@ -111,7 +122,7 @@ project-indicator benchmark
 **Cache Management:**
 ```bash
 project-indicator cache clear
-project-indicator cache stats
+project-indicator cache stats  # Shows cache performance metrics including lock contention
 ```
 
 **Root Indicator Analysis:**
@@ -154,15 +165,25 @@ $ project-indicator --format json
   ],
   "confidence": 0.95
 }
+
+# Rich format (detailed table view)
+$ project-indicator --format rich
+╭────────────────────────────────────╮
+│ Project Detection Results         │
+├────────────────────────────────────┤
+│ Language:    TypeScript           │
+│ Framework:   React                │
+│ Confidence:  95%                  │
+╰────────────────────────────────────╯
 ```
 
 ## Performance
 
-Project Indicator v0.3.0 achieves exceptional performance through comprehensive optimization:
+Project Indicator v0.4.0 achieves exceptional performance through comprehensive optimization:
 
 ```bash
 $ project-indicator benchmark
-Performance Metrics (v0.3.0)
+Performance Metrics (v0.4.0)
 ============================
 Shell Prompt Scenario: ~3µs (20x improvement)
 Typical Detection: 3-5ms (warm cache)
@@ -176,14 +197,14 @@ Cache Performance:
 - FileSystemCache hit: 114ns
 ```
 
-**Architecture:**
-- DashMap for lock-free concurrent caching
-- Nested cache structures for reduced allocations
-- Direct value caching eliminates re-parsing
-- Early termination with root indicators
-- Batch cache eviction (75% vs single-entry)
-
-See [OPTIMIZATION_ROADMAP.md](OPTIMIZATION_ROADMAP.md) for detailed optimization history.
+**Cache Architecture:**
+- **Unified Cache**: Single DashMap for all entry types with progressive enhancement (None → RawContent → ParsedJson/ParsedToml)
+- **Lock-Free Concurrency**: DashMap provides fine-grained locking, multiple threads access different shards simultaneously
+- **Generic Parser Trait**: Extensible design supporting new formats with ~25 lines vs ~127 lines
+- **Smart Upgrades**: Files automatically upgrade from raw content to parsed values on demand
+- **O(1) Statistics**: Atomic type counters eliminate cache iteration
+- **Early Termination**: Root indicators enable fast detection without full scans
+- **Batch Eviction**: LRU evicts 75% of entries when threshold reached vs single-entry eviction
 
 ## Configuration
 
@@ -232,6 +253,10 @@ max_upward_traversal = 10
 require_vcs_root = false
 confidence_threshold = 0.3
 max_depth = 1
+# Configurable performance thresholds
+max_matches_per_pattern = 15    # Stop after N matches per pattern
+small_project_threshold = 50    # Project size threshold for fast path
+extreme_size_threshold = 500    # Large project threshold
 
 # Detection mode: "fast" or "thorough"
 [detection.mode]
@@ -353,6 +378,10 @@ export PS1='\u@\h:\w$(project_indicator_prompt)\$ '
 | Elixir     |    | Phoenix |
 | Dart       |    | Flutter |
 | C++        |    | CMake, Conan |
+| Zig        |    | Build system support |
+| Lua        |    | LuaRocks, Love2D |
+| Julia      |    | Package ecosystem |
+| R          |    | Shiny, RMarkdown |
 
 ## Advanced Features
 
@@ -468,9 +497,18 @@ cargo test -- --nocapture
 
 # Library tests only
 cargo test --lib
+
+# Property-based tests only
+cargo test --test property_tests
 ```
 
-**Test Coverage**: 243 tests passing
+**Test Coverage**: 274 tests passing across multiple categories:
+- Unit tests: Core functionality and edge cases
+- Integration tests: End-to-end CLI behavior
+- Property-based tests: Invariant validation with proptest (6 tests, 100+ scenarios each)
+- Symlink handling tests: Unix symlink edge cases
+- Concurrent stress tests: Thread safety verification
+- Cache behavior tests: Unified cache, upgrades, and eviction
 
 ### Contributing
 
@@ -529,7 +567,10 @@ src/
 
 - **DetectionEngine**: Orchestrates detection workflow
 - **PatternMatcher**: Thread-safe pattern matching with nested DashMap cache
-- **ParsedFileCache**: Caches JSON/TOML parsing results
+- **ParsedFileCache**: Unified cache with progressive enhancement (None → RawContent → ParsedJson/ParsedToml)
+  - Generic ParsedType trait for extensibility
+  - Smart upgrades from raw to parsed on demand
+  - O(1) statistics via atomic counters
 - **FileSystemCache**: Metadata caching with TTL and eviction
 - **ConfidenceScorer**: Calculates detection confidence with root indicators
 - **FrameworkDetector**: Parallel framework detection

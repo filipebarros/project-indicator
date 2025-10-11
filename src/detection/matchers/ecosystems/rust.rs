@@ -13,7 +13,8 @@ pub fn check_rust_ecosystem<P: AsRef<Path>>(
     let mut found_deps = Vec::new();
     let mut evidence = Vec::new();
 
-    if let Some(toml_value) = parsed_cache.get_cargo_toml(&path)? {
+    let cargo_toml_path = path.as_ref().join(CARGO_TOML);
+    if let Some(toml_value) = parsed_cache.get_toml_value(&cargo_toml_path)? {
         let cargo_deps = check_toml_dependencies(&toml_value, dependencies);
         if !cargo_deps.is_empty() {
             found_deps.extend(cargo_deps);
@@ -22,7 +23,8 @@ pub fn check_rust_ecosystem<P: AsRef<Path>>(
         }
     }
 
-    if let Some(content) = parsed_cache.get_cargo_lock(&path)? {
+    let cargo_lock_path = path.as_ref().join(CARGO_LOCK);
+    if let Some(content) = parsed_cache.get_file_content(&cargo_lock_path)? {
         let lock_deps = check_cargo_lock_dependencies(&content, dependencies);
         if !lock_deps.is_empty() {
             found_deps.extend(lock_deps);

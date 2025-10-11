@@ -1,5 +1,5 @@
 use crate::constants::*;
-use crate::detection::caches::{CachedDetection, DetectionCache, FileSystemCacheManager};
+use crate::detection::caches::{DetectionCache, FileSystemCacheManager};
 use crate::detection::confidence_scorer::ConfidenceScorer;
 use crate::detection::framework_detector::FrameworkDetector;
 use crate::detection::language_resolver::LanguageResolver;
@@ -9,8 +9,7 @@ use crate::detection::pattern_processor::PatternProcessor;
 use crate::detection::root_indicators::RootIndicatorEngine;
 use crate::detection::scanner::ScanningEngine;
 use crate::types::{
-    DetectionConfig, DetectionEvidence, DetectionResult, DetectionType, MatchedFile,
-    ProjectIndicator,
+    DetectionConfig, DetectionEvidence, DetectionResult, DetectionType, ProjectIndicator,
 };
 use crate::Result;
 use anyhow::Context;
@@ -105,10 +104,6 @@ impl DetectionEngine {
                 detection_config,
             ),
         }
-    }
-
-    pub fn cached_file_exists(&self, path: &Path) -> bool {
-        self.cache_manager.file_exists(path)
     }
 
     pub fn detect(&self, path: &Path) -> Result<DetectionResult> {
@@ -286,44 +281,15 @@ impl DetectionEngine {
         ))
     }
 
-    pub fn languages_by_priority(&self) -> Vec<&Arc<ProjectIndicator>> {
-        let mut languages: Vec<&Arc<ProjectIndicator>> = self.languages.iter().collect();
-        languages.sort_by_key(|lang| lang.priority);
-        languages
-    }
-
-    pub fn find_language(&self, name: &str) -> Option<&Arc<ProjectIndicator>> {
-        self.languages
-            .iter()
-            .find(|lang| lang.name.eq_ignore_ascii_case(name))
-    }
-
-    pub fn all_file_patterns(&self) -> Vec<&String> {
-        self.languages.iter().flat_map(|lang| &lang.files).collect()
-    }
-
-    pub fn batch_collect_files(&self, base_path: &Path) -> Result<Vec<MatchedFile>> {
-        self.scanning_engine.batch_collect_files(base_path)
-    }
-
-    pub fn get_performance_stats(&self) -> crate::performance::CacheStats {
-        self.scanning_engine.get_performance_stats()
-    }
-
-    pub fn clear_caches(&mut self) {
-        self.scanning_engine.clear_caches();
-        self.cache_manager.clear_all();
-    }
-
-    pub fn get_root_indicator_stats(
-        &self,
-    ) -> crate::detection::root_indicators::RootIndicatorStats {
-        self.root_indicator_engine.get_stats()
-    }
-}
-
-impl CachedDetection for DetectionEngine {
-    fn detect_cached(&mut self, path: &Path, cache: &DetectionCache) -> Result<DetectionResult> {
+    /// Detect project with persistent caching support.
+    ///
+    /// This method populates the cache with relevant files before detection,
+    /// enabling faster subsequent detections for the same project structure.
+    pub fn detect_cached(
+        &mut self,
+        path: &Path,
+        cache: &DetectionCache,
+    ) -> Result<DetectionResult> {
         cache.clear_dynamic_relevant();
 
         for lang in &self.languages {
@@ -352,6 +318,12 @@ impl CachedDetection for DetectionEngine {
         }
 
         self.detect(path)
+    }
+
+    pub fn get_root_indicator_stats(
+        &self,
+    ) -> crate::detection::root_indicators::RootIndicatorStats {
+        self.root_indicator_engine.get_stats()
     }
 }
 
@@ -417,98 +389,6 @@ mod tests {
 
         assert!(result.language.is_none());
         assert_eq!(result.confidence, 0.0);
-        Ok(())
-    }
-
-    #[test]
-    fn test_languages_by_priority() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![
-            create_test_language("Low Priority", vec!["*.low"]),
-            create_test_language("High Priority", vec!["*.high"]),
-        ];
-        let mut lang1 = languages[0].clone();
-        let mut lang2 = languages[1].clone();
-        lang1.priority = 10;
-        lang2.priority = 1;
-
-        let engine = DetectionEngine::new(vec![lang1, lang2]);
-        let sorted = engine.languages_by_priority();
-
-        assert_eq!(sorted.len(), 2);
-        assert_eq!(sorted[0].priority, 1);
-        assert_eq!(sorted[1].priority, 10);
-        Ok(())
-    }
-
-    #[test]
-    fn test_find_language() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![
-            create_test_language("Rust", vec!["*.rs"]),
-            create_test_language("JavaScript", vec!["*.js"]),
-        ];
-        let engine = DetectionEngine::new(languages);
-
-        assert!(engine.find_language("rust").is_some());
-        assert!(engine.find_language("Rust").is_some());
-        assert!(engine.find_language("RUST").is_some());
-        assert!(engine.find_language("nonexistent").is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn test_all_file_patterns() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![
-            create_test_language("Rust", vec!["Cargo.toml", "*.rs"]),
-            create_test_language("JavaScript", vec!["package.json", "*.js"]),
-        ];
-        let engine = DetectionEngine::new(languages);
-
-        let patterns = engine.all_file_patterns();
-        assert_eq!(patterns.len(), 4);
-        assert!(patterns.iter().any(|p| *p == "Cargo.toml"));
-        assert!(patterns.iter().any(|p| *p == "*.rs"));
-        assert!(patterns.iter().any(|p| *p == "package.json"));
-        assert!(patterns.iter().any(|p| *p == "*.js"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_batch_collect_files() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_language("Rust", vec!["Cargo.toml", "*.rs"])];
-        let engine = DetectionEngine::new(languages);
-        let temp_dir = create_test_rust_project()?;
-
-        let files = engine.batch_collect_files(temp_dir.path())?;
-
-        assert!(!files.is_empty());
-        let filenames: Vec<&str> = files.iter().map(|f| f.filename.as_str()).collect();
-        assert!(filenames.contains(&"Cargo.toml"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_performance_stats() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_language("Rust", vec!["*.rs"])];
-        let engine = DetectionEngine::new(languages);
-
-        let stats = engine.get_performance_stats();
-        // ScanningEngine doesn't maintain a FileSystemCache, so all stats are 0
-        assert_eq!(stats.metadata_entries, 0);
-        assert_eq!(stats.metadata_capacity, 0);
-        assert_eq!(stats.hits, 0);
-        assert_eq!(stats.misses, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn test_clear_caches() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_language("Rust", vec!["*.rs"])];
-        let mut engine = DetectionEngine::new(languages);
-
-        engine.clear_caches();
-
-        let stats = engine.get_performance_stats();
-        assert_eq!(stats.metadata_entries, 0);
         Ok(())
     }
 }

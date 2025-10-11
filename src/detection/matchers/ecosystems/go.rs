@@ -13,7 +13,8 @@ pub fn check_go_ecosystem<P: AsRef<Path>>(
     let mut found_deps = Vec::new();
     let mut evidence = Vec::new();
 
-    if let Some(content) = parsed_cache.get_go_mod(&path)? {
+    let go_mod_path = path.as_ref().join(GO_MOD);
+    if let Some(content) = parsed_cache.get_file_content(&go_mod_path)? {
         let go_deps = check_text_dependencies(&content, modules);
         if !go_deps.is_empty() {
             found_deps.extend(go_deps);

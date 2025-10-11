@@ -28,14 +28,6 @@ impl FileSystemCacheManager {
         }
     }
 
-    /// Creates a new FileSystemCacheManager with custom settings.
-    pub fn with_config(ttl_secs: u64, max_entries: usize) -> Self {
-        Self {
-            file_existence_cache: Arc::new(FileSystemCache::new(ttl_secs, max_entries)),
-            parsed_file_cache: ParsedFileCache::new(),
-        }
-    }
-
     /// Checks if a file exists using the cache.
     pub fn file_exists(&self, path: &Path) -> bool {
         self.file_existence_cache.exists(path)
@@ -64,16 +56,6 @@ impl FileSystemCacheManager {
     pub fn stats(&self) -> CacheStats {
         self.file_existence_cache.stats()
     }
-
-    /// Gets the number of cached file entries.
-    pub fn cached_file_count(&self) -> usize {
-        self.stats().metadata_entries
-    }
-
-    /// Gets the cache hit rate as a percentage.
-    pub fn hit_rate(&self) -> f64 {
-        self.stats().hit_rate
-    }
 }
 
 impl Default for FileSystemCacheManager {
@@ -95,14 +77,6 @@ mod tests {
 
         assert_eq!(stats.metadata_capacity, 10000);
         assert_eq!(stats.metadata_entries, 0);
-    }
-
-    #[test]
-    fn test_cache_manager_with_config() {
-        let manager = FileSystemCacheManager::with_config(600, 5000);
-        let stats = manager.stats();
-
-        assert_eq!(stats.metadata_capacity, 5000);
     }
 
     #[test]
@@ -153,10 +127,11 @@ mod tests {
     #[test]
     fn test_cache_statistics() {
         let manager = FileSystemCacheManager::new();
+        let stats = manager.stats();
 
         // Initially empty
-        assert_eq!(manager.cached_file_count(), 0);
-        assert_eq!(manager.hit_rate(), 0.0);
+        assert_eq!(stats.metadata_entries, 0);
+        assert_eq!(stats.hit_rate, 0.0);
     }
 
     #[test]

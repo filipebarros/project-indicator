@@ -16,7 +16,8 @@ pub fn check_node_ecosystem<P: AsRef<Path>>(
     let mut found_deps = Vec::new();
     let mut evidence = Vec::new();
 
-    if let Some(json_value) = parsed_cache.get_package_json(&path)? {
+    let package_json_path = path.as_ref().join(PACKAGE_JSON);
+    if let Some(json_value) = parsed_cache.get_json_value(&package_json_path)? {
         let package_deps = check_json_dependencies(&json_value, dependencies);
         if !package_deps.is_empty() {
             found_deps.extend(package_deps);
@@ -25,23 +26,30 @@ pub fn check_node_ecosystem<P: AsRef<Path>>(
         }
     }
 
-    if let Some(json_value) = parsed_cache.get_package_lock_json(&path)? {
+    let package_lock_path = path.as_ref().join(PACKAGE_LOCK_JSON);
+    if let Some(json_value) = parsed_cache.get_json_value(&package_lock_path)? {
         let lock_deps = check_package_lock_dependencies(&json_value, dependencies);
         if !lock_deps.is_empty() {
             found_deps.extend(lock_deps);
             evidence.push(PACKAGE_LOCK_JSON.to_owned());
         }
-    } else if let Some(content) = parsed_cache.get_yarn_lock(&path)? {
-        let yarn_deps = check_yarn_lock_dependencies(&content, dependencies);
-        if !yarn_deps.is_empty() {
-            found_deps.extend(yarn_deps);
-            evidence.push(YARN_LOCK.to_owned());
-        }
-    } else if let Some(content) = parsed_cache.get_pnpm_lock_yaml(&path)? {
-        let pnpm_deps = check_pnpm_lock_dependencies(&content, dependencies);
-        if !pnpm_deps.is_empty() {
-            found_deps.extend(pnpm_deps);
-            evidence.push(PNPM_LOCK_YAML.to_owned());
+    } else {
+        let yarn_lock_path = path.as_ref().join(YARN_LOCK);
+        if let Some(content) = parsed_cache.get_file_content(&yarn_lock_path)? {
+            let yarn_deps = check_yarn_lock_dependencies(&content, dependencies);
+            if !yarn_deps.is_empty() {
+                found_deps.extend(yarn_deps);
+                evidence.push(YARN_LOCK.to_owned());
+            }
+        } else {
+            let pnpm_lock_path = path.as_ref().join(PNPM_LOCK_YAML);
+            if let Some(content) = parsed_cache.get_file_content(&pnpm_lock_path)? {
+                let pnpm_deps = check_pnpm_lock_dependencies(&content, dependencies);
+                if !pnpm_deps.is_empty() {
+                    found_deps.extend(pnpm_deps);
+                    evidence.push(PNPM_LOCK_YAML.to_owned());
+                }
+            }
         }
     }
 

@@ -20,6 +20,6 @@ pub mod detection;
 pub mod file_system;
 pub mod parsed_file;
 
-pub use detection::{CachedDetection, DetectionCache};
+pub use detection::DetectionCache;
 pub use file_system::FileSystemCacheManager;
 pub use parsed_file::ParsedFileCache;

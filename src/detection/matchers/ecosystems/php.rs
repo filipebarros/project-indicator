@@ -13,7 +13,8 @@ pub fn check_php_ecosystem<P: AsRef<Path>>(
     let mut found_deps = Vec::new();
     let mut evidence = Vec::new();
 
-    if let Some(json_value) = parsed_cache.get_composer_json(&path)? {
+    let composer_json_path = path.as_ref().join(COMPOSER_JSON);
+    if let Some(json_value) = parsed_cache.get_json_value(&composer_json_path)? {
         let composer_deps = check_json_dependencies(&json_value, packages);
         if !composer_deps.is_empty() {
             found_deps.extend(composer_deps);
@@ -22,7 +23,8 @@ pub fn check_php_ecosystem<P: AsRef<Path>>(
         }
     }
 
-    if let Some(json_value) = parsed_cache.get_composer_lock(&path)? {
+    let composer_lock_path = path.as_ref().join(COMPOSER_LOCK);
+    if let Some(json_value) = parsed_cache.get_json_value(&composer_lock_path)? {
         let lock_deps = check_composer_lock_dependencies(&json_value, packages);
         if !lock_deps.is_empty() {
             found_deps.extend(lock_deps);

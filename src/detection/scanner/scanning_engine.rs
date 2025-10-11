@@ -50,25 +50,6 @@ impl ScanningEngine {
         }
     }
 
-    /// Creates a ScanningEngine with configurable thresholds
-    pub fn with_config(
-        pattern_processor: PatternProcessor,
-        max_depth: usize,
-        file_cache: Option<Arc<FileSystemCache>>,
-        max_matches: usize,
-        small_project_threshold: usize,
-        extreme_size_threshold: usize,
-    ) -> Self {
-        Self {
-            pattern_processor,
-            max_depth,
-            file_cache,
-            max_matches_per_pattern: max_matches,
-            small_project_threshold,
-            extreme_size_threshold,
-        }
-    }
-
     /// Creates a ScanningEngine with a shared PatternMatcher instance.
     ///
     /// This is the primary constructor used by DetectionEngine.

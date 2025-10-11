@@ -38,19 +38,6 @@ impl Config {
     pub fn load_from_file<P: AsRef<std::path::Path>>(path: P) -> crate::Result<Self> {
         ConfigParser::load_from_file(path)
     }
-    pub fn languages_by_priority(&self) -> Vec<&ProjectIndicator> {
-        let mut languages: Vec<&ProjectIndicator> = self.languages.iter().collect();
-        languages.sort_by_key(|lang| lang.priority);
-        languages
-    }
-    pub fn find_language(&self, name: &str) -> Option<&ProjectIndicator> {
-        self.languages
-            .iter()
-            .find(|lang| lang.name.eq_ignore_ascii_case(name))
-    }
-    pub fn all_file_patterns(&self) -> Vec<&String> {
-        self.languages.iter().flat_map(|lang| &lang.files).collect()
-    }
     pub fn get_config_path() -> crate::Result<std::path::PathBuf> {
         ConfigParser::default_save_path()
     }
@@ -98,58 +85,6 @@ mod tests {
     }
 
     #[test]
-    fn test_languages_by_priority() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![
-            create_test_language_with_priority("Low Priority", vec!["low.file"], 10),
-            create_test_language_with_priority("High Priority", vec!["high.file"], 1),
-            create_test_language_with_priority("Medium Priority", vec!["med.file"], 5),
-        ];
-
-        let config = Config::new(languages);
-        let sorted = config.languages_by_priority();
-
-        assert_eq!(sorted.len(), 3);
-        assert_eq!(sorted[0].name, "High Priority");
-        assert_eq!(sorted[1].name, "Medium Priority");
-        assert_eq!(sorted[2].name, "Low Priority");
-        Ok(())
-    }
-
-    #[test]
-    fn test_find_language() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![
-            create_test_language_with_priority("Rust", vec!["Cargo.toml"], 1),
-            create_test_language_with_priority("TypeScript", vec!["package.json"], 2),
-        ];
-
-        let config = Config::new(languages);
-
-        assert!(config.find_language("rust").is_some());
-        assert!(config.find_language("Rust").is_some());
-        assert!(config.find_language("typescript").is_some());
-        assert!(config.find_language("nonexistent").is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn test_all_file_patterns() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![
-            create_test_language_with_priority("Rust", vec!["Cargo.toml", "*.rs"], 1),
-            create_test_language_with_priority("TypeScript", vec!["package.json", "*.ts"], 2),
-        ];
-
-        let config = Config::new(languages);
-        let patterns = config.all_file_patterns();
-
-        assert_eq!(patterns.len(), 4);
-        assert!(patterns.contains(&&"Cargo.toml".to_string()));
-        assert!(patterns.contains(&&"*.rs".to_string()));
-        assert!(patterns.contains(&&"package.json".to_string()));
-        assert!(patterns.contains(&&"*.ts".to_string()));
-        Ok(())
-    }
-
-    #[test]
     fn test_frameworks() -> Result<(), Box<dyn std::error::Error>> {
         let frameworks = vec![
             create_test_framework_generic("React", 1),
@@ -189,10 +124,8 @@ mod tests {
 
         assert_eq!(config.languages.len(), 2);
         assert_eq!(config.frameworks().len(), 2);
-
-        let sorted_languages = config.languages_by_priority();
-        assert_eq!(sorted_languages[0].name, "JavaScript");
-        assert_eq!(sorted_languages[1].name, "TypeScript");
+        assert_eq!(config.languages[0].name, "JavaScript");
+        assert_eq!(config.languages[1].name, "TypeScript");
         Ok(())
     }
 
@@ -235,9 +168,7 @@ mod tests {
     fn test_config_empty_languages() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::new(vec![]);
 
-        assert!(config.languages_by_priority().is_empty());
-        assert!(config.find_language("any").is_none());
-        assert!(config.all_file_patterns().is_empty());
+        assert!(config.languages.is_empty());
         assert!(config.frameworks().is_empty());
         Ok(())
     }

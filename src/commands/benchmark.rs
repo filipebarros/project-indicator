@@ -1,7 +1,7 @@
 use project_indicator::{
     cli::Cli,
     config::Config,
-    detection::{CachedDetection, DetectionCache, DetectionEngine},
+    detection::{DetectionCache, DetectionEngine},
     output::{OutputFormat, OutputFormatter},
     Result,
 };
