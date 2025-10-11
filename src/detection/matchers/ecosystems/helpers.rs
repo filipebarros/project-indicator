@@ -551,7 +551,8 @@ where
     P: AsRef<std::path::Path>,
     F: FnOnce(&str, &[String]) -> Vec<String>,
 {
-    if let Some(content) = parsed_cache.get_config_file(&path, file_name)? {
+    let file_path = path.as_ref().join(file_name);
+    if let Some(content) = parsed_cache.get_file_content(&file_path)? {
         let deps = check_fn(&content, dependencies);
         if !deps.is_empty() {
             found_deps.extend(deps);

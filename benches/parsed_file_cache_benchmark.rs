@@ -34,7 +34,8 @@ fn benchmark_json_parsing(c: &mut Criterion) -> Result<(), Box<dyn std::error::E
     group.bench_function("json_cold_cache", |b| {
         b.iter(|| {
             let cache = ParsedFileCache::new();
-            if let Err(e) = cache.get_package_json(temp_dir.path()) {
+            let package_json_path = temp_dir.path().join("package.json");
+            if let Err(e) = cache.get_json_value(&package_json_path) {
                 eprintln!("JSON parsing failed: {}", e);
             }
         });
@@ -42,13 +43,14 @@ fn benchmark_json_parsing(c: &mut Criterion) -> Result<(), Box<dyn std::error::E
 
     group.bench_function("json_warm_cache", |b| {
         let cache = ParsedFileCache::new();
+        let package_json_path = temp_dir.path().join("package.json");
         // Pre-warm
-        if let Err(e) = cache.get_package_json(temp_dir.path()) {
+        if let Err(e) = cache.get_json_value(&package_json_path) {
             eprintln!("JSON parsing failed: {}", e);
         }
 
         b.iter(|| {
-            if let Err(e) = cache.get_package_json(temp_dir.path()) {
+            if let Err(e) = cache.get_json_value(&package_json_path) {
                 eprintln!("JSON parsing failed: {}", e);
             }
         });
@@ -56,10 +58,11 @@ fn benchmark_json_parsing(c: &mut Criterion) -> Result<(), Box<dyn std::error::E
 
     group.bench_function("json_repeated_access", |b| {
         let cache = ParsedFileCache::new();
+        let package_json_path = temp_dir.path().join("package.json");
 
         b.iter(|| {
             for _ in 0..10 {
-                if let Err(e) = cache.get_package_json(temp_dir.path()) {
+                if let Err(e) = cache.get_json_value(&package_json_path) {
                     eprintln!("JSON parsing failed: {}", e);
                 }
             }
@@ -108,7 +111,8 @@ tempfile = "3.0"
     group.bench_function("toml_cold_cache", |b| {
         b.iter(|| {
             let cache = ParsedFileCache::new();
-            if let Err(e) = cache.get_cargo_toml(temp_dir.path()) {
+            let cargo_toml_path = temp_dir.path().join("Cargo.toml");
+            if let Err(e) = cache.get_toml_value(&cargo_toml_path) {
                 eprintln!("TOML parsing failed: {}", e);
             }
         });
@@ -116,13 +120,14 @@ tempfile = "3.0"
 
     group.bench_function("toml_warm_cache", |b| {
         let cache = ParsedFileCache::new();
+        let cargo_toml_path = temp_dir.path().join("Cargo.toml");
         // Pre-warm
-        if let Err(e) = cache.get_cargo_toml(temp_dir.path()) {
+        if let Err(e) = cache.get_toml_value(&cargo_toml_path) {
             eprintln!("TOML parsing failed: {}", e);
         }
 
         b.iter(|| {
-            if let Err(e) = cache.get_cargo_toml(temp_dir.path()) {
+            if let Err(e) = cache.get_toml_value(&cargo_toml_path) {
                 eprintln!("TOML parsing failed: {}", e);
             }
         });
@@ -130,10 +135,11 @@ tempfile = "3.0"
 
     group.bench_function("toml_repeated_access", |b| {
         let cache = ParsedFileCache::new();
+        let cargo_toml_path = temp_dir.path().join("Cargo.toml");
 
         b.iter(|| {
             for _ in 0..10 {
-                if let Err(e) = cache.get_cargo_toml(temp_dir.path()) {
+                if let Err(e) = cache.get_toml_value(&cargo_toml_path) {
                     eprintln!("TOML parsing failed: {}", e);
                 }
             }
@@ -174,15 +180,18 @@ version = "0.1.0"
 
     c.bench_function("mixed_files_sequential", |b| {
         let cache = ParsedFileCache::new();
+        let package_json_path = temp_dir.path().join("package.json");
+        let cargo_toml_path = temp_dir.path().join("Cargo.toml");
+        let pyproject_toml_path = temp_dir.path().join("pyproject.toml");
 
         b.iter(|| {
-            if let Err(e) = cache.get_package_json(temp_dir.path()) {
+            if let Err(e) = cache.get_json_value(&package_json_path) {
                 eprintln!("JSON parsing failed: {}", e);
             }
-            if let Err(e) = cache.get_cargo_toml(temp_dir.path()) {
+            if let Err(e) = cache.get_toml_value(&cargo_toml_path) {
                 eprintln!("TOML parsing failed: {}", e);
             }
-            if let Err(e) = cache.get_pyproject_toml(temp_dir.path()) {
+            if let Err(e) = cache.get_toml_value(&pyproject_toml_path) {
                 eprintln!("PyProject TOML parsing failed: {}", e);
             }
         });
@@ -232,9 +241,10 @@ fn benchmark_cache_stats(c: &mut Criterion) -> Result<(), Box<dyn std::error::Er
         .map_err(|e| format!("Failed to write package.json: {}", e))?;
 
     let cache = ParsedFileCache::new();
+    let package_json_path = temp_dir.path().join("package.json");
     // Pre-populate
     for _ in 0..50 {
-        if let Err(e) = cache.get_package_json(temp_dir.path()) {
+        if let Err(e) = cache.get_json_value(&package_json_path) {
             eprintln!("JSON parsing failed: {}", e);
         }
     }

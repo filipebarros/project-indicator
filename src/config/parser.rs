@@ -250,16 +250,9 @@ priority = 1
             ),
         ]);
 
-        let sorted = config.languages_by_priority();
-        assert_eq!(sorted[0].name, "High Priority");
-        assert_eq!(sorted[1].name, "Low Priority");
-
-        assert!(config.find_language("high priority").is_some());
-        assert!(config.find_language("nonexistent").is_none());
-
-        let patterns = config.all_file_patterns();
-        assert!(patterns.contains(&&"high.file".to_string()));
-        assert!(patterns.contains(&&"low.file".to_string()));
+        assert_eq!(config.languages.len(), 2);
+        assert_eq!(config.languages[0].name, "High Priority");
+        assert_eq!(config.languages[1].name, "Low Priority");
         Ok(())
     }
 

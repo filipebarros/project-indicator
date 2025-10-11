@@ -291,10 +291,6 @@ impl DetectionCache {
     }
 }
 
-pub trait CachedDetection {
-    fn detect_cached(&mut self, path: &Path, cache: &DetectionCache) -> Result<DetectionResult>;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

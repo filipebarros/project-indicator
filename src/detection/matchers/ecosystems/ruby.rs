@@ -27,7 +27,8 @@ pub fn check_ruby_ecosystem<P: AsRef<Path>>(
         return Ok((found_deps, evidence));
     }
 
-    if let Some(content) = parsed_cache.get_gemfile_lock(&path)? {
+    let gemfile_lock_path = path.as_ref().join(GEMFILE_LOCK);
+    if let Some(content) = parsed_cache.get_file_content(&gemfile_lock_path)? {
         let lock_deps = check_gemfile_lock_dependencies(&content, gems);
         if !lock_deps.is_empty() {
             found_deps.extend(lock_deps);

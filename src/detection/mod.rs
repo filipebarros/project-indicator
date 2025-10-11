@@ -11,5 +11,5 @@ pub mod pattern_processor;
 pub mod root_indicators;
 pub mod scanner;
 
-pub use caches::{CachedDetection, DetectionCache};
+pub use caches::DetectionCache;
 pub use engine::DetectionEngine;

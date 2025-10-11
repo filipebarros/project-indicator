@@ -16,7 +16,8 @@ pub fn check_python_ecosystem<P: AsRef<Path>>(
     let mut found_deps = Vec::new();
     let mut evidence = Vec::new();
 
-    if let Some(toml_value) = parsed_cache.get_pyproject_toml(&path)? {
+    let pyproject_path = path.as_ref().join(PYPROJECT_TOML);
+    if let Some(toml_value) = parsed_cache.get_toml_value(&pyproject_path)? {
         let pyproject_deps = check_pyproject_dependencies(&toml_value, dependencies);
         if !pyproject_deps.is_empty() {
             found_deps.extend(pyproject_deps);
@@ -49,7 +50,8 @@ pub fn check_python_ecosystem<P: AsRef<Path>>(
         return Ok((found_deps, evidence));
     }
 
-    if let Some(content) = parsed_cache.get_poetry_lock(&path)? {
+    let poetry_lock_path = path.as_ref().join(POETRY_LOCK);
+    if let Some(content) = parsed_cache.get_file_content(&poetry_lock_path)? {
         let poetry_deps = check_poetry_lock_dependencies(&content, dependencies);
         if !poetry_deps.is_empty() {
             found_deps.extend(poetry_deps);
