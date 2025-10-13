@@ -4,6 +4,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "project-indicator")]
 #[command(about = "A fast project type and framework detection tool")]
+#[command(version)]
 pub struct Cli {
     pub path: Option<PathBuf>,
 
@@ -299,6 +300,15 @@ mod tests {
         assert!(result.is_err());
 
         let result = Cli::try_parse_from(["project-indicator", "config", "--help"]);
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_version_flag() -> Result<(), Box<dyn std::error::Error>> {
+        let result = Cli::try_parse_from(["project-indicator", "--version"]);
+        // Version flag causes early exit, so try_parse_from will return an error
+        // but it's a "DisplayVersion" error which is expected behavior
         assert!(result.is_err());
         Ok(())
     }
