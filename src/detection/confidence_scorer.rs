@@ -390,79 +390,36 @@ impl ConfidenceScorer {
         matched_files: &[MatchedFile],
         languages: &[Arc<ProjectIndicator>],
     ) -> bool {
+        // First, check quick termination conditions
         if let Some(should_terminate) = self.quick_termination_check(matched_files, languages) {
             return should_terminate;
         }
 
-        if matched_files.len() == 1 {
-            let file = &matched_files[0];
-            if file.depth == 0 && self.get_pattern_importance(&file.filename, languages) >= 0.9 {
+        // Additional extended checks for edge cases
+        self.calculate_extended_termination(matched_files, languages)
+    }
+
+    /// Extended termination logic for cases not covered by quick checks.
+    ///
+    /// This method performs more expensive operations like confidence score
+    /// calculations and is only called after quick checks fail.
+    fn calculate_extended_termination(
+        &mut self,
+        matched_files: &[MatchedFile],
+        languages: &[Arc<ProjectIndicator>],
+    ) -> bool {
+        // Check if we have enough evidence with moderate confidence scores
+        if matched_files.len() >= 2 {
+            let has_strong_indicators = self.has_strong_indicators(matched_files, languages);
+
+            if has_strong_indicators
+                && self.check_confidence_thresholds(matched_files, languages, has_strong_indicators)
+            {
                 return true;
             }
-
-            for language in languages {
-                for root_indicator in &language.root_indicators {
-                    if self
-                        .pattern_matcher
-                        .matches_pattern(&file.filename, &root_indicator.pattern)
-                        && root_indicator.weight >= 0.8
-                    {
-                        return true;
-                    }
-                }
-            }
         }
 
-        if matched_files.len() >= 2 {
-            let strong_root_indicators: Vec<_> = matched_files
-                .iter()
-                .filter(|file| {
-                    file.depth == 0
-                        && self.get_pattern_importance(&file.filename, languages) >= 0.9
-                        && file.weight() >= 1.0
-                })
-                .collect();
-
-            let mut has_strong_root_indicator = false;
-            for language in languages {
-                for root_indicator in &language.root_indicators {
-                    let has_matching_root_file = matched_files.iter().any(|file| {
-                        file.depth == 0
-                            && self
-                                .pattern_matcher
-                                .matches_pattern(&file.filename, &root_indicator.pattern)
-                    });
-
-                    if has_matching_root_file && root_indicator.weight >= 0.8 {
-                        has_strong_root_indicator = true;
-                        break;
-                    }
-                }
-                if has_strong_root_indicator {
-                    break;
-                }
-            }
-
-            if !strong_root_indicators.is_empty() || has_strong_root_indicator {
-                for language in languages {
-                    let confidence =
-                        self.calculate_language_score(language, matched_files, languages);
-
-                    if confidence >= 0.9 {
-                        return true;
-                    }
-                    if confidence >= 0.7
-                        && (!strong_root_indicators.is_empty() || has_strong_root_indicator)
-                    {
-                        return true;
-                    }
-                    if confidence >= 0.6 && has_strong_root_indicator {
-                        return true;
-                    }
-                }
-            }
-        }
-
+        // For 5+ matched files, use lower confidence threshold
         if matched_files.len() >= 5 {
             for language in languages {
                 let confidence = self.calculate_language_score(language, matched_files, languages);
@@ -472,7 +429,73 @@ impl ConfidenceScorer {
             }
         }
 
+        // Hard limit: always terminate after 12 matches
         matched_files.len() >= 12
+    }
+
+    /// Checks if matched files contain strong indicators (root files with high importance).
+    fn has_strong_indicators(
+        &self,
+        matched_files: &[MatchedFile],
+        languages: &[Arc<ProjectIndicator>],
+    ) -> bool {
+        // Check for pattern-based strong indicators
+        let has_pattern_indicators = matched_files.iter().any(|file| {
+            file.depth == 0
+                && self.get_pattern_importance(&file.filename, languages) >= 0.9
+                && file.weight() >= 1.0
+        });
+
+        if has_pattern_indicators {
+            return true;
+        }
+
+        // Check for root indicator matches
+        for language in languages {
+            for root_indicator in &language.root_indicators {
+                let has_matching_root_file = matched_files.iter().any(|file| {
+                    file.depth == 0
+                        && self
+                            .pattern_matcher
+                            .matches_pattern(&file.filename, &root_indicator.pattern)
+                });
+
+                if has_matching_root_file && root_indicator.weight >= 0.8 {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Checks if any language meets confidence thresholds for early termination.
+    fn check_confidence_thresholds(
+        &mut self,
+        matched_files: &[MatchedFile],
+        languages: &[Arc<ProjectIndicator>],
+        has_strong_indicators: bool,
+    ) -> bool {
+        for language in languages {
+            let confidence = self.calculate_language_score(language, matched_files, languages);
+
+            // Very high confidence always terminates
+            if confidence >= 0.9 {
+                return true;
+            }
+
+            // High confidence with strong indicators
+            if confidence >= 0.7 && has_strong_indicators {
+                return true;
+            }
+
+            // Moderate confidence with very strong indicators
+            if confidence >= 0.6 && has_strong_indicators {
+                return true;
+            }
+        }
+
+        false
     }
 }
 

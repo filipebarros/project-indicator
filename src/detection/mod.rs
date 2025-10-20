@@ -12,4 +12,4 @@ pub mod root_indicators;
 pub mod scanner;
 
 pub use caches::DetectionCache;
-pub use engine::DetectionEngine;
+pub use engine::{DetectionEngine, DetectionEngineBuilder};

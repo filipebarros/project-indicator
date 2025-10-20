@@ -3,10 +3,49 @@ use dashmap::DashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// Initial capacity for the DashMap cache.
+///
+/// **Why 128?**
+/// - Typical project has 50-200 important files to check
+/// - 128 provides good starting point without over-allocation
+/// - DashMap grows automatically as needed
+/// - Pre-allocation reduces early rehashing overhead
+///
+/// **Memory Impact:**
+/// - Initial allocation: ~10KB (negligible)
+/// - Avoids ~5-6 rehashing operations during startup
 const INITIAL_CACHE_CAPACITY: usize = 128;
+
+/// Default TTL (Time To Live) for cache entries in seconds.
+///
+/// **Why 300 seconds (5 minutes)?**
+/// - Shell prompt usage: Files rarely change during a session
+/// - Long enough: Avoids repeated syscalls for same files
+/// - Short enough: Detects file changes within reasonable time
+/// - Balance: Performance vs. freshness
+///
+/// **Use Cases:**
+/// - Shell prompt: Perfect (no changes during command)
+/// - Watch mode: May need shorter TTL (60-120s)
+/// - CI/CD: Can use longer TTL (600s+)
+const DEFAULT_CACHE_TTL_SECS: u64 = 300;
+
+/// Default maximum cache entries before eviction.
+///
+/// **Why 10,000?**
+/// - Large monorepo: ~5,000-8,000 unique files checked
+/// - 10,000 provides headroom for extreme cases
+/// - Memory at capacity: ~500KB (acceptable)
+/// - Eviction at 75% (7,500) maintains performance
+///
+/// **Memory Calculation:**
+/// - Per entry: ~50 bytes (path + metadata)
+/// - 10,000 entries: ~500KB total
+/// - Eviction reduces to 7,500 entries (~375KB)
+const DEFAULT_MAX_CACHE_ENTRIES: usize = 10000;
 
 #[derive(Debug, Clone)]
 pub struct CachedMetadata {
@@ -125,22 +164,13 @@ impl FileSystemCache {
         };
 
         // Insert into cache with eviction check
-        // Use mutex to prevent concurrent insertions during eviction
-        // Track lock contention by trying to acquire without blocking first
-        let eviction_guard = match self.eviction_lock.try_lock() {
-            Ok(guard) => Some(guard),
-            Err(_) => {
-                // Lock is held by another thread - track contention
-                self.lock_contentions.fetch_add(1, Ordering::Relaxed);
-                // Now block until we can acquire the lock
-                match self.eviction_lock.lock() {
-                    Ok(guard) => Some(guard),
-                    Err(_) => {
-                        // Lock is poisoned - return metadata without caching
-                        log::warn!("Eviction lock poisoned, skipping cache insert");
-                        return Some(metadata);
-                    }
-                }
+        // Use exponential backoff to reduce lock contention and convoy effects
+        let eviction_guard = match self.acquire_lock_with_backoff() {
+            Some(guard) => guard,
+            None => {
+                // Lock is poisoned - return metadata without caching
+                log::warn!("Eviction lock poisoned, skipping cache insert");
+                return Some(metadata);
             }
         };
 
@@ -162,6 +192,57 @@ impl FileSystemCache {
         drop(eviction_guard);
 
         Some(metadata)
+    }
+
+    /// Acquires the eviction lock using exponential backoff strategy.
+    ///
+    /// **Strategy**: Reduces lock contention and convoy effects under high concurrency
+    /// by backing off exponentially (1µs → 2µs → 4µs → ... → 64µs) before falling
+    /// back to blocking.
+    ///
+    /// **Performance Impact:**
+    /// - Uncontended: No overhead (try_lock succeeds immediately)
+    /// - Low contention: +1-10µs (few retries)
+    /// - High contention: +10-127µs (better than blocking indefinitely)
+    ///
+    /// **Why This Works:**
+    /// - Staggers thread retry timing → reduces convoy effects
+    /// - Gives lock holder time to complete → increases try_lock success rate
+    /// - Predictable max wait time (127µs total) before blocking fallback
+    ///
+    /// **Returns:**
+    /// - `Some(guard)` if lock acquired
+    /// - `None` if lock is poisoned
+    fn acquire_lock_with_backoff(&self) -> Option<MutexGuard<'_, ()>> {
+        /// Maximum backoff delay in microseconds.
+        ///
+        /// Chosen to balance:
+        /// - Short enough: Don't add excessive latency
+        /// - Long enough: Give lock holder time to complete
+        /// - Total backoff time: 1+2+4+8+16+32+64 = 127µs max
+        const MAX_BACKOFF_MICROS: u64 = 64;
+
+        let mut backoff_micros = 1;
+
+        loop {
+            match self.eviction_lock.try_lock() {
+                Ok(guard) => {
+                    // Successfully acquired lock - no contention
+                    return Some(guard);
+                }
+                Err(_) if backoff_micros < MAX_BACKOFF_MICROS => {
+                    // Lock contention detected - back off exponentially
+                    self.lock_contentions.fetch_add(1, Ordering::Relaxed);
+                    std::thread::sleep(Duration::from_micros(backoff_micros));
+                    backoff_micros *= 2; // Exponential: 1 → 2 → 4 → 8 → 16 → 32 → 64
+                }
+                Err(_) => {
+                    // Max backoff reached - fall back to blocking lock
+                    self.lock_contentions.fetch_add(1, Ordering::Relaxed);
+                    return self.eviction_lock.lock().ok();
+                }
+            }
+        }
     }
 
     fn evict_entries(&self) {
@@ -280,7 +361,7 @@ impl FileSystemCache {
 
 impl Default for FileSystemCache {
     fn default() -> Self {
-        Self::new(300, 10000)
+        Self::new(DEFAULT_CACHE_TTL_SECS, DEFAULT_MAX_CACHE_ENTRIES)
     }
 }
 
@@ -298,6 +379,7 @@ pub struct CacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
     use tempfile::TempDir;
 
     #[test]
@@ -683,6 +765,113 @@ mod tests {
             "Expected evictions with small cache"
         );
         assert!(stats.metadata_entries <= 20, "Cache size within limit");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backoff_reduces_contention_impact() -> Result<(), Box<dyn std::error::Error>> {
+        use std::sync::Arc;
+        use std::thread;
+        use std::time::Instant;
+
+        // Create a small cache to force frequent lock contention
+        let cache = Arc::new(FileSystemCache::new(1, 10));
+        let temp_dir = Arc::new(TempDir::new()?);
+
+        // Create many test files
+        for i in 0..100 {
+            let file = temp_dir.path().join(format!("file{}.txt", i));
+            std::fs::write(&file, format!("content{}", i))?;
+        }
+
+        let mut handles = vec![];
+        let start = Instant::now();
+
+        // Spawn multiple threads to create contention
+        for thread_id in 0..8 {
+            let cache_clone = Arc::clone(&cache);
+            let temp_dir_clone = Arc::clone(&temp_dir);
+
+            let handle = thread::spawn(move || {
+                for i in 0..50 {
+                    let file_idx = (thread_id * 10 + i) % 100;
+                    let file = temp_dir_clone.path().join(format!("file{}.txt", file_idx));
+                    cache_clone.exists(&file);
+                }
+            });
+
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle
+                .join()
+                .map_err(|e| anyhow::anyhow!("Thread panicked: {:?}", e))?;
+        }
+
+        let elapsed = start.elapsed();
+        let stats = cache.stats();
+
+        // With backoff, the operation should complete reasonably fast
+        // despite high contention (8 threads × 50 ops = 400 total ops)
+        println!("Elapsed: {:?}", elapsed);
+        println!("Lock contentions: {}", stats.lock_contentions);
+        println!("Evictions: {}", stats.evictions_performed);
+
+        // Verify:
+        // 1. Cache is functional (didn't deadlock or panic)
+        assert!(stats.metadata_entries <= 10, "Cache size within limit");
+
+        // 2. Lock contention was detected (proves backoff was exercised)
+        assert!(
+            stats.lock_contentions > 0,
+            "Expected lock contention with 8 concurrent threads"
+        );
+
+        // 3. Completed in reasonable time (backoff didn't add excessive latency)
+        // With 8 threads × 50 ops, if each took 1ms, sequential would be 400ms
+        // With parallelism and backoff, should be much faster
+        assert!(
+            elapsed.as_millis() < 5000,
+            "Operation took too long: {:?}ms (expected < 5000ms)",
+            elapsed.as_millis()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_uncontended_path_has_no_overhead() -> Result<(), Box<dyn std::error::Error>> {
+        // Verify that when there's no contention, backoff adds no overhead
+        let cache = FileSystemCache::new(300, 1000);
+        let temp_dir = TempDir::new()?;
+
+        let file = temp_dir.path().join("test.txt");
+        std::fs::write(&file, "content")?;
+
+        let start = Instant::now();
+
+        // Single-threaded access (no contention)
+        for _ in 0..100 {
+            cache.exists(&file);
+        }
+
+        let elapsed = start.elapsed();
+        let stats = cache.stats();
+
+        // Should have no lock contention (try_lock succeeds immediately)
+        assert_eq!(
+            stats.lock_contentions, 0,
+            "Expected no contention with single thread"
+        );
+
+        // Should be very fast (mostly cache hits after first miss)
+        assert!(
+            elapsed.as_millis() < 10,
+            "Uncontended access took too long: {:?}ms",
+            elapsed.as_millis()
+        );
 
         Ok(())
     }

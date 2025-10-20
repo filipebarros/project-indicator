@@ -1,5 +1,6 @@
+use project_indicator::detection::DetectionEngineBuilder;
 use project_indicator::types::{DetectionConfig, IndicatorContext, RootIndicator};
-use project_indicator::{Config, DetectionEngine};
+use project_indicator::Config;
 use std::fs;
 use tempfile::TempDir;
 #[test]
@@ -60,7 +61,9 @@ fn test_detection_engine_with_custom_config() -> Result<(), Box<dyn std::error::
         extreme_size_threshold: 500,
     };
 
-    let engine = DetectionEngine::with_config(vec![], detection_config);
+    let engine = DetectionEngineBuilder::new(vec![])
+        .with_config(detection_config)
+        .build();
 
     let temp_dir = TempDir::new()?;
 
@@ -89,7 +92,9 @@ fn test_custom_root_indicators_replace_builtin() -> Result<(), Box<dyn std::erro
         extreme_size_threshold: 500,
     };
 
-    let engine = DetectionEngine::with_config(vec![], detection_config);
+    let engine = DetectionEngineBuilder::new(vec![])
+        .with_config(detection_config)
+        .build();
 
     let temp_dir = TempDir::new()?;
     let project_path = temp_dir.path();
@@ -111,7 +116,9 @@ fn test_custom_root_indicators_replace_builtin() -> Result<(), Box<dyn std::erro
     let result_custom = engine.detect(&sub_dir)?;
 
     let default_config = DetectionConfig::default();
-    let default_engine = DetectionEngine::with_config(vec![], default_config);
+    let default_engine = DetectionEngineBuilder::new(vec![])
+        .with_config(default_config)
+        .build();
 
     fs::remove_file(project_path.join("custom-project.toml"))?;
 

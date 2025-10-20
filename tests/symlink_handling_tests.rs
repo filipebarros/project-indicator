@@ -8,7 +8,9 @@
 
 #[cfg(unix)]
 mod unix_symlink_tests {
-    use project_indicator::{Config, DetectionEngine};
+    use project_indicator::detection::caches::FileSystemCacheManager;
+    use project_indicator::detection::engine::DetectionEngineBuilder;
+    use project_indicator::Config;
     use std::fs;
     use std::os::unix::fs::symlink;
     use tempfile::TempDir;
@@ -42,8 +44,15 @@ edition = "2021"
         symlink(&project_dir, &link_path)?;
 
         // Test detection through symlink
+        // Using builder pattern to inject custom cache with longer TTL
+        // This demonstrates how builder enables controlled testing
         let config = Config::load_default()?;
-        let detector = DetectionEngine::new(config.languages.clone());
+
+        let custom_cache = FileSystemCacheManager::with_ttl(600); // 10 minutes
+        let detector = DetectionEngineBuilder::new(config.languages.clone())
+            .with_cache_manager(custom_cache)
+            .build();
+
         let result = detector.detect(&link_path)?;
 
         assert!(result.language.is_some());
@@ -77,8 +86,14 @@ edition = "2021"
         symlink(&link1, &link2)?;
 
         // Detection should not crash with circular symlinks
+        // Using builder pattern with minimal cache (demonstrates testing control)
         let config = Config::load_default()?;
-        let detector = DetectionEngine::new(config.languages.clone());
+
+        let minimal_cache = FileSystemCacheManager::with_ttl(1);
+        let detector = DetectionEngineBuilder::new(config.languages.clone())
+            .with_cache_manager(minimal_cache)
+            .build();
+
         let result = detector.detect(&project_dir)?;
 
         // Should still detect Rust project at the root level
@@ -110,7 +125,7 @@ edition = "2021"
 
         // Detection should handle the self-reference gracefully
         let config = Config::load_default()?;
-        let detector = DetectionEngine::new(config.languages.clone());
+        let detector = DetectionEngineBuilder::new(config.languages.clone()).build();
         let result = detector.detect(&project_dir)?;
 
         assert!(result.language.is_some());
@@ -140,7 +155,7 @@ edition = "2021"
 
         // Detection should handle broken symlinks gracefully
         let config = Config::load_default()?;
-        let detector = DetectionEngine::new(config.languages.clone());
+        let detector = DetectionEngineBuilder::new(config.languages.clone()).build();
         let result = detector.detect(&project_dir)?;
 
         assert!(result.language.is_some());
@@ -175,7 +190,7 @@ edition = "2021"
 
         // Detection through the chain should work
         let config = Config::load_default()?;
-        let detector = DetectionEngine::new(config.languages.clone());
+        let detector = DetectionEngineBuilder::new(config.languages.clone()).build();
         let result = detector.detect(&link3)?;
 
         assert!(result.language.is_some());
@@ -212,7 +227,7 @@ edition = "2021"
 
         // Detection should work with file symlinks present
         let config = Config::load_default()?;
-        let detector = DetectionEngine::new(config.languages.clone());
+        let detector = DetectionEngineBuilder::new(config.languages.clone()).build();
         let result = detector.detect(&project_dir)?;
 
         assert!(result.language.is_some());
@@ -257,7 +272,7 @@ edition = "2021"
 
         // Detection at main project should work
         let config = Config::load_default()?;
-        let detector = DetectionEngine::new(config.languages.clone());
+        let detector = DetectionEngineBuilder::new(config.languages.clone()).build();
         let result = detector.detect(&main_project)?;
 
         assert!(result.language.is_some());
@@ -295,7 +310,7 @@ edition = "2021"
 
         // Detection should complete in reasonable time
         let config = Config::load_default()?;
-        let detector = DetectionEngine::new(config.languages.clone());
+        let detector = DetectionEngineBuilder::new(config.languages.clone()).build();
 
         let start = std::time::Instant::now();
         let result = detector.detect(&project_dir)?;

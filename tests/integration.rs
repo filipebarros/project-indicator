@@ -2,7 +2,7 @@ mod common;
 
 use common::{create_test_config, create_test_project};
 use project_indicator::{
-    detection::DetectionEngine,
+    detection::DetectionEngineBuilder,
     output::{OutputFormat, OutputFormatter},
     types::DisplayConfig,
 };
@@ -36,7 +36,7 @@ fn test_typescript_react_detection() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngine::new(config.languages.clone());
+    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
     assert!(result.language.is_some());
@@ -88,7 +88,7 @@ serde = { version = "1.0", features = ["derive"] }
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngine::new(config.languages.clone());
+    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
     assert!(result.language.is_some());
@@ -141,7 +141,7 @@ build-backend = "setuptools.build_meta"
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngine::new(config.languages.clone());
+    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
     assert!(result.language.is_some());
@@ -189,7 +189,7 @@ fn test_nextjs_priority_over_react() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngine::new(config.languages.clone());
+    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
     assert!(result.frameworks.len() >= 2);
@@ -214,7 +214,7 @@ fn test_language_only_detection() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngine::new(config.languages.clone());
+    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
     assert!(result.language.is_some());
@@ -247,7 +247,7 @@ fn test_no_detection() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngine::new(config.languages.clone());
+    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
     assert!(result.language.is_none());
@@ -286,7 +286,7 @@ fn test_framework_limiting() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
 
-    let engine = DetectionEngine::new(config.languages.clone());
+    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
     let formatter = OutputFormatter::new(display_config);
@@ -320,7 +320,7 @@ fn test_all_output_formats() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngine::new(config.languages.clone());
+    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
     let display_config = DisplayConfig::default();
