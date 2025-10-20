@@ -3,7 +3,7 @@ use project_indicator::{
     config::{generate_root_indicators_simple_max_weight, vcs_root_indicators, Config},
     detection::{
         conflict_resolver::{ConflictResolver, ResolverConfig},
-        DetectionEngine,
+        DetectionEngineBuilder,
     },
     Result,
 };
@@ -262,7 +262,7 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
 
             let config = Config::load_default()?;
 
-            let engine = DetectionEngine::new(config.languages);
+            let engine = DetectionEngineBuilder::new(config.languages).build();
             let stats = engine.get_root_indicator_stats();
 
             println!("📊 Overview:");

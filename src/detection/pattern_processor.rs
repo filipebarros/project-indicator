@@ -140,6 +140,15 @@ impl PatternProcessor {
         &self.unique_patterns
     }
 
+    /// Returns an Arc clone of the patterns vector for efficient sharing across threads.
+    ///
+    /// Use this method when you need to share the patterns across multiple threads
+    /// (e.g., in parallel scanning) to avoid cloning the entire vector. The Arc clone
+    /// is just a pointer copy with reference counting, making it very cheap.
+    pub fn get_patterns_arc(&self) -> Arc<Vec<String>> {
+        Arc::clone(&self.unique_patterns)
+    }
+
     pub fn get_high_priority_files(&self) -> &HashSet<String> {
         &self.high_priority_files
     }

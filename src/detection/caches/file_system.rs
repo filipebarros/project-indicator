@@ -22,8 +22,31 @@ impl FileSystemCacheManager {
     /// - TTL: 300 seconds (5 minutes)
     /// - Max entries: 10,000
     pub fn new() -> Self {
+        Self::with_ttl(300)
+    }
+
+    /// Creates a new FileSystemCacheManager with a custom TTL.
+    ///
+    /// Useful for:
+    /// - Testing with short TTLs to verify expiration behavior
+    /// - Long-running processes that need longer caches
+    /// - CI/CD scenarios with different freshness requirements
+    ///
+    /// ## Parameters
+    /// - `ttl_secs`: Time-to-live in seconds for cache entries
+    ///
+    /// ## Example
+    /// ```rust
+    /// # use project_indicator::detection::caches::FileSystemCacheManager;
+    /// // Short TTL for testing
+    /// let cache = FileSystemCacheManager::with_ttl(1);
+    ///
+    /// // Long TTL for CI/CD
+    /// let cache = FileSystemCacheManager::with_ttl(3600); // 1 hour
+    /// ```
+    pub fn with_ttl(ttl_secs: u64) -> Self {
         Self {
-            file_existence_cache: Arc::new(FileSystemCache::new(300, 10000)),
+            file_existence_cache: Arc::new(FileSystemCache::new(ttl_secs, 10000)),
             parsed_file_cache: ParsedFileCache::new(),
         }
     }

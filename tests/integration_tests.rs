@@ -2,9 +2,10 @@ mod common;
 
 use common::create_test_project;
 use project_indicator::{
+    detection::DetectionEngineBuilder,
     output::{format_result, OutputFormat},
     types::*,
-    Config, DetectionEngine,
+    Config,
 };
 use std::sync::Arc;
 
@@ -218,7 +219,7 @@ fn test_detection_engine_creation() -> Result<(), Box<dyn std::error::Error>> {
         vec![],
     );
 
-    let engine = DetectionEngine::new(vec![language]);
+    let engine = DetectionEngineBuilder::new(vec![language]).build();
 
     let temp_dir = create_test_project(&[("Cargo.toml", "[package]\nname = \"test\"")])?;
     let result = engine.detect(temp_dir.path())?;

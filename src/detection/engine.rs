@@ -16,10 +16,218 @@ use anyhow::Context;
 use std::path::Path;
 use std::sync::Arc;
 
+/// Builder for creating `DetectionEngine` instances with optional component injection.
+///
+/// The builder pattern enables:
+/// - **Flexible construction**: Inject custom components for testing or customization
+/// - **Backward compatibility**: Existing code continues to work via `DetectionEngine::new()`
+/// - **Future extensibility**: Easy to add new optional components (e.g., metrics)
+///
+/// ## Usage
+///
+/// ### Default construction (simple)
+/// ```rust
+/// # use project_indicator::detection::engine::DetectionEngineBuilder;
+/// # use project_indicator::types::ProjectIndicator;
+/// let languages = vec![/* ... */];
+/// let engine = DetectionEngineBuilder::new(languages).build();
+/// ```
+///
+/// ### Custom cache configuration
+/// ```rust
+/// # use project_indicator::detection::engine::DetectionEngineBuilder;
+/// # use project_indicator::detection::caches::FileSystemCacheManager;
+/// # use project_indicator::types::ProjectIndicator;
+/// let languages = vec![/* ... */];
+/// let custom_cache = FileSystemCacheManager::with_ttl(60); // 1 minute TTL
+///
+/// let engine = DetectionEngineBuilder::new(languages)
+///     .with_cache_manager(custom_cache)
+///     .build();
+/// ```
+///
+/// ### Testing with custom components
+/// ```rust
+/// # use project_indicator::detection::engine::DetectionEngineBuilder;
+/// # use project_indicator::detection::pattern_matching::PatternMatcher;
+/// # use project_indicator::types::ProjectIndicator;
+/// # use std::sync::Arc;
+/// let languages = vec![/* ... */];
+/// let test_matcher = Arc::new(PatternMatcher::new());
+///
+/// let engine = DetectionEngineBuilder::new(languages)
+///     .with_pattern_matcher(test_matcher)
+///     .build();
+/// ```
+pub struct DetectionEngineBuilder {
+    languages: Vec<ProjectIndicator>,
+    config: DetectionConfig,
+
+    // Optional injected components
+    pattern_matcher: Option<Arc<PatternMatcher>>,
+    cache_manager: Option<FileSystemCacheManager>,
+    confidence_scorer: Option<ConfidenceScorer>,
+    language_resolver: Option<LanguageResolver>,
+    framework_detector: Option<FrameworkDetector>,
+}
+
+impl DetectionEngineBuilder {
+    /// Creates a new builder with the given languages.
+    ///
+    /// All components will use default configurations unless overridden
+    /// via `with_*` methods.
+    pub fn new(languages: Vec<ProjectIndicator>) -> Self {
+        Self {
+            languages,
+            config: DetectionConfig::default(),
+            pattern_matcher: None,
+            cache_manager: None,
+            confidence_scorer: None,
+            language_resolver: None,
+            framework_detector: None,
+        }
+    }
+
+    /// Sets a custom detection configuration.
+    pub fn with_config(mut self, config: DetectionConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    /// Injects a custom pattern matcher.
+    ///
+    /// Useful for:
+    /// - Testing with pre-populated caches
+    /// - Sharing a matcher across multiple engines
+    /// - Custom pattern matching behavior
+    pub fn with_pattern_matcher(mut self, matcher: Arc<PatternMatcher>) -> Self {
+        self.pattern_matcher = Some(matcher);
+        self
+    }
+
+    /// Injects a custom cache manager.
+    ///
+    /// Useful for:
+    /// - Custom TTL configurations
+    /// - Testing with controlled cache behavior
+    /// - Sharing cache across multiple engines
+    pub fn with_cache_manager(mut self, cache: FileSystemCacheManager) -> Self {
+        self.cache_manager = Some(cache);
+        self
+    }
+
+    /// Injects a custom confidence scorer.
+    ///
+    /// Useful for:
+    /// - Testing with custom scoring algorithms
+    /// - Custom confidence thresholds
+    pub fn with_confidence_scorer(mut self, scorer: ConfidenceScorer) -> Self {
+        self.confidence_scorer = Some(scorer);
+        self
+    }
+
+    /// Injects a custom language resolver.
+    ///
+    /// Useful for:
+    /// - Testing language conflict resolution
+    /// - Custom resolution strategies
+    pub fn with_language_resolver(mut self, resolver: LanguageResolver) -> Self {
+        self.language_resolver = Some(resolver);
+        self
+    }
+
+    /// Injects a custom framework detector.
+    ///
+    /// Useful for:
+    /// - Testing framework detection
+    /// - Custom framework detection logic
+    pub fn with_framework_detector(mut self, detector: FrameworkDetector) -> Self {
+        self.framework_detector = Some(detector);
+        self
+    }
+
+    /// Builds the `DetectionEngine` with configured or default components.
+    ///
+    /// ## Component Dependencies
+    ///
+    /// Components have dependencies on each other:
+    /// - `ConfidenceScorer` needs `PatternMatcher`
+    /// - `ScanningEngine` needs `PatternMatcher` and `FileSystemCache`
+    ///
+    /// The builder handles these dependencies automatically:
+    /// - If you provide a custom `PatternMatcher`, it's shared with all components
+    /// - If you don't provide one, a default is created and shared
+    pub fn build(self) -> DetectionEngine {
+        let languages: Vec<Arc<ProjectIndicator>> =
+            self.languages.into_iter().map(Arc::new).collect();
+
+        // Use provided components or create defaults
+        let pattern_matcher = self
+            .pattern_matcher
+            .unwrap_or_else(|| Arc::new(PatternMatcher::new()));
+
+        let cache_manager = self.cache_manager.unwrap_or_default();
+
+        let confidence_scorer = self
+            .confidence_scorer
+            .unwrap_or_else(|| ConfidenceScorer::with_pattern_matcher(pattern_matcher.clone()));
+
+        let language_resolver = self.language_resolver.unwrap_or_default();
+
+        let framework_detector = self.framework_detector.unwrap_or_default();
+
+        // Create pattern compiler and scanning engine
+        let pattern_compiler = PatternCompiler::new(&languages);
+        let file_cache = cache_manager.file_existence_cache();
+
+        let scanning_engine = ScanningEngine::with_cache(
+            PatternProcessor::new(
+                pattern_matcher.clone(),
+                pattern_compiler.unique_patterns(),
+                languages.clone(),
+            ),
+            self.config.max_depth,
+            Some(file_cache),
+        );
+
+        let root_indicator_engine =
+            RootIndicatorEngine::from_arc_languages(languages.clone(), self.config.clone());
+
+        DetectionEngine {
+            languages,
+            config: self.config,
+            cache_manager,
+            confidence_scorer,
+            language_resolver,
+            framework_detector,
+            scanning_engine,
+            root_indicator_engine,
+        }
+    }
+}
+
 /// Main detection engine for identifying project languages and frameworks.
 ///
 /// The DetectionEngine coordinates multiple specialized components to analyze
 /// a project directory and determine its primary language and frameworks.
+///
+/// ## Construction
+///
+/// **Recommended**: Use `DetectionEngineBuilder` for maximum flexibility:
+/// ```rust
+/// # use project_indicator::detection::engine::DetectionEngineBuilder;
+/// # use project_indicator::types::ProjectIndicator;
+/// let languages = vec![/* ... */];
+/// let engine = DetectionEngineBuilder::new(languages).build();
+/// ```
+///
+/// **Simple**: Use direct constructors for default configuration:
+/// ```rust
+/// # use project_indicator::detection::engine::DetectionEngine;
+/// # use project_indicator::types::ProjectIndicator;
+/// let languages = vec![/* ... */];
+/// let engine = DetectionEngine::new(languages);
+/// ```
 ///
 /// ## Architecture
 ///
@@ -58,52 +266,46 @@ pub struct DetectionEngine {
 }
 
 impl DetectionEngine {
+    /// Creates a new `DetectionEngine` with default configuration.
+    ///
+    /// This is a convenience method that delegates to `DetectionEngineBuilder`.
+    /// All components will be created with default settings.
+    ///
+    /// For custom configuration, use `DetectionEngineBuilder`:
+    /// ```rust
+    /// # use project_indicator::detection::engine::DetectionEngineBuilder;
+    /// # use project_indicator::types::{ProjectIndicator, DetectionConfig};
+    /// # let languages = vec![];
+    /// # let custom_config = DetectionConfig::default();
+    /// let engine = DetectionEngineBuilder::new(languages)
+    ///     .with_config(custom_config)
+    ///     .build();
+    /// ```
     pub fn new(languages: Vec<ProjectIndicator>) -> Self {
-        Self::with_config(languages, DetectionConfig::default())
+        DetectionEngineBuilder::new(languages).build()
     }
 
+    /// Creates a new `DetectionEngine` with custom detection configuration.
+    ///
+    /// This is a convenience method that delegates to `DetectionEngineBuilder`.
+    ///
+    /// Equivalent to:
+    /// ```rust
+    /// # use project_indicator::detection::engine::DetectionEngineBuilder;
+    /// # use project_indicator::types::{ProjectIndicator, DetectionConfig};
+    /// # let languages = vec![];
+    /// # let config = DetectionConfig::default();
+    /// let engine = DetectionEngineBuilder::new(languages)
+    ///     .with_config(config)
+    ///     .build();
+    /// ```
     pub fn with_config(
         languages: Vec<ProjectIndicator>,
         detection_config: DetectionConfig,
     ) -> Self {
-        let languages: Vec<Arc<ProjectIndicator>> = languages.into_iter().map(Arc::new).collect();
-
-        // Create a single shared PatternMatcher instance for all components
-        let shared_pattern_matcher = Arc::new(PatternMatcher::new());
-
-        // Create specialized components
-        let pattern_compiler = PatternCompiler::new(&languages);
-        let cache_manager = FileSystemCacheManager::new();
-
-        // Share file existence cache with ScanningEngine for performance
-        // This enables ~7-8x speedup for repeated scans (e.g., shell prompts)
-        let file_cache = cache_manager.file_existence_cache();
-
-        let scanning_engine = ScanningEngine::with_cache(
-            PatternProcessor::new(
-                shared_pattern_matcher.clone(),
-                pattern_compiler.unique_patterns(),
-                languages.clone(),
-            ),
-            detection_config.max_depth,
-            Some(file_cache),
-        );
-
-        Self {
-            languages: languages.clone(),
-            config: detection_config.clone(),
-            cache_manager,
-            confidence_scorer: ConfidenceScorer::with_pattern_matcher(
-                shared_pattern_matcher.clone(),
-            ),
-            language_resolver: LanguageResolver::new(),
-            framework_detector: FrameworkDetector::new(),
-            scanning_engine,
-            root_indicator_engine: RootIndicatorEngine::from_arc_languages(
-                languages,
-                detection_config,
-            ),
-        }
+        DetectionEngineBuilder::new(languages)
+            .with_config(detection_config)
+            .build()
     }
 
     pub fn detect(&self, path: &Path) -> Result<DetectionResult> {
@@ -337,7 +539,7 @@ mod tests {
     #[test]
     fn test_detection_engine_creation() -> Result<(), Box<dyn std::error::Error>> {
         let languages = vec![create_test_language("Rust", vec!["Cargo.toml", "*.rs"])];
-        let engine = DetectionEngine::new(languages);
+        let engine = DetectionEngineBuilder::new(languages).build();
 
         assert_eq!(engine.languages.len(), 1);
         assert_eq!(engine.languages[0].name, "Rust");
@@ -348,7 +550,9 @@ mod tests {
     fn test_detection_engine_with_config() -> Result<(), Box<dyn std::error::Error>> {
         let languages = vec![create_test_language("Rust", vec!["Cargo.toml", "*.rs"])];
         let config = DetectionConfig::default();
-        let engine = DetectionEngine::with_config(languages, config);
+        let engine = DetectionEngineBuilder::new(languages)
+            .with_config(config)
+            .build();
 
         assert_eq!(engine.languages.len(), 1);
         // Pattern compilation is handled internally during initialization
@@ -358,7 +562,7 @@ mod tests {
     #[test]
     fn test_detect_rust_project() -> Result<(), Box<dyn std::error::Error>> {
         let languages = vec![create_test_language("Rust", vec!["Cargo.toml", "*.rs"])];
-        let engine = DetectionEngine::new(languages);
+        let engine = DetectionEngineBuilder::new(languages).build();
         let temp_dir = create_test_rust_project()?;
 
         let result = engine.detect(temp_dir.path())?;
@@ -382,7 +586,7 @@ mod tests {
             "Python",
             vec!["*.py", "requirements.txt"],
         )];
-        let engine = DetectionEngine::new(languages);
+        let engine = DetectionEngineBuilder::new(languages).build();
         let temp_dir = create_test_rust_project()?;
 
         let result = engine.detect(temp_dir.path())?;

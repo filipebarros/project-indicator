@@ -1,7 +1,7 @@
 use project_indicator::{
     cli::Cli,
     config::Config,
-    detection::{DetectionCache, DetectionEngine},
+    detection::{DetectionCache, DetectionEngine, DetectionEngineBuilder},
     output::{OutputFormat, OutputFormatter},
     Result,
 };
@@ -29,7 +29,9 @@ fn setup_benchmark(
     };
 
     let config = Config::load_default()?;
-    let engine = DetectionEngine::with_config(config.languages.clone(), config.detection.clone());
+    let engine = DetectionEngineBuilder::new(config.languages.clone())
+        .with_config(config.detection.clone())
+        .build();
     let cache = if config.cache.enabled {
         Some(DetectionCache::new(config.cache.clone()))
     } else {
