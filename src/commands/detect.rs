@@ -3,9 +3,11 @@ use project_indicator::{
     config::Config,
     detection::DetectionEngineBuilder,
     output::{OutputFormat, OutputFormatter},
+    tracking::ResultTracker,
     types::DetectionMode,
     Result,
 };
+use std::sync::Arc;
 
 use super::resolve_and_validate_path;
 
@@ -32,8 +34,12 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
         };
     }
 
+    // Create tracker from config (respects user's tracking settings)
+    let tracker = Arc::new(ResultTracker::from_config(&config.tracking)?);
+
     let engine = DetectionEngineBuilder::new(config.languages)
         .with_config(detection_config)
+        .with_result_tracker(tracker)
         .build();
 
     let result = engine.detect(&path)?;

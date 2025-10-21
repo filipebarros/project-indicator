@@ -37,6 +37,7 @@ fn test_config_serialization() -> Result<(), Box<dyn std::error::Error>> {
         display: DisplayConfig::default(),
         cache: CacheConfig::default(),
         detection: DetectionConfig::default(),
+        tracking: TrackingConfig::default(),
         languages: vec![language],
     };
 

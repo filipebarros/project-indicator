@@ -294,6 +294,7 @@ mod tests {
             display: DisplayConfig::default(),
             cache: CacheConfig::default(),
             detection: DetectionConfig::default(),
+            tracking: crate::types::TrackingConfig::default(),
             languages: vec![create_valid_language()],
         };
 
@@ -310,6 +311,7 @@ mod tests {
             display: DisplayConfig::default(),
             cache: CacheConfig::default(),
             detection: DetectionConfig::default(),
+            tracking: crate::types::TrackingConfig::default(),
             languages: vec![create_valid_language()],
         };
 
@@ -324,6 +326,7 @@ mod tests {
             display: DisplayConfig::default(),
             cache: CacheConfig::default(),
             detection: DetectionConfig::default(),
+            tracking: crate::types::TrackingConfig::default(),
             languages: vec![],
         };
 
@@ -338,6 +341,7 @@ mod tests {
             display: DisplayConfig::default(),
             cache: CacheConfig::default(),
             detection: DetectionConfig::default(),
+            tracking: crate::types::TrackingConfig::default(),
             languages: vec![create_valid_language(), create_valid_language()],
         };
 

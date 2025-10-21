@@ -46,6 +46,36 @@ pub enum Commands {
         #[command(subcommand)]
         action: RootIndicatorAction,
     },
+    /// View detection history and statistics
+    History {
+        /// Path to query (defaults to current directory)
+        path: Option<String>,
+
+        /// Number of recent detections to show
+        #[arg(short = 'n', long, default_value = "10")]
+        limit: usize,
+
+        /// Only show detections with changes
+        #[arg(long)]
+        changes_only: bool,
+    },
+    /// Compare two detection snapshots
+    Diff {
+        /// First snapshot ID or path
+        from: String,
+
+        /// Second snapshot ID (optional, defaults to latest)
+        to: Option<String>,
+    },
+    /// Show statistics for detections
+    Stats {
+        /// Path to analyze (defaults to current directory)
+        path: Option<String>,
+
+        /// Time range (e.g., "7d", "24h", "30d")
+        #[arg(long)]
+        since: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

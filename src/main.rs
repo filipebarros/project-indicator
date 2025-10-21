@@ -8,7 +8,8 @@ mod commands;
 
 use commands::{
     handle_benchmark_command, handle_cache_command, handle_config_command, handle_debug_command,
-    handle_detect_command, handle_root_indicators_command,
+    handle_detect_command, handle_diff_command, handle_history_command,
+    handle_root_indicators_command, handle_stats_command,
 };
 
 fn main() {
@@ -39,6 +40,13 @@ fn run() -> Result<()> {
         Some(Commands::RootIndicators { ref action }) => {
             handle_root_indicators_command(&cli, action)
         }
+        Some(Commands::History {
+            path,
+            limit,
+            changes_only,
+        }) => handle_history_command(path, limit, changes_only),
+        Some(Commands::Diff { from, to }) => handle_diff_command(from, to),
+        Some(Commands::Stats { path, since }) => handle_stats_command(path, since),
         None => handle_detect_command(&cli),
     }
 }

@@ -3,9 +3,11 @@ use project_indicator::{
     config::Config,
     detection::DetectionEngineBuilder,
     output::{OutputFormat, OutputFormatter},
+    tracking::ResultTracker,
     Result,
 };
 use std::env;
+use std::sync::Arc;
 
 pub fn handle_debug_command(cli: &Cli, verbose: bool) -> Result<()> {
     let path = if let Some(provided_path) = &cli.path {
@@ -33,8 +35,12 @@ pub fn handle_debug_command(cli: &Cli, verbose: bool) -> Result<()> {
         println!("Frameworks: {}", config.frameworks().len());
     }
 
+    // Create tracker from config (respects user's tracking settings)
+    let tracker = Arc::new(ResultTracker::from_config(&config.tracking)?);
+
     let engine = DetectionEngineBuilder::new(config.languages.clone())
         .with_config(config.detection.clone())
+        .with_result_tracker(tracker)
         .build();
     let result = engine.detect(&path)?;
 
