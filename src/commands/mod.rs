@@ -3,14 +3,20 @@ pub mod cache;
 pub mod config;
 pub mod debug;
 pub mod detect;
+pub mod diff;
+pub mod history;
 pub mod root_indicators;
+pub mod stats;
 
 pub use benchmark::handle_benchmark_command;
 pub use cache::handle_cache_command;
 pub use config::handle_config_command;
 pub use debug::handle_debug_command;
 pub use detect::handle_detect_command;
+pub use diff::handle_diff_command;
+pub use history::handle_history_command;
 pub use root_indicators::handle_root_indicators_command;
+pub use stats::handle_stats_command;
 
 use project_indicator::Result;
 use std::env;

@@ -3,9 +3,11 @@ use project_indicator::{
     config::Config,
     detection::{DetectionCache, DetectionEngine, DetectionEngineBuilder},
     output::{OutputFormat, OutputFormatter},
+    tracking::ResultTracker,
     Result,
 };
 use std::env;
+use std::sync::Arc;
 use std::time::Instant;
 
 fn setup_benchmark(
@@ -29,8 +31,14 @@ fn setup_benchmark(
     };
 
     let config = Config::load_default()?;
+
+    // Explicitly disable tracking for benchmarks to avoid skewing performance results
+    // Tracking adds overhead (file I/O, serialization) that would make benchmarks inaccurate
+    let tracker = Arc::new(ResultTracker::new()?);
+
     let engine = DetectionEngineBuilder::new(config.languages.clone())
         .with_config(config.detection.clone())
+        .with_result_tracker(tracker)
         .build();
     let cache = if config.cache.enabled {
         Some(DetectionCache::new(config.cache.clone()))

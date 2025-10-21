@@ -8,6 +8,7 @@ use crate::detection::pattern_matching::PatternMatcher;
 use crate::detection::pattern_processor::PatternProcessor;
 use crate::detection::root_indicators::RootIndicatorEngine;
 use crate::detection::scanner::ScanningEngine;
+use crate::tracking::{DetectionMetadata, DetectionSnapshot, ResultTracker};
 use crate::types::{
     DetectionConfig, DetectionEvidence, DetectionResult, DetectionType, ProjectIndicator,
 };
@@ -15,6 +16,10 @@ use crate::Result;
 use anyhow::Context;
 use std::path::Path;
 use std::sync::Arc;
+
+/// Estimated duration in microseconds for cached detection results.
+/// Cached results are typically very fast (< 100 microseconds).
+const CACHED_DETECTION_DURATION_MICROS: u64 = 100;
 
 /// Builder for creating `DetectionEngine` instances with optional component injection.
 ///
@@ -69,6 +74,7 @@ pub struct DetectionEngineBuilder {
     confidence_scorer: Option<ConfidenceScorer>,
     language_resolver: Option<LanguageResolver>,
     framework_detector: Option<FrameworkDetector>,
+    result_tracker: Option<Arc<ResultTracker>>,
 }
 
 impl DetectionEngineBuilder {
@@ -85,6 +91,7 @@ impl DetectionEngineBuilder {
             confidence_scorer: None,
             language_resolver: None,
             framework_detector: None,
+            result_tracker: None,
         }
     }
 
@@ -146,6 +153,14 @@ impl DetectionEngineBuilder {
         self
     }
 
+    /// Inject a result tracker for recording detection history.
+    ///
+    /// If not provided, tracking is disabled (zero overhead).
+    pub fn with_result_tracker(mut self, tracker: Arc<ResultTracker>) -> Self {
+        self.result_tracker = Some(tracker);
+        self
+    }
+
     /// Builds the `DetectionEngine` with configured or default components.
     ///
     /// ## Component Dependencies
@@ -193,8 +208,13 @@ impl DetectionEngineBuilder {
         let root_indicator_engine =
             RootIndicatorEngine::from_arc_languages(languages.clone(), self.config.clone());
 
+        // Create result tracker if not provided
+        let result_tracker = self
+            .result_tracker
+            .or_else(|| ResultTracker::new().ok().map(Arc::new));
+
         DetectionEngine {
-            languages,
+            languages, // Use the converted Arc<ProjectIndicator> version
             config: self.config,
             cache_manager,
             confidence_scorer,
@@ -202,6 +222,7 @@ impl DetectionEngineBuilder {
             framework_detector,
             scanning_engine,
             root_indicator_engine,
+            result_tracker,
         }
     }
 }
@@ -263,6 +284,9 @@ pub struct DetectionEngine {
     framework_detector: FrameworkDetector,
     scanning_engine: ScanningEngine,
     root_indicator_engine: RootIndicatorEngine,
+
+    // Optional result tracker
+    result_tracker: Option<Arc<ResultTracker>>,
 }
 
 impl DetectionEngine {
@@ -308,9 +332,45 @@ impl DetectionEngine {
             .build()
     }
 
+    /// Record a detection result to the tracker if enabled.
+    ///
+    /// This is a helper method to avoid code duplication across different detection paths.
+    fn record_detection(
+        &self,
+        result: &DetectionResult,
+        path: &Path,
+        metadata: DetectionMetadata,
+    ) -> Result<()> {
+        if let Some(tracker) = &self.result_tracker {
+            if tracker.is_enabled() {
+                let snapshot = DetectionSnapshot::from_detection_result(
+                    result,
+                    path,
+                    metadata,
+                    Some(tracker.path_cache()),
+                )?;
+                tracker.record(snapshot)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Calculate cache statistics delta for tracking purposes.
+    ///
+    /// Returns (hits, misses) that occurred since the provided baseline stats.
+    fn calculate_cache_delta(&self, baseline: &crate::performance::CacheStats) -> (u64, u64) {
+        let current = self.cache_manager.stats();
+        let hits = current.hits.saturating_sub(baseline.hits);
+        let misses = current.misses.saturating_sub(baseline.misses);
+        (hits, misses)
+    }
+
     pub fn detect(&self, path: &Path) -> Result<DetectionResult> {
         let mut evidence = DetectionEvidence::new();
         let detection_start = std::time::Instant::now();
+
+        // Capture cache state BEFORE detection (for tracking)
+        let fs_stats_before = self.cache_manager.stats();
 
         // Safety check: Don't scan from boundary directories (home, system dirs)
         // These are too large and not meaningful to scan
@@ -401,6 +461,20 @@ impl DetectionEngine {
             let mut result = early_result;
             result.frameworks = frameworks;
             result.evidence = evidence;
+
+            // Record detection snapshot if tracking is enabled
+            let (fs_hits, fs_misses) = self.calculate_cache_delta(&fs_stats_before);
+            let metadata = DetectionMetadata {
+                duration_micros: detection_start.elapsed().as_micros() as u64,
+                from_cache: false,
+                cached_at: None,
+                pattern_cache_hits: 0, // Pattern matcher cache not directly accessible
+                pattern_cache_misses: 0,
+                fs_cache_hits: fs_hits as usize,
+                fs_cache_misses: fs_misses as usize,
+            };
+            self.record_detection(&result, path, metadata)?;
+
             return Ok(result);
         }
 
@@ -475,12 +549,23 @@ impl DetectionEngine {
             Vec::new()
         };
 
-        Ok(DetectionResult::new_with_evidence(
-            Some(language),
-            frameworks,
-            confidence,
-            evidence,
-        ))
+        let result =
+            DetectionResult::new_with_evidence(Some(language), frameworks, confidence, evidence);
+
+        // Record detection snapshot if tracking is enabled
+        let (fs_hits, fs_misses) = self.calculate_cache_delta(&fs_stats_before);
+        let metadata = DetectionMetadata {
+            duration_micros: detection_start.elapsed().as_micros() as u64,
+            from_cache: false,
+            cached_at: None,
+            pattern_cache_hits: 0,
+            pattern_cache_misses: 0,
+            fs_cache_hits: fs_hits as usize,
+            fs_cache_misses: fs_misses as usize,
+        };
+        self.record_detection(&result, path, metadata)?;
+
+        Ok(result)
     }
 
     /// Detect project with persistent caching support.
@@ -492,6 +577,33 @@ impl DetectionEngine {
         path: &Path,
         cache: &DetectionCache,
     ) -> Result<DetectionResult> {
+        // PERFORMANCE OPTIMIZATION: Check cache FIRST before doing expensive dynamic_relevant work
+        // This avoids iterating through all languages/frameworks on cache hits
+        let cached_result = cache.get_with_metadata(path)?;
+
+        if let Some((cached, created_at)) = cached_result {
+            // Result is from cache - record snapshot if tracking is enabled
+            // Convert SystemTime to Unix timestamp
+            let cached_at_timestamp = created_at
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_secs());
+
+            let metadata = DetectionMetadata {
+                duration_micros: CACHED_DETECTION_DURATION_MICROS,
+                from_cache: true,
+                cached_at: cached_at_timestamp,
+                pattern_cache_hits: 0,
+                pattern_cache_misses: 0,
+                fs_cache_hits: 0,
+                fs_cache_misses: 0,
+            };
+            self.record_detection(&cached, path, metadata)?;
+
+            return Ok(cached);
+        }
+
+        // Cache miss - prepare dynamic relevant files before fresh detection
         cache.clear_dynamic_relevant();
 
         for lang in &self.languages {
@@ -519,7 +631,13 @@ impl DetectionEngine {
             }
         }
 
-        self.detect(path)
+        // Not cached, do fresh detection
+        let result = self.detect(path)?;
+
+        // Store result in cache for future lookups
+        cache.put(path, result.clone())?;
+
+        Ok(result)
     }
 
     pub fn get_root_indicator_stats(

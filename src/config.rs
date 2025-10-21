@@ -9,7 +9,9 @@ pub use self::templates::{
 };
 pub use self::validator::validate_config;
 
-use crate::types::{CacheConfig, ConfigMeta, DetectionConfig, DisplayConfig, ProjectIndicator};
+use crate::types::{
+    CacheConfig, ConfigMeta, DetectionConfig, DisplayConfig, ProjectIndicator, TrackingConfig,
+};
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Config {
@@ -21,6 +23,8 @@ pub struct Config {
     pub cache: CacheConfig,
     #[serde(default)]
     pub detection: DetectionConfig,
+    #[serde(default)]
+    pub tracking: TrackingConfig,
     #[serde(rename = "languages")]
     pub languages: Vec<ProjectIndicator>,
 }

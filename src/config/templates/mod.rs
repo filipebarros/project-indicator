@@ -23,7 +23,7 @@ pub mod shared;
 pub use shared::{generate_root_indicators_simple_max_weight, vcs_root_indicators};
 
 use crate::config::Config;
-use crate::types::{CacheConfig, ConfigMeta, DetectionConfig, DisplayConfig};
+use crate::types::{CacheConfig, ConfigMeta, DetectionConfig, DisplayConfig, TrackingConfig};
 use anyhow::Result;
 use shared::ConfigBuilder;
 use std::collections::HashMap;
@@ -134,6 +134,7 @@ pub fn create_minimal_template() -> ConfigTemplate {
         display,
         cache,
         detection,
+        tracking: TrackingConfig::default(),
         languages,
     };
 
@@ -178,6 +179,7 @@ pub fn create_full_template() -> ConfigTemplate {
         display,
         cache,
         detection,
+        tracking: TrackingConfig::default(),
         languages,
     };
 
@@ -202,6 +204,7 @@ pub fn create_rust_dev_template() -> ConfigTemplate {
         display,
         cache,
         detection,
+        tracking: TrackingConfig::default(),
         languages,
     };
 
@@ -238,6 +241,7 @@ pub fn create_python_dev_template() -> ConfigTemplate {
             small_project_threshold: 50,
             extreme_size_threshold: 500,
         },
+        tracking: TrackingConfig::default(),
         languages: vec![create_python_language()],
     };
 
@@ -275,6 +279,7 @@ pub fn create_web_dev_template() -> ConfigTemplate {
             small_project_threshold: 50,
             extreme_size_threshold: 500,
         },
+        tracking: TrackingConfig::default(),
         languages: vec![create_javascript_language(), create_typescript_language()],
     };
 
@@ -311,6 +316,7 @@ pub fn create_mobile_dev_template() -> ConfigTemplate {
             small_project_threshold: 50,
             extreme_size_threshold: 500,
         },
+        tracking: TrackingConfig::default(),
         languages: vec![
             create_javascript_language(),
             create_typescript_language(),
@@ -354,6 +360,7 @@ pub fn create_data_science_template() -> ConfigTemplate {
             small_project_threshold: 50,
             extreme_size_threshold: 500,
         },
+        tracking: TrackingConfig::default(),
         languages: vec![
             create_python_language(),
             create_r_language(),
@@ -396,6 +403,7 @@ pub fn create_enterprise_template() -> ConfigTemplate {
             small_project_threshold: 50,
             extreme_size_threshold: 500,
         },
+        tracking: TrackingConfig::default(),
         languages: vec![
             create_rust_language(),
             create_python_language(),

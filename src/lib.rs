@@ -5,6 +5,7 @@ pub mod detection;
 pub mod output;
 pub mod patterns;
 pub mod performance;
+pub mod tracking;
 pub mod types;
 
 #[cfg(test)]
@@ -16,6 +17,7 @@ pub use types::{
 
 pub use config::Config;
 pub use detection::DetectionEngine;
+pub use tracking::{DetectionSnapshot, ResultTracker};
 pub type Result<T, E = anyhow::Error> = std::result::Result<T, E>;
 
 #[cfg(test)]

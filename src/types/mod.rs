@@ -10,7 +10,9 @@ mod indicators;
 mod matched_file;
 
 // Re-export all public types
-pub use config::{CacheConfig, ConfigMeta, DetectionConfig, DetectionMode, DisplayConfig};
+pub use config::{
+    CacheConfig, ConfigMeta, DetectionConfig, DetectionMode, DisplayConfig, TrackingConfig,
+};
 pub use detection::{
     ConfidenceFactor, DetectionEvidence, DetectionResult, EvidenceItem, EvidenceType,
 };

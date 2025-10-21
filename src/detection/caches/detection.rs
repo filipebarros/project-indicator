@@ -75,6 +75,12 @@ impl DetectionCache {
     }
 
     pub fn get(&self, path: &Path) -> Result<Option<DetectionResult>> {
+        self.get_with_metadata(path)
+            .map(|opt| opt.map(|(result, _)| result))
+    }
+
+    /// Get cached result with metadata (created_at timestamp)
+    pub fn get_with_metadata(&self, path: &Path) -> Result<Option<(DetectionResult, SystemTime)>> {
         let key = CacheKey {
             path: path.to_path_buf(),
         };
@@ -95,9 +101,10 @@ impl DetectionCache {
             let current_hash = self.calculate_file_hash(path)?;
             if entry.file_hash == current_hash {
                 let result = entry.result.clone();
+                let created_at = entry.created_at;
                 drop(entry_ref);
                 self.hits.fetch_add(1, Ordering::Relaxed);
-                return Ok(Some(result));
+                return Ok(Some((result, created_at)));
             } else {
                 drop(entry_ref);
                 self.cache.remove(&key);
