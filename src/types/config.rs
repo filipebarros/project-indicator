@@ -70,16 +70,11 @@
 use crate::types::RootIndicator;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum DetectionMode {
     Fast,
+    #[default]
     Thorough,
-}
-
-impl Default for DetectionMode {
-    fn default() -> Self {
-        Self::Thorough
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
