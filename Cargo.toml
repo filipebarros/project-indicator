@@ -36,7 +36,7 @@ colored = "3.0" # For terminal output formatting in diffs
 [dev-dependencies]
 criterion = "0.7"
 tempfile = "3.23"
-proptest = "1.8"
+proptest = "1.9"
 
 [[bin]]
 name = "project-indicator"
