@@ -4,6 +4,8 @@ use project_indicator::tracking::{ChangeDetected, ResultTracker};
 use project_indicator::Config;
 use std::fs;
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 use tempfile::TempDir;
 
 #[test]
@@ -179,48 +181,174 @@ fn test_language_change_detected() -> Result<()> {
         .with_result_tracker(tracker.clone())
         .build();
 
-    let project = TempDir::new()?;
+    // Use the SAME directory path for both detections to simulate a project changing over time
+    let project_dir = TempDir::new()?;
+    let project_path = project_dir.path();
 
-    // Start with JavaScript
+    // First: Create a JavaScript project
     fs::write(
-        project.path().join("package.json"),
+        project_path.join("package.json"),
         r#"{"name": "test", "main": "index.js"}"#,
     )?;
-    fs::write(project.path().join("index.js"), "console.log('Hello');")?;
+    fs::write(project_path.join("index.js"), "console.log('Hello');")?;
 
-    engine.detect(project.path())?;
+    eprintln!("Project path: {:?}", project_path);
+    eprintln!("Project path canonical: {:?}", project_path.canonicalize()?);
 
-    // Convert to TypeScript
-    fs::remove_file(project.path().join("index.js"))?;
+    let result1 = engine.detect(project_path)?;
+    eprintln!(
+        "First detection: {:?}",
+        result1.language.as_ref().map(|l| &l.name)
+    );
+
+    // Debug: List files before cleanup
+    eprintln!("\nFiles before cleanup:");
+    for entry in fs::read_dir(project_path)?.flatten() {
+        eprintln!("  - {:?}", entry.file_name());
+    }
+
+    // Clean up JavaScript project completely
+    fs::remove_file(project_path.join("index.js"))?;
+    fs::remove_file(project_path.join("package.json"))?;
+
+    // Second: Create a completely fresh TypeScript project in the SAME directory
     fs::write(
-        project.path().join("package.json"),
-        r#"{"name": "test", "dependencies": {"typescript": "5.0.0"}}"#,
+        project_path.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "strict": true
+  }
+}"#,
+    )?;
+    fs::create_dir_all(project_path.join("src"))?;
+    fs::write(
+        project_path.join("src/index.ts"),
+        "const msg: string = 'Hello';\nexport default msg;",
     )?;
     fs::write(
-        project.path().join("tsconfig.json"),
-        r#"{"compilerOptions": {"target": "ES2020"}}"#,
-    )?;
-    fs::write(
-        project.path().join("index.ts"),
-        "const msg: string = 'Hello';",
+        project_path.join("src/types.ts"),
+        "export type User = { name: string; };",
     )?;
 
-    engine.detect(project.path())?;
+    // Debug: List ALL files after TypeScript setup (including subdirectories)
+    eprintln!("\nFiles after TypeScript setup:");
+    for entry in fs::read_dir(project_path)?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            eprintln!("  - {:?} (dir)", entry.file_name());
+            if let Ok(subentries) = fs::read_dir(&path) {
+                for subentry in subentries.flatten() {
+                    eprintln!("    - {:?}", subentry.file_name());
+                }
+            }
+        } else {
+            eprintln!("  - {:?}", entry.file_name());
+        }
+    }
+
+    // Sleep to ensure filesystem operations complete and fresh engine has no cached state
+    // With a fresh engine, 100ms should be enough for filesystem consistency
+    thread::sleep(Duration::from_millis(100));
+
+    // Create a fresh engine to ensure no cached state from first detection
+    let config2 = Config::load_default()?;
+    let engine2 = DetectionEngineBuilder::new(config2.languages)
+        .with_result_tracker(tracker.clone())
+        .build();
+
+    let result2 = engine2.detect(project_path)?;
+    eprintln!(
+        "\nSecond detection: {:?}",
+        result2.language.as_ref().map(|l| &l.name)
+    );
+    eprintln!("Second detection confidence: {}", result2.confidence);
 
     // Wait for background writes to complete
     tracker.flush();
 
-    // Verify language change detected
-    let canonical_path = project.path().canonicalize()?;
-    let path_str = canonical_path.to_string_lossy();
-    let changes = tracker.detect_changes(&path_str)?;
+    // Debug: Check storage directory
+    eprintln!("Storage dir: {:?}", storage_dir.path());
+    if let Ok(entries) = fs::read_dir(storage_dir.path()) {
+        eprintln!("Files in storage dir:");
+        for entry in entries.flatten() {
+            eprintln!("  - {:?}", entry.path());
+            if let Ok(metadata) = entry.metadata() {
+                eprintln!("    Size: {} bytes", metadata.len());
+            }
+        }
+    } else {
+        eprintln!("  (could not read storage dir)");
+    }
 
-    assert!(!changes.is_empty());
+    // Use canonical path for consistent querying across platforms
+    let canonical_project_path = project_path.canonicalize()?;
+    let canonical_path_str = canonical_project_path.to_string_lossy();
+
+    // Debug: Check what snapshots were stored
+    let snapshots = tracker.read_snapshots_for_path(&canonical_path_str)?;
+    eprintln!("Found {} snapshots after flush", snapshots.len());
+    for (i, snapshot) in snapshots.iter().enumerate() {
+        eprintln!(
+            "Snapshot {}: timestamp={}, language={:?}, path_hash={}",
+            i,
+            snapshot.timestamp,
+            snapshot.language.as_ref().map(|l| &l.name),
+            snapshot.path_hash
+        );
+        eprintln!("    Path: {}", snapshot.path);
+    }
+
+    // Verify we have exactly 2 snapshots
+    assert_eq!(
+        snapshots.len(),
+        2,
+        "Expected 2 snapshots but found {}. This suggests snapshots are not being stored correctly.",
+        snapshots.len()
+    );
+
+    // Verify the snapshots have different languages
+    let first_lang = snapshots[0].language.as_ref().map(|l| l.name.as_ref());
+    let second_lang = snapshots[1].language.as_ref().map(|l| l.name.as_ref());
+    eprintln!("Snapshot languages: {:?} -> {:?}", first_lang, second_lang);
+
+    // Verify language change detected
+    // Use canonical path for consistency across platforms
+    eprintln!(
+        "\nQuerying changes for canonical path: {}",
+        canonical_path_str
+    );
+
+    let changes = tracker.detect_changes(&canonical_path_str)?;
+
+    assert!(
+        !changes.is_empty(),
+        "Expected changes to be detected for path: {}. Found {} snapshots with languages {:?} -> {:?}",
+        canonical_path_str,
+        snapshots.len(),
+        first_lang,
+        second_lang
+    );
+
+    // Debug: Print what changes were actually detected
+    eprintln!("Detected {} change sets", changes.len());
+    for (i, change_set) in changes.iter().enumerate() {
+        eprintln!("Change set {}: {} changes", i, change_set.changes.len());
+        for change in &change_set.changes {
+            eprintln!("  - {:?}", change);
+        }
+    }
+
     let has_language_change = changes[0].changes.iter().any(|c| {
         matches!(c, ChangeDetected::LanguageChanged { from, to }
             if from.as_deref() == Some("JavaScript") && to.as_deref() == Some("TypeScript"))
     });
-    assert!(has_language_change);
+    assert!(
+        has_language_change,
+        "Expected language change from JavaScript to TypeScript, but changes were: {:?}",
+        changes[0].changes
+    );
 
     Ok(())
 }
