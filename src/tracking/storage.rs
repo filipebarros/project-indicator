@@ -278,7 +278,9 @@ impl ResultTracker {
 
     /// Read all snapshots for a specific path
     pub fn read_snapshots_for_path(&self, path: &str) -> Result<Vec<DetectionSnapshot>> {
-        let path_hash = DetectionSnapshot::hash_path(path);
+        // Canonicalize the path to match how snapshots are stored
+        let canonical_path = self.path_cache.get_canonical(Path::new(path));
+        let path_hash = DetectionSnapshot::hash_path(&canonical_path);
         let mut all_snapshots = Vec::new();
 
         // Read all snapshot files
@@ -312,6 +314,9 @@ impl ResultTracker {
     }
 
     /// Find changes for a specific path
+    ///
+    /// Accepts either canonical or non-canonical paths. The path will be
+    /// canonicalized to match how snapshots are stored.
     pub fn detect_changes(&self, path: &str) -> Result<Vec<SnapshotDiff>> {
         let snapshots = self.read_snapshots_for_path(path)?;
 

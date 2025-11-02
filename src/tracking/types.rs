@@ -73,7 +73,7 @@ pub struct FrameworkResult {
     pub detected_via: Vec<String>,
 }
 
-/// Custom serde module for Arc<str> serialization
+/// Custom serde module for `Arc<str>` serialization
 mod arc_str_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::Arc;
@@ -267,7 +267,7 @@ impl DetectionSnapshot {
     /// - Reduces memory allocations during serialization
     /// - Can be serialized in background before writing
     ///
-    /// Returns a Vec<u8> containing the JSON representation with trailing newline.
+    /// Returns a `Vec<u8>` containing the JSON representation with trailing newline.
     pub fn serialize_to_buffer(&self) -> anyhow::Result<Vec<u8>> {
         // Pre-allocate buffer with typical snapshot size to reduce reallocations
         // Average snapshot is ~1-2KB, using 2KB as capacity
