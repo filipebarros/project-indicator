@@ -1,6 +1,6 @@
 [package]
 name = "project-indicator"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 authors = ["Filipe Barros <afbarros@me.com>"]
 description = "Fast project type and framework detection for shell prompts"
