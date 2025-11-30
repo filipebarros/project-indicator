@@ -34,7 +34,7 @@ chrono = "0.4" # For date formatting (YYYY-MM-DD.jsonl filenames)
 colored = "3.0" # For terminal output formatting in diffs
 
 [dev-dependencies]
-criterion = "0.7"
+criterion = "0.8"
 tempfile = "3.23"
 proptest = "1.9"
 
