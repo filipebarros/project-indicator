@@ -35,7 +35,7 @@ colored = "3.0" # For terminal output formatting in diffs
 
 [dev-dependencies]
 criterion = "0.8"
-tempfile = "3.23"
+tempfile = "3.24"
 proptest = "1.9"
 
 [[bin]]
