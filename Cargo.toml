@@ -10,7 +10,7 @@ keywords = ["cli", "shell", "prompt", "project", "detection"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
-clap = { version = "4.5.54", features = ["derive"] }
+clap = { version = "4.5.56", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.9"
 serde_json = "1.0"
