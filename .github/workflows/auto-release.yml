@@ -149,7 +149,7 @@ jobs:
 
     - name: Trigger Release Workflow
       if: steps.detect_bump.outputs.bump_type != 'none'
-      uses: actions/github-script@v8
+      uses: actions/github-script@v9
       with:
         script: |
           const tag = "v${{ steps.bump_version.outputs.new_version }}";
