@@ -10,13 +10,13 @@ keywords = ["cli", "shell", "prompt", "project", "detection"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
-clap = { version = "4.5.57", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
-toml = "0.9"
+toml = "1.1"
 serde_json = "1.0"
 
 ignore = "0.4"
-rayon = "1.11"
+rayon = "1.12"
 regex = "1.12.3"
 
 anyhow = "1.0"
@@ -26,17 +26,17 @@ dirs = "6.0"
 log = "0.4"
 env_logger = "0.11"
 
-dashmap = "6.1"
+dashmap = "6.2"
 
-uuid = { version = "1.20", features = ["v4", "serde"] }
+uuid = { version = "1.23", features = ["v4", "serde"] }
 
 chrono = "0.4" # For date formatting (YYYY-MM-DD.jsonl filenames)
 colored = "3.1" # For terminal output formatting in diffs
 
 [dev-dependencies]
 criterion = "0.8"
-tempfile = "3.24"
-proptest = "1.10"
+tempfile = "3.27"
+proptest = "1.11"
 
 [[bin]]
 name = "project-indicator"
