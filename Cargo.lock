@@ -845,7 +845,6 @@ dependencies = [
  "ignore",
  "log",
  "proptest",
- "rayon",
  "regex",
  "serde",
  "serde_json",

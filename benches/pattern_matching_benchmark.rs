@@ -104,25 +104,6 @@ fn benchmark_cache_effectiveness(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark cache eviction performance
-fn benchmark_cache_eviction(c: &mut Criterion) {
-    c.bench_function("cache_eviction", |b| {
-        b.iter(|| {
-            let matcher = PatternMatcher::new();
-
-            // Fill cache beyond capacity (10k entries)
-            for i in 0..12000 {
-                let filename = format!("file_{}.txt", i);
-                black_box(matcher.matches_pattern(&filename, "*.txt"));
-            }
-
-            // Verify cache was evicted
-            let (cache_entries, _, _) = matcher.cache_stats();
-            assert!(cache_entries <= 10000);
-        });
-    });
-}
-
 /// Benchmark different pattern complexity
 fn benchmark_pattern_complexity(c: &mut Criterion) {
     let mut group = c.benchmark_group("pattern_complexity");
@@ -193,7 +174,6 @@ criterion_group!(
     benches,
     benchmark_common_patterns,
     benchmark_cache_effectiveness,
-    benchmark_cache_eviction,
     benchmark_pattern_complexity,
     benchmark_concurrent_access
 );

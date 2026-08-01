@@ -52,19 +52,6 @@ fn test_cli_debug_subcommand() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_cli_cache_subcommand() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::try_parse_from(["project-indicator", "cache", "clear"])?;
-
-    match cli.command {
-        Some(Commands::Cache {
-            action: CacheAction::Clear,
-        }) => {}
-        _ => panic!("Expected Cache::Clear command"),
-    }
-    Ok(())
-}
-
-#[test]
 fn test_cli_benchmark_subcommand() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::try_parse_from(["project-indicator", "benchmark"])?;
 

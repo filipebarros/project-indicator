@@ -16,7 +16,6 @@ fn simple_error(message: impl Into<String>) -> anyhow::Error {
 pub fn validate_config(config: &Config) -> Result<()> {
     validate_version(&config.meta.version)?;
     validate_display_config(config)?;
-    validate_cache_config(config)?;
     validate_languages(&config.languages)?;
     validate_unique_language_names(&config.languages)?;
 
@@ -38,24 +37,6 @@ fn validate_display_config(config: &Config) -> Result<()> {
 
     if config.display.framework_separator.is_empty() {
         return Err(validation_error("framework_separator cannot be empty"));
-    }
-
-    Ok(())
-}
-fn validate_cache_config(config: &Config) -> Result<()> {
-    if config.cache.ttl_seconds > 86400 {
-        log::warn!(
-            "Cache TTL is very high: {} seconds ({}h)",
-            config.cache.ttl_seconds,
-            config.cache.ttl_seconds / 3600
-        );
-    }
-
-    if config.cache.max_entries > 10000 {
-        log::warn!(
-            "Cache max entries is very high: {}",
-            config.cache.max_entries
-        );
     }
 
     Ok(())
@@ -258,7 +239,7 @@ fn is_valid_hex_color(color: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{CacheConfig, ConfigMeta, DisplayConfig};
+    use crate::types::{ConfigMeta, DisplayConfig};
 
     fn create_valid_language() -> ProjectIndicator {
         ProjectIndicator::new(
@@ -292,7 +273,6 @@ mod tests {
                 version: "2.0".to_string(),
             },
             display: DisplayConfig::default(),
-            cache: CacheConfig::default(),
             detection: DetectionConfig::default(),
             tracking: crate::types::TrackingConfig::default(),
             languages: vec![create_valid_language()],
@@ -309,7 +289,6 @@ mod tests {
                 version: "1.0".to_string(),
             },
             display: DisplayConfig::default(),
-            cache: CacheConfig::default(),
             detection: DetectionConfig::default(),
             tracking: crate::types::TrackingConfig::default(),
             languages: vec![create_valid_language()],
@@ -324,7 +303,6 @@ mod tests {
         let config = Config {
             meta: ConfigMeta::default(),
             display: DisplayConfig::default(),
-            cache: CacheConfig::default(),
             detection: DetectionConfig::default(),
             tracking: crate::types::TrackingConfig::default(),
             languages: vec![],
@@ -339,7 +317,6 @@ mod tests {
         let config = Config {
             meta: ConfigMeta::default(),
             display: DisplayConfig::default(),
-            cache: CacheConfig::default(),
             detection: DetectionConfig::default(),
             tracking: crate::types::TrackingConfig::default(),
             languages: vec![create_valid_language(), create_valid_language()],

@@ -6,21 +6,10 @@ use project_indicator::{
     tracking::ResultTracker,
     Result,
 };
-use std::env;
 use std::sync::Arc;
 
 pub fn handle_debug_command(cli: &Cli, verbose: bool) -> Result<()> {
-    let path = if let Some(provided_path) = &cli.path {
-        if !provided_path.exists() {
-            return Err(anyhow::anyhow!(
-                "Path does not exist: {}",
-                provided_path.display()
-            ));
-        }
-        provided_path.clone()
-    } else {
-        env::current_dir().map_err(|e| anyhow::anyhow!("Cannot access current directory: {}", e))?
-    };
+    let path = super::resolve_and_validate_path(cli.path.as_ref())?;
 
     println!("Debug mode for path: {}", path.display());
 

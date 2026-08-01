@@ -89,24 +89,6 @@ fn benchmark_cache_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-/// Benchmark cache eviction behavior
-fn benchmark_cache_eviction(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
-    let temp_dir = create_test_files(2000)?; // More files than cache capacity
-    let cache = FileSystemCache::default();
-
-    c.bench_function("cache_eviction_2000_files", |b| {
-        b.iter(|| {
-            // Access files to trigger eviction
-            for i in 0..2000 {
-                let path = temp_dir.path().join(format!("file_{}.txt", i));
-                black_box(cache.get_metadata(black_box(&path)));
-            }
-        });
-    });
-
-    Ok(())
-}
-
 /// Benchmark concurrent cache access
 fn benchmark_concurrent_access(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     use std::thread;
@@ -172,26 +154,6 @@ fn benchmark_is_file_checks(c: &mut Criterion) -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-/// Benchmark cache stats collection
-fn benchmark_cache_stats(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
-    let temp_dir = create_test_files(100)?;
-    let cache = FileSystemCache::default();
-
-    // Populate cache
-    for i in 0..100 {
-        let path = temp_dir.path().join(format!("file_{}.txt", i));
-        cache.get_metadata(&path);
-    }
-
-    c.bench_function("cache_stats_collection", |b| {
-        b.iter(|| {
-            black_box(cache.stats());
-        });
-    });
-
-    Ok(())
-}
-
 // Wrapper functions for criterion
 fn benchmark_cache_hits_wrapper(c: &mut Criterion) {
     if let Err(e) = benchmark_cache_hits(c) {
@@ -214,13 +176,6 @@ fn benchmark_cache_scaling_wrapper(c: &mut Criterion) {
     }
 }
 
-fn benchmark_cache_eviction_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_cache_eviction(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
 fn benchmark_concurrent_access_wrapper(c: &mut Criterion) {
     if let Err(e) = benchmark_concurrent_access(c) {
         eprintln!("Benchmark failed: {}", e);
@@ -235,21 +190,12 @@ fn benchmark_is_file_checks_wrapper(c: &mut Criterion) {
     }
 }
 
-fn benchmark_cache_stats_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_cache_stats(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
 criterion_group!(
     benches,
     benchmark_cache_hits_wrapper,
     benchmark_cache_misses_wrapper,
     benchmark_cache_scaling_wrapper,
-    benchmark_cache_eviction_wrapper,
     benchmark_concurrent_access_wrapper,
-    benchmark_is_file_checks_wrapper,
-    benchmark_cache_stats_wrapper
+    benchmark_is_file_checks_wrapper
 );
 criterion_main!(benches);

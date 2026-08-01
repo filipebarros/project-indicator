@@ -188,7 +188,7 @@ impl LanguageResolver {
 
             if candidate_lang.priority < current_lang.priority {
                 best_candidate = candidate;
-            } else if candidate_lang.priority == current_lang.priority + 1 {
+            } else if candidate_lang.priority == current_lang.priority.saturating_add(1) {
                 let score_diff = candidate.1 - best_candidate.1;
                 if score_diff > 0.4 {
                     best_candidate = candidate;

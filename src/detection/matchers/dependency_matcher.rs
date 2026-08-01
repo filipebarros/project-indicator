@@ -3,7 +3,6 @@ use super::ecosystems::*;
 use crate::detection::caches::ParsedFileCache;
 use crate::types::{DetectionType, FrameworkDetector, FrameworkMatch};
 use crate::Result;
-use rayon::prelude::*;
 use std::path::Path;
 
 pub struct DependencyMatcher;
@@ -14,13 +13,10 @@ impl DependencyMatcher {
         frameworks: &[FrameworkDetector],
         parsed_cache: &ParsedFileCache,
     ) -> Result<Vec<FrameworkMatch>> {
-        // Convert path to PathBuf for thread safety (Sync)
         let path_buf = path.as_ref().to_path_buf();
 
-        // Parallel detection: Each framework can be checked concurrently
-        // The ParsedFileCache is thread-safe (uses Mutex internally)
         let matches: Vec<FrameworkMatch> = frameworks
-            .par_iter()
+            .iter()
             .filter_map(|framework| {
                 Self::try_detect_ecosystem_framework(&path_buf, framework, parsed_cache)
                     .ok()

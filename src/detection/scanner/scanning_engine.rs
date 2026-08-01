@@ -129,11 +129,25 @@ impl ScanningEngine {
 
     /// Fast path: check only high-priority files in root
     fn check_priority_files(&self, path: &Path) -> Result<Option<Vec<MatchedFile>>> {
-        let high_priority_files = self.pattern_processor.get_high_priority_files();
-        let mut matches = Vec::with_capacity(high_priority_files.len());
+        let matches = self.check_root_files(path, self.pattern_processor.get_high_priority_files());
 
-        for priority_file in high_priority_files.iter() {
-            let file_path = path.join(priority_file);
+        if matches.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(matches))
+        }
+    }
+
+    /// Check a set of exact (non-glob) filenames in the scan root
+    fn check_root_files<'a>(
+        &self,
+        path: &Path,
+        files: impl IntoIterator<Item = &'a String>,
+    ) -> Vec<MatchedFile> {
+        let mut matches = Vec::new();
+
+        for file_name in files {
+            let file_path = path.join(file_name);
 
             // Use cache if available, otherwise direct filesystem check
             let exists_and_is_file = if let Some(cache) = &self.file_cache {
@@ -143,21 +157,11 @@ impl ScanningEngine {
             };
 
             if exists_and_is_file {
-                if let Ok(relative_path) = file_path.strip_prefix(path) {
-                    if let Some(relative_str) = relative_path.to_str() {
-                        let matched =
-                            MatchedFile::new(priority_file.clone(), relative_str.to_string());
-                        matches.push(matched);
-                    }
-                }
+                matches.push(MatchedFile::new(file_name.clone(), file_name.clone()));
             }
         }
 
-        if matches.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(matches))
-        }
+        matches
     }
 
     /// Full directory scan with adaptive timeout and early termination
@@ -182,7 +186,9 @@ impl ScanningEngine {
                 estimated_size,
                 self.extreme_size_threshold
             );
-            return Ok(Vec::new());
+            // Root-level manifests are still cheap to check, so an oversized
+            // project root (e.g. a big monorepo) is not reported as empty
+            return Ok(self.check_root_files(path, self.pattern_processor.get_exact_patterns()));
         }
 
         // Optimization: Use sequential scan for small projects to avoid parallel overhead
@@ -202,6 +208,32 @@ impl ScanningEngine {
             self.small_project_threshold
         );
         self.scan_parallel(path, &traverser, estimated_size)
+    }
+
+    /// Shared per-entry pre-filter for both scan strategies.
+    ///
+    /// Returns `Some(is_strong_evidence)` when the entry is a file whose name
+    /// passes the pattern pre-filter (and records it with the timeout
+    /// manager); `None` when the entry should be skipped.
+    fn prefilter_entry(
+        pattern_processor: &PatternProcessor,
+        timeout_mgr: &TimeoutManager,
+        entry: &ignore::DirEntry,
+    ) -> Option<bool> {
+        // Check file type first before any string operations
+        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+            return None;
+        }
+
+        let filename = entry.file_name().to_str()?;
+
+        if !pattern_processor.should_scan_file(filename) {
+            return None;
+        }
+
+        timeout_mgr.record_file_scanned();
+
+        Some(pattern_processor.is_strong_evidence(filename))
     }
 
     /// Sequential scan for small projects (avoids thread spawning overhead)
@@ -240,26 +272,12 @@ impl ScanningEngine {
                 Err(_) => continue,
             };
 
-            // Optimization: Check file type first before any string operations
-            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
-                continue;
-            }
+            let is_strong =
+                match Self::prefilter_entry(&self.pattern_processor, &timeout_mgr, &entry) {
+                    Some(is_strong) => is_strong,
+                    None => continue,
+                };
 
-            // Optimization: Get filename once and reuse
-            let filename = match entry.file_name().to_str() {
-                Some(name) => name,
-                None => continue,
-            };
-
-            // Fast path: Skip files that don't match any patterns
-            if !self.pattern_processor.should_scan_file(filename) {
-                continue;
-            }
-
-            timeout_mgr.record_file_scanned();
-
-            // Check for strong evidence before expensive pattern matching
-            let is_strong = self.pattern_processor.is_strong_evidence(filename);
             if is_strong {
                 high_priority_count += 1;
 
@@ -327,6 +345,9 @@ impl ScanningEngine {
         let high_priority_count = Arc::new(AtomicUsize::new(0));
         let total_matches = Arc::new(AtomicUsize::new(0));
         let should_quit = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // One shared timeout manager so file counts and early-termination
+        // heuristics are evaluated globally, not per worker thread
+        let timeout_mgr = Arc::new(TimeoutManager::new(estimated_size));
 
         // Optimization: Share patterns via Arc to avoid cloning the entire vector.
         // The Arc clone is just a pointer copy with reference counting.
@@ -339,7 +360,7 @@ impl ScanningEngine {
             let high_priority_count = Arc::clone(&high_priority_count);
             let total_matches = Arc::clone(&total_matches);
             let should_quit = Arc::clone(&should_quit);
-            let timeout_mgr_clone = TimeoutManager::new(estimated_size);
+            let timeout_mgr = Arc::clone(&timeout_mgr);
             let pattern_processor = self.pattern_processor.clone();
             let base_path = path.to_path_buf();
             let patterns = Arc::clone(&patterns);
@@ -351,7 +372,7 @@ impl ScanningEngine {
                 }
 
                 // Check timeout
-                if timeout_mgr_clone.should_stop() {
+                if timeout_mgr.should_stop() {
                     return ignore::WalkState::Quit;
                 }
 
@@ -360,26 +381,12 @@ impl ScanningEngine {
                     Err(_) => return ignore::WalkState::Continue,
                 };
 
-                // Optimization: Check file type first before any string operations
-                if !entry.file_type().is_some_and(|ft| ft.is_file()) {
-                    return ignore::WalkState::Continue;
-                }
+                let is_strong =
+                    match Self::prefilter_entry(&pattern_processor, &timeout_mgr, &entry) {
+                        Some(is_strong) => is_strong,
+                        None => return ignore::WalkState::Continue,
+                    };
 
-                // Optimization: Get filename once and reuse
-                let filename = match entry.file_name().to_str() {
-                    Some(name) => name,
-                    None => return ignore::WalkState::Continue,
-                };
-
-                // Fast path: Skip files that don't match patterns
-                if !pattern_processor.should_scan_file(filename) {
-                    return ignore::WalkState::Continue;
-                }
-
-                timeout_mgr_clone.record_file_scanned();
-
-                // Check if this is strong evidence
-                let is_strong = pattern_processor.is_strong_evidence(filename);
                 if is_strong {
                     let hp_count = high_priority_count.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -419,7 +426,7 @@ impl ScanningEngine {
                         // Early termination check
                         if is_strong {
                             let hp_count = high_priority_count.load(Ordering::Relaxed);
-                            if timeout_mgr_clone.check_early_termination(hp_count) {
+                            if timeout_mgr.check_early_termination(hp_count) {
                                 log::trace!(
                                     "Parallel scan: early termination triggered (high_priority={})",
                                     hp_count
@@ -460,42 +467,6 @@ impl ScanningEngine {
 
     pub fn pattern_processor(&self) -> &PatternProcessor {
         &self.pattern_processor
-    }
-
-    /// Batch collect files - alias for scan()
-    pub fn batch_collect_files(&self, path: &Path) -> Result<Vec<MatchedFile>> {
-        self.scan(path)
-    }
-
-    /// Scan matching files - alias for scan()
-    pub fn scan_matching_files(&self, path: &Path) -> Result<Vec<MatchedFile>> {
-        self.scan(path)
-    }
-
-    /// Clear internal caches
-    ///
-    /// Currently a no-op as ScanningEngine doesn't maintain caches internally.
-    /// PatternProcessor caches are managed separately by the DetectionEngine.
-    pub fn clear_caches(&mut self) {
-        // No-op: ScanningEngine doesn't have internal caches
-        // PatternProcessor caches are managed separately
-    }
-
-    /// Get performance statistics
-    ///
-    /// Returns default stats as ScanningEngine doesn't maintain a FileSystemCache.
-    /// Performance is tracked through logging instead.
-    pub fn get_performance_stats(&self) -> crate::performance::CacheStats {
-        // Return default stats since we don't have a cache
-        crate::performance::CacheStats {
-            metadata_entries: 0,
-            metadata_capacity: 0,
-            hits: 0,
-            misses: 0,
-            hit_rate: 0.0,
-            lock_contentions: 0,
-            evictions_performed: 0,
-        }
     }
 }
 
@@ -623,7 +594,7 @@ mod tests {
         let pattern_processor =
             PatternProcessor::new(pattern_matcher, patterns, vec![Arc::new(rust_lang)]);
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let engine = ScanningEngine::with_cache(pattern_processor, 3, Some(file_cache));
 
         let temp_dir = create_test_rust_project().map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -682,6 +653,42 @@ mod tests {
 
         let matches = engine.scan_with_timeout(temp_dir.path())?;
         assert!(matches.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_oversized_directory_still_detects_root_manifests() -> Result<()> {
+        let patterns = Arc::new(vec!["special.config".to_string(), "*.xyz".to_string()]);
+        // Priority > 2 keeps this language out of the high-priority fast path,
+        // so detection must survive the extreme-size bailout
+        let lang = ProjectIndicator::with_root_indicators(
+            "Special".to_string(),
+            vec!["special.config".to_string(), "*.xyz".to_string()],
+            "#000000".to_string(),
+            "S".to_string(),
+            5,
+            vec![],
+            vec![],
+        );
+
+        let pattern_matcher = Arc::new(PatternMatcher::new());
+        let engine = ScanningEngine::with_shared_pattern_matcher(
+            pattern_matcher,
+            patterns,
+            vec![Arc::new(lang)],
+            3,
+        );
+
+        let temp_dir = TempDir::new()?;
+        let root = temp_dir.path();
+        for i in 0..510 {
+            fs::write(root.join(format!("file_{}.txt", i)), "x")?;
+        }
+        fs::write(root.join("special.config"), "cfg")?;
+
+        let matches = engine.scan(root)?;
+        assert!(matches.iter().any(|m| m.filename == "special.config"));
 
         Ok(())
     }

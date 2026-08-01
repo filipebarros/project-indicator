@@ -35,13 +35,11 @@ pub const PUBSPEC_LOCK: &str = "pubspec.lock";
 pub const LUAROCKS_LOCK: &str = "luarocks.lock";
 
 // File extensions
-pub const EMPTY_STRING: &str = "";
 
 // JavaScript/TypeScript
 pub const JS_EXTENSION: &str = "*.js";
 pub const MJS_EXTENSION: &str = "*.mjs";
 pub const CJS_EXTENSION: &str = "*.cjs";
-pub const JSX_EXTENSION: &str = "*.jsx";
 pub const TS_EXTENSION: &str = "*.ts";
 pub const MTS_EXTENSION: &str = "*.mts";
 pub const CTS_EXTENSION: &str = "*.cts";
@@ -76,8 +74,6 @@ pub const JULIA_EXTENSION: &str = "*.jl";
 
 // Other
 pub const DART_EXTENSION: &str = "*.dart";
-pub const ELIXIR_EXTENSION: &str = "*.ex";
-pub const ELIXIR_SCRIPT_EXTENSION: &str = "*.exs";
 
 // Framework config files
 pub const NEXT_CONFIG_JS: &str = "next.config.js";
@@ -93,7 +89,6 @@ pub const SVELTE_CONFIG_JS: &str = "svelte.config.js";
 
 // Project/Build files
 pub const GEMSPEC_EXTENSION: &str = "*.gemspec";
-pub const XCODEPROJ_EXTENSION: &str = "*.xcodeproj";
 pub const XCWORKSPACE_EXTENSION: &str = "*.xcworkspace";
 pub const VCXPROJ_EXTENSION: &str = "*.vcxproj";
 pub const QT_PRO_EXTENSION: &str = "*.pro";

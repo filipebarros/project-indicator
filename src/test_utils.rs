@@ -3,12 +3,8 @@
 //! This module provides shared test helpers for creating test fixtures like
 //! detection results, temporary directories, caches, and other common test objects.
 
-use crate::{
-    detection::caches::DetectionCache,
-    types::{
-        CacheConfig, DetectionResult, DetectionType, FrameworkDetector, FrameworkMatch,
-        ProjectIndicator,
-    },
+use crate::types::{
+    DetectionResult, DetectionType, FrameworkDetector, FrameworkMatch, ProjectIndicator,
 };
 use std::{fs, sync::Arc};
 use tempfile::TempDir;
@@ -74,25 +70,6 @@ pub fn create_test_result_language_only(language_name: &str, confidence: f32) ->
     );
 
     DetectionResult::new(Some(Arc::new(language)), vec![], confidence)
-}
-
-/// Creates a test `DetectionCache` with default configuration.
-///
-/// The cache is configured with:
-/// - Enabled: true
-/// - Max entries: 100
-/// - TTL: 300 seconds
-///
-/// # Returns
-///
-/// A new `DetectionCache` instance with test-appropriate configuration.
-pub fn create_test_cache() -> DetectionCache {
-    let config = CacheConfig {
-        enabled: true,
-        max_entries: 100,
-        ttl_seconds: 300,
-    };
-    DetectionCache::new(config)
 }
 
 /// Creates a temporary directory with a basic Rust project structure.
@@ -233,13 +210,6 @@ mod tests {
         }
         assert!(result.frameworks.is_empty());
         assert_eq!(result.confidence, 0.8);
-    }
-
-    #[test]
-    fn test_create_test_cache() {
-        let cache = create_test_cache();
-        // Verify cache is created successfully by checking it's empty initially
-        assert!(cache.is_empty());
     }
 
     #[test]

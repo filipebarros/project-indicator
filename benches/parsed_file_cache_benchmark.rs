@@ -233,32 +233,6 @@ fn benchmark_parse_failures(c: &mut Criterion) -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-/// Benchmark cache statistics overhead
-fn benchmark_cache_stats(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
-    let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
-
-    fs::write(temp_dir.path().join("package.json"), r#"{"name": "test"}"#)
-        .map_err(|e| format!("Failed to write package.json: {}", e))?;
-
-    let cache = ParsedFileCache::new();
-    let package_json_path = temp_dir.path().join("package.json");
-    // Pre-populate
-    for _ in 0..50 {
-        if let Err(e) = cache.get_json_value(&package_json_path) {
-            eprintln!("JSON parsing failed: {}", e);
-        }
-    }
-
-    c.bench_function("cache_stats_call", |b| {
-        b.iter(|| {
-            black_box(cache.stats());
-        });
-    });
-
-    Ok(())
-}
-
-// Wrapper functions for criterion
 fn benchmark_json_parsing_wrapper(c: &mut Criterion) {
     if let Err(e) = benchmark_json_parsing(c) {
         eprintln!("Benchmark failed: {}", e);
@@ -287,19 +261,11 @@ fn benchmark_parse_failures_wrapper(c: &mut Criterion) {
     }
 }
 
-fn benchmark_cache_stats_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_cache_stats(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
 criterion_group!(
     benches,
     benchmark_json_parsing_wrapper,
     benchmark_toml_parsing_wrapper,
     benchmark_mixed_access_wrapper,
-    benchmark_parse_failures_wrapper,
-    benchmark_cache_stats_wrapper
+    benchmark_parse_failures_wrapper
 );
 criterion_main!(benches);

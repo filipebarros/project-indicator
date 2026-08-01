@@ -323,33 +323,6 @@ impl ConflictResolver {
         }
         eprintln!("   → Resolved to weight: {:.3}", resolved_weight);
     }
-
-    pub fn get_conflict_summary(&self) -> String {
-        if self.detected_conflicts.is_empty() {
-            return "No root indicator conflicts detected.".to_string();
-        }
-
-        let mut summary = format!(
-            "Root Indicator Conflicts Summary ({} conflicts):\n",
-            self.detected_conflicts.len()
-        );
-
-        for conflict in &self.detected_conflicts {
-            summary.push_str(&format!(
-                "• '{}': {} sources, resolved weight: {:.3}, penalty: {:.1}%\n",
-                conflict.pattern,
-                conflict.conflicting_sources.len(),
-                conflict.resolved_weight,
-                conflict.confidence_penalty * 100.0
-            ));
-        }
-
-        summary
-    }
-
-    pub fn clear_conflicts(&mut self) {
-        self.detected_conflicts.clear();
-    }
 }
 
 #[cfg(test)]

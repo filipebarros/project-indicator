@@ -2,12 +2,11 @@ use crate::detection::pattern_matching::PatternMatcher;
 use crate::types::{
     ConfidenceFactor, DetectionEvidence, DirectoryType, MatchedFile, ProjectIndicator,
 };
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::collections::HashSet;
+use std::sync::Arc;
 
 pub struct ConfidenceScorer {
     pattern_matcher: Arc<PatternMatcher>,
-    score_cache: Mutex<HashMap<String, f32>>,
 }
 
 impl ConfidenceScorer {
@@ -16,31 +15,7 @@ impl ConfidenceScorer {
     }
 
     pub fn with_pattern_matcher(pattern_matcher: Arc<PatternMatcher>) -> Self {
-        Self {
-            pattern_matcher,
-            score_cache: Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub fn clear_cache(&self) {
-        match self.score_cache.lock() {
-            Ok(mut cache) => {
-                cache.clear();
-            }
-            Err(e) => {
-                log::error!("ConfidenceScorer cache lock poisoned during clear: {}", e);
-            }
-        }
-    }
-
-    pub fn cache_stats(&self) -> usize {
-        match self.score_cache.lock() {
-            Ok(cache) => cache.len(),
-            Err(e) => {
-                log::warn!("ConfidenceScorer cache lock poisoned during stats: {}", e);
-                0
-            }
-        }
+        Self { pattern_matcher }
     }
 
     pub fn get_pattern_importance(
@@ -48,24 +23,6 @@ impl ConfidenceScorer {
         pattern: &str,
         languages: &[Arc<ProjectIndicator>],
     ) -> f32 {
-        self.get_pattern_importance_with_global(pattern, languages, &[])
-    }
-
-    pub fn get_pattern_importance_with_global(
-        &self,
-        pattern: &str,
-        languages: &[Arc<ProjectIndicator>],
-        global_indicators: &[crate::types::RootIndicator],
-    ) -> f32 {
-        for root_indicator in global_indicators {
-            if self
-                .pattern_matcher
-                .matches_pattern(pattern, &root_indicator.pattern)
-            {
-                return root_indicator.weight;
-            }
-        }
-
         for language in languages {
             for root_indicator in &language.root_indicators {
                 if self
@@ -101,24 +58,6 @@ impl ConfidenceScorer {
             return 0.0;
         }
 
-        let cache_key = format!("{}:{}", language.name, matched_files.len());
-
-        match self.score_cache.lock() {
-            Ok(cache) => {
-                if let Some(&cached_score) = cache.get(&cache_key) {
-                    return cached_score;
-                }
-            }
-            Err(e) => {
-                log::warn!(
-                    "ConfidenceScorer cache lock poisoned during read for '{}': {}",
-                    language.name,
-                    e
-                );
-                // Continue with score calculation as fallback
-            }
-        }
-
         let mut weighted_score = 0.0;
         let mut max_possible_score = 0.0;
 
@@ -151,26 +90,11 @@ impl ConfidenceScorer {
         let root_indicator_bonus = self.calculate_root_indicator_bonus(language, matched_files);
         weighted_score += root_indicator_bonus;
 
-        let final_score = if max_possible_score > 0.0 {
+        if max_possible_score > 0.0 {
             (weighted_score / max_possible_score).min(1.0)
         } else {
             0.0
-        };
-
-        match self.score_cache.lock() {
-            Ok(mut cache) => {
-                cache.insert(cache_key, final_score);
-            }
-            Err(e) => {
-                log::warn!(
-                    "ConfidenceScorer cache lock poisoned during insert for '{}': {}",
-                    language.name,
-                    e
-                );
-                // Still return the computed score
-            }
         }
-        final_score
     }
 
     pub fn calculate_language_score_with_evidence(
@@ -300,44 +224,6 @@ impl ConfidenceScorer {
         let mut bonus = 0.0;
 
         for root_indicator in &language.root_indicators {
-            let has_matching_file = matched_files.iter().any(|file| {
-                file.depth == 0
-                    && self
-                        .pattern_matcher
-                        .matches_pattern(&file.filename, &root_indicator.pattern)
-            });
-
-            if has_matching_file {
-                bonus += root_indicator.weight;
-            }
-        }
-
-        bonus
-    }
-
-    pub fn calculate_framework_confidence(
-        &mut self,
-        framework: &crate::types::FrameworkDetector,
-        base_confidence: f32,
-        matched_files: &[MatchedFile],
-    ) -> f32 {
-        let mut confidence = base_confidence;
-
-        let root_indicator_bonus =
-            self.calculate_framework_root_indicator_bonus(framework, matched_files);
-        confidence += root_indicator_bonus;
-
-        confidence.min(1.0)
-    }
-
-    fn calculate_framework_root_indicator_bonus(
-        &mut self,
-        framework: &crate::types::FrameworkDetector,
-        matched_files: &[MatchedFile],
-    ) -> f32 {
-        let mut bonus = 0.0;
-
-        for root_indicator in &framework.root_indicators {
             let has_matching_file = matched_files.iter().any(|file| {
                 file.depth == 0
                     && self

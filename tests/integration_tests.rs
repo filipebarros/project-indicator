@@ -35,7 +35,6 @@ fn test_config_serialization() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config {
         meta: ConfigMeta::default(),
         display: DisplayConfig::default(),
-        cache: CacheConfig::default(),
         detection: DetectionConfig::default(),
         tracking: TrackingConfig::default(),
         languages: vec![language],
@@ -299,7 +298,6 @@ fn test_config_defaults() -> Result<(), Box<dyn std::error::Error>> {
     assert!(config.display.show_frameworks);
     assert_eq!(config.display.max_frameworks, 2);
     assert_eq!(config.display.framework_separator, "+");
-    assert_eq!(config.cache.ttl_seconds, 300);
     assert!(config.languages.is_empty());
     Ok(())
 }
@@ -330,5 +328,44 @@ fn test_wildcard_patterns() -> Result<(), Box<dyn std::error::Error>> {
 
     let partial_files = vec!["src/main.cpp".to_string()];
     assert!(cpp_lang.matches_files(&partial_files));
+    Ok(())
+}
+
+#[test]
+fn test_builtin_full_template_detects_frameworks_out_of_box(
+) -> Result<(), Box<dyn std::error::Error>> {
+    // The full template is the built-in fallback when no user config exists;
+    // framework detection must work without running `config init`
+    let config = project_indicator::config::TemplateGenerator::generate_template(Some("full"))
+        .map_err(|e| format!("full template must exist: {e}"))?;
+
+    let temp_dir = create_test_project(&[
+        (
+            "package.json",
+            r#"{"name": "app", "dependencies": {"react": "^18.2.0"}}"#,
+        ),
+        ("tsconfig.json", "{}"),
+        ("src/index.tsx", "export default null;"),
+    ])?;
+
+    let engine = DetectionEngineBuilder::new(config.languages.clone())
+        .with_config(config.detection.clone())
+        .build();
+    let result = engine.detect(temp_dir.path())?;
+
+    let language = result.language.as_ref().ok_or("expected a language")?;
+    assert_eq!(language.name, "TypeScript");
+    assert!(
+        result
+            .frameworks
+            .iter()
+            .any(|f| f.framework.name == "React"),
+        "expected React framework, got: {:?}",
+        result
+            .frameworks
+            .iter()
+            .map(|f| &f.framework.name)
+            .collect::<Vec<_>>()
+    );
     Ok(())
 }

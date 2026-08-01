@@ -19,7 +19,7 @@ cargo build
 # Release build (optimized)
 cargo build --release
 
-# Run all tests (371 tests including property-based tests)
+# Run all tests (including property-based tests)
 cargo test
 
 # Run specific test
@@ -86,10 +86,6 @@ cargo run -- --mode thorough # Full scan (default)
 cargo run -- debug --verbose
 cargo run -- benchmark
 
-# Cache management
-cargo run -- cache stats
-cargo run -- cache clear
-
 # Configuration
 cargo run -- config validate
 cargo run -- config show
@@ -131,7 +127,6 @@ The detection flow follows this path:
    - Root indicator bonus
 
 6. **FrameworkDetector** - Framework identification
-   - Parallel detection using rayon
    - Ecosystem-specific matchers (`src/detection/matchers/ecosystems/`)
    - Dependency analysis from package.json, Cargo.toml, etc.
 
@@ -139,42 +134,28 @@ The detection flow follows this path:
    - Multiple formats: simple, full, json, compact, debug, rich
    - Renderer pattern for extensibility
 
-### Caching Architecture (Critical for Performance)
+### Caching Architecture
 
-Three distinct cache layers with different lifecycles:
+All caches live and die within a single detection run (one CLI invocation);
+there is no cross-invocation persistence.
 
-#### 1. DetectionCache (Persistent)
-
-- **Location**: `src/detection/caches/detection.rs`
-- **Lifetime**: Across CLI invocations
-- **Purpose**: Cache complete `DetectionResult` objects
-- **Invalidation**: Based on file system modification times
-
-#### 2. FileSystemCacheManager (Per-detection run)
+#### 1. FileSystemCacheManager (Per-detection run)
 
 - **Location**: `src/detection/caches/file_system.rs` + `src/performance.rs`
-- **Lifetime**: Single detection run
-- **Purpose**:
-  - File existence checks (~7-8x speedup for shell prompts)
-  - File metadata (size, modified time)
-- **Features**:
-  - TTL-based expiration
-  - Lock contention metrics
-  - Batch eviction (75% when threshold reached)
+- **Purpose**: Memoize file existence checks and metadata (size, modified time)
+  so the fast path, scanner, and framework detector don't repeat `stat` calls
 
-#### 3. ParsedFileCache (Per-detection run)
+#### 2. ParsedFileCache (Per-detection run)
 
 - **Location**: `src/detection/caches/parsed_file.rs`
-- **Lifetime**: Single detection run
-- **Purpose**: Cache parsed JSON/TOML content
-- **Performance**: 23x faster for JSON, 16x faster for TOML
+- **Purpose**: Cache parsed JSON/TOML content so manifests like `package.json`
+  are parsed at most once per run
 
-#### 4. PatternMatcher Cache (Shared)
+#### 3. PatternMatcher Cache (Shared)
 
 - **Location**: `src/detection/pattern_matching.rs`
 - **Shared**: Single instance via `Arc<PatternMatcher>`
-- **Purpose**: Glob pattern matching results
-- **Performance**: 67x faster cache hits
+- **Purpose**: Memoize glob pattern matching results
 - **Thread-safe**: Uses DashMap for concurrent access
 
 ### Configuration System
@@ -233,7 +214,6 @@ This ensures cache hits across the entire pipeline.
 
 - **Cache key design**: Use `PathBuf` with `Borrow<Path>` trait to avoid allocations
 - **Early termination**: Check confidence scores; stop scanning when threshold met
-- **Parallel operations**: Use `rayon` for independent operations (framework detection)
 - **Memory limits**: File size limits prevent memory exhaustion (1MB per file)
 
 ### 5. Testing Requirements
@@ -322,7 +302,7 @@ For ecosystem-specific dependency matching:
 - `src/lib.rs`: Library interface for external use
 - `src/constants.rs`: Centralized file/extension constants
 - `src/patterns.rs`: Pattern matching utilities
-- `src/commands/`: CLI command implementations (detect, config, cache, debug, benchmark, root-indicators)
+- `src/commands/`: CLI command implementations (detect, config, debug, benchmark, root-indicators)
 
 ## Release Process
 

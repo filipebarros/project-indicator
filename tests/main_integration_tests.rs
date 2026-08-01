@@ -164,30 +164,6 @@ fn test_main_benchmark_command() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_main_cache_stats() -> Result<(), Box<dyn std::error::Error>> {
-    use std::process::Command;
-
-    let output = Command::new("cargo")
-        .args(["run", "--", "cache", "stats"])
-        .output();
-
-    match output {
-        Ok(output) => {
-            assert!(output.status.code().is_some());
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            assert!(
-                output.status.success() || stdout.contains("cache") || stderr.contains("cache")
-            );
-        }
-        Err(_) => {
-            println!("Skipping cache test - cargo run not available");
-        }
-    }
-    Ok(())
-}
-
-#[test]
 fn test_main_output_formats() -> Result<(), Box<dyn std::error::Error>> {
     use std::process::Command;
 

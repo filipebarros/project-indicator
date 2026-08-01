@@ -164,14 +164,6 @@ impl DetectionSnapshot {
     }
 
     /// Get the age of this snapshot in seconds
-    pub fn age_seconds(&self) -> Result<u64, std::time::SystemTimeError> {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-
-        Ok(now.saturating_sub(self.timestamp))
-    }
-
     /// Calculate cache hit rate percentage
     pub fn cache_hit_rate(&self) -> f64 {
         let total =
@@ -277,24 +269,6 @@ impl DetectionSnapshot {
         buffer.push(b'\n');
 
         Ok(buffer)
-    }
-
-    /// Check if two snapshots have the same detection result
-    pub fn has_same_result(&self, other: &Self) -> bool {
-        // Compare language names (Arc<str> implements PartialEq)
-        let lang_match = match (&self.language, &other.language) {
-            (Some(a), Some(b)) => a.name.as_ref() == b.name.as_ref(),
-            (None, None) => true,
-            _ => false,
-        };
-
-        // Compare framework names (order-independent)
-        let fw_names_self: std::collections::HashSet<_> =
-            self.frameworks.iter().map(|f| f.name.as_ref()).collect();
-        let fw_names_other: std::collections::HashSet<_> =
-            other.frameworks.iter().map(|f| f.name.as_ref()).collect();
-
-        lang_match && fw_names_self == fw_names_other
     }
 }
 

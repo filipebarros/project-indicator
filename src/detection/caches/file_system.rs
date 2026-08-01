@@ -7,46 +7,15 @@ use std::sync::Arc;
 ///
 /// Caches file existence checks, file metadata, and parsed file contents
 /// to avoid redundant I/O operations during a single detection run.
-///
-/// Note: This is separate from `DetectionCache` which caches complete
-/// detection results across CLI invocations.
 pub struct FileSystemCacheManager {
     file_existence_cache: Arc<FileSystemCache>,
     parsed_file_cache: ParsedFileCache,
 }
 
 impl FileSystemCacheManager {
-    /// Creates a new FileSystemCacheManager with default settings.
-    ///
-    /// Default settings:
-    /// - TTL: 300 seconds (5 minutes)
-    /// - Max entries: 10,000
     pub fn new() -> Self {
-        Self::with_ttl(300)
-    }
-
-    /// Creates a new FileSystemCacheManager with a custom TTL.
-    ///
-    /// Useful for:
-    /// - Testing with short TTLs to verify expiration behavior
-    /// - Long-running processes that need longer caches
-    /// - CI/CD scenarios with different freshness requirements
-    ///
-    /// ## Parameters
-    /// - `ttl_secs`: Time-to-live in seconds for cache entries
-    ///
-    /// ## Example
-    /// ```rust
-    /// # use project_indicator::detection::caches::FileSystemCacheManager;
-    /// // Short TTL for testing
-    /// let cache = FileSystemCacheManager::with_ttl(1);
-    ///
-    /// // Long TTL for CI/CD
-    /// let cache = FileSystemCacheManager::with_ttl(3600); // 1 hour
-    /// ```
-    pub fn with_ttl(ttl_secs: u64) -> Self {
         Self {
-            file_existence_cache: Arc::new(FileSystemCache::new(ttl_secs, 10000)),
+            file_existence_cache: Arc::new(FileSystemCache::new()),
             parsed_file_cache: ParsedFileCache::new(),
         }
     }
@@ -98,7 +67,6 @@ mod tests {
         let manager = FileSystemCacheManager::new();
         let stats = manager.stats();
 
-        assert_eq!(stats.metadata_capacity, 10000);
         assert_eq!(stats.metadata_entries, 0);
     }
 

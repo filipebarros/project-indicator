@@ -1,26 +1,10 @@
 use super::Config;
-use crate::types::ProjectIndicator;
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum ConfigError {
-    #[error("Configuration file not found at {path}")]
-    FileNotFound { path: PathBuf },
-
-    #[error("Failed to read configuration file: {source}")]
-    ReadError {
-        #[from]
-        source: std::io::Error,
-    },
-
-    #[error("Failed to parse TOML configuration: {source}")]
-    TomlParseError {
-        #[from]
-        source: toml::de::Error,
-    },
-
     #[error("Invalid configuration: {message}")]
     ValidationError { message: String },
 
@@ -90,69 +74,11 @@ impl ConfigParser {
         Ok(config)
     }
     fn load_fallback_config() -> Result<Config> {
-        log::info!("No configuration file found, using minimal fallback config");
+        log::info!("No configuration file found, using built-in full template");
 
-        let languages = vec![
-            ProjectIndicator::new(
-                "Rust".to_string(),
-                vec!["Cargo.toml".to_string()],
-                "#DEA584".to_string(),
-                "".to_string(),
-                1,
-                Vec::new(),
-            ),
-            ProjectIndicator::new(
-                "TypeScript".to_string(),
-                vec!["package.json".to_string(), "tsconfig.json".to_string()],
-                "#3178C6".to_string(),
-                "󰛦".to_string(),
-                1,
-                Vec::new(),
-            ),
-            ProjectIndicator::new(
-                "JavaScript".to_string(),
-                vec!["package.json".to_string()],
-                "#F0DB4F".to_string(),
-                "󰌞".to_string(),
-                2,
-                Vec::new(),
-            ),
-            ProjectIndicator::new(
-                "Python".to_string(),
-                vec!["pyproject.toml".to_string(), "requirements.txt".to_string()],
-                "#3776AB".to_string(),
-                "".to_string(),
-                1,
-                Vec::new(),
-            ),
-            ProjectIndicator::new(
-                "Go".to_string(),
-                vec!["go.mod".to_string()],
-                "#01ADD8".to_string(),
-                "".to_string(),
-                1,
-                Vec::new(),
-            ),
-        ];
-
-        Ok(Config::new(languages))
-    }
-    pub fn save_to_file<P: AsRef<Path>>(config: &Config, path: P) -> Result<()> {
-        let path = path.as_ref();
-
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
-        }
-
-        let content =
-            toml::to_string_pretty(config).with_context(|| "Failed to serialize config to TOML")?;
-
-        fs::write(path, content)
-            .with_context(|| format!("Failed to write config file: {}", path.display()))?;
-
-        log::info!("Configuration saved to: {}", path.display());
-        Ok(())
+        // Use the full built-in template so all languages and framework
+        // detection work out of the box without running `config init`
+        Ok(crate::config::templates::create_full_template().config)
     }
     pub fn default_save_path() -> Result<PathBuf> {
         if let Some(config_dir) = Self::xdg_config_dir() {
@@ -166,7 +92,7 @@ impl ConfigParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
+    use crate::types::ProjectIndicator;
 
     #[test]
     fn test_parse_v2_config() -> Result<(), Box<dyn std::error::Error>> {
@@ -204,28 +130,6 @@ priority = 1
         assert_eq!(config.languages[0].name, "TypeScript");
         assert_eq!(config.languages[0].frameworks.len(), 1);
         assert_eq!(config.languages[0].frameworks[0].name, "React");
-        Ok(())
-    }
-
-    #[test]
-    fn test_save_and_load_config() -> Result<(), Box<dyn std::error::Error>> {
-        let original_config = Config::new(vec![ProjectIndicator::new(
-            "Test Language".to_string(),
-            vec!["test.file".to_string()],
-            "#FF0000".to_string(),
-            "🔥".to_string(),
-            1,
-            Vec::new(),
-        )]);
-
-        let temp_file = NamedTempFile::new()?;
-        let temp_path = temp_file.path();
-
-        ConfigParser::save_to_file(&original_config, temp_path)?;
-
-        let loaded_config = ConfigParser::load_from_file(temp_path)?;
-
-        assert_eq!(original_config, loaded_config);
         Ok(())
     }
 
@@ -273,6 +177,12 @@ priority = 1
         assert!(language_names.contains(&&"Rust".to_string()));
         assert!(language_names.contains(&&"TypeScript".to_string()));
         assert!(language_names.contains(&&"Python".to_string()));
+
+        // The fallback must include framework detection out of the box
+        assert!(
+            config.languages.iter().any(|l| !l.frameworks.is_empty()),
+            "fallback config should define frameworks"
+        );
         Ok(())
     }
 }

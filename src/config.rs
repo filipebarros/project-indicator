@@ -9,9 +9,7 @@ pub use self::templates::{
 };
 pub use self::validator::validate_config;
 
-use crate::types::{
-    CacheConfig, ConfigMeta, DetectionConfig, DisplayConfig, ProjectIndicator, TrackingConfig,
-};
+use crate::types::{ConfigMeta, DetectionConfig, DisplayConfig, ProjectIndicator, TrackingConfig};
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Config {
@@ -19,8 +17,6 @@ pub struct Config {
     pub meta: ConfigMeta,
     #[serde(default)]
     pub display: DisplayConfig,
-    #[serde(default)]
-    pub cache: CacheConfig,
     #[serde(default)]
     pub detection: DetectionConfig,
     #[serde(default)]
@@ -154,7 +150,6 @@ mod tests {
 
         assert_eq!(config.meta.version, "2.0");
         assert_eq!(config.display.max_frameworks, 2);
-        assert_eq!(config.cache.max_entries, 1000);
         assert_eq!(config.detection.max_upward_traversal, 10);
         assert!(config.languages.is_empty());
         Ok(())

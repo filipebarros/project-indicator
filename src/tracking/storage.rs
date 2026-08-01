@@ -343,20 +343,6 @@ impl ResultTracker {
     }
 
     /// Get snapshots within a time range
-    pub fn get_snapshots_between(
-        &self,
-        path: &str,
-        start_timestamp: u64,
-        end_timestamp: u64,
-    ) -> Result<Vec<DetectionSnapshot>> {
-        let all_snapshots = self.read_snapshots_for_path(path)?;
-
-        Ok(all_snapshots
-            .into_iter()
-            .filter(|s| s.timestamp >= start_timestamp && s.timestamp <= end_timestamp)
-            .collect())
-    }
-
     /// Get statistics for a path
     pub fn get_path_statistics(&self, path: &str) -> Result<PathStatistics> {
         let snapshots = self.read_snapshots_for_path(path)?;
