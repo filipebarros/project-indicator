@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::{Local, TimeZone};
 use colored::*;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Format a Unix timestamp to a human-readable string
 pub fn format_timestamp(timestamp: u64) -> String {
@@ -31,12 +31,6 @@ pub fn resolve_path(path: Option<String>) -> Result<PathBuf> {
     };
 
     Ok(target_path.canonicalize().unwrap_or(target_path))
-}
-
-/// Get the canonical path as a string
-pub fn canonical_path_string(path: &Path) -> Result<String> {
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    Ok(canonical.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]

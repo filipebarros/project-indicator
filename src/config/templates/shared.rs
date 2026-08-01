@@ -1,7 +1,7 @@
 use crate::constants::*;
 use crate::types::{
-    CacheConfig, ConfigMeta, DetectionConfig, DetectionType, DisplayConfig, FrameworkDetector,
-    IndicatorContext, ProjectIndicator, RootIndicator,
+    ConfigMeta, DetectionConfig, DetectionType, DisplayConfig, FrameworkDetector, IndicatorContext,
+    ProjectIndicator, RootIndicator,
 };
 
 pub fn root_indicator(pattern: &str, weight: f32, context: IndicatorContext) -> RootIndicator {
@@ -55,20 +55,6 @@ pub fn create_react_framework() -> FrameworkDetector {
     }
 }
 
-pub fn create_react_typescript_framework() -> FrameworkDetector {
-    FrameworkDetector {
-        name: "React".to_string(),
-        detection: DetectionType::NodeEcosystem {
-            dependencies: vec!["react".to_string(), "@types/react".to_string()],
-        },
-        icon: Some(nerd_icon("e7ba")),
-        color: Some("#61dafb".to_string()),
-        priority: 1,
-        files: vec![],
-        root_indicators: vec![],
-    }
-}
-
 pub fn create_angular_framework() -> FrameworkDetector {
     FrameworkDetector {
         name: "Angular".to_string(),
@@ -96,30 +82,23 @@ pub fn create_nextjs_framework() -> FrameworkDetector {
         icon: Some(nerd_icon("e83e")),
         color: Some("#000000".to_string()),
         priority: 3,
-        files: vec!["next.config.js".to_string(), "next.config.mjs".to_string()],
-        root_indicators: vec![RootIndicator {
-            pattern: "next.config.js".to_string(),
-            weight: 0.9,
-            context: IndicatorContext::FrameworkRoot,
-        }],
-    }
-}
-
-pub fn create_nextjs_typescript_framework() -> FrameworkDetector {
-    FrameworkDetector {
-        name: "Next.js".to_string(),
-        detection: DetectionType::NodeEcosystem {
-            dependencies: vec!["next".to_string()],
-        },
-        icon: Some(nerd_icon("e83e")),
-        color: Some("#000000".to_string()),
-        priority: 3,
-        files: vec!["next.config.js".to_string(), "next.config.ts".to_string()],
-        root_indicators: vec![RootIndicator {
-            pattern: "next.config.ts".to_string(),
-            weight: 0.9,
-            context: IndicatorContext::FrameworkRoot,
-        }],
+        files: vec![
+            "next.config.js".to_string(),
+            "next.config.mjs".to_string(),
+            "next.config.ts".to_string(),
+        ],
+        root_indicators: vec![
+            RootIndicator {
+                pattern: "next.config.js".to_string(),
+                weight: 0.9,
+                context: IndicatorContext::FrameworkRoot,
+            },
+            RootIndicator {
+                pattern: "next.config.ts".to_string(),
+                weight: 0.9,
+                context: IndicatorContext::FrameworkRoot,
+            },
+        ],
     }
 }
 
@@ -290,9 +269,6 @@ pub struct ConfigBuilder {
     pub show_frameworks: bool,
     pub max_frameworks: usize,
     pub framework_separator: String,
-    pub cache_enabled: bool,
-    pub ttl_seconds: u64,
-    pub max_entries: usize,
     pub max_upward_traversal: usize,
     pub require_vcs_root: bool,
     pub confidence_threshold: f32,
@@ -304,9 +280,6 @@ impl ConfigBuilder {
             show_frameworks: true,
             max_frameworks: 3,
             framework_separator: " + ".to_string(),
-            cache_enabled: true,
-            ttl_seconds: 300,
-            max_entries: 1000,
             max_upward_traversal: 3,
             require_vcs_root: false,
             confidence_threshold: 0.3,
@@ -325,13 +298,6 @@ impl ConfigBuilder {
         self
     }
 
-    pub fn cache(mut self, enabled: bool, ttl_seconds: u64, max_entries: usize) -> Self {
-        self.cache_enabled = enabled;
-        self.ttl_seconds = ttl_seconds;
-        self.max_entries = max_entries;
-        self
-    }
-
     pub fn detection(
         mut self,
         max_upward_traversal: usize,
@@ -344,7 +310,7 @@ impl ConfigBuilder {
         self
     }
 
-    pub fn build(self) -> (ConfigMeta, DisplayConfig, CacheConfig, DetectionConfig) {
+    pub fn build(self) -> (ConfigMeta, DisplayConfig, DetectionConfig) {
         let meta = ConfigMeta {
             version: "2.0".to_string(),
         };
@@ -353,12 +319,6 @@ impl ConfigBuilder {
             show_frameworks: self.show_frameworks,
             max_frameworks: self.max_frameworks,
             framework_separator: self.framework_separator,
-        };
-
-        let cache = CacheConfig {
-            enabled: self.cache_enabled,
-            ttl_seconds: self.ttl_seconds,
-            max_entries: self.max_entries,
         };
 
         let detection = DetectionConfig {
@@ -373,7 +333,7 @@ impl ConfigBuilder {
             extreme_size_threshold: 500,
         };
 
-        (meta, display, cache, detection)
+        (meta, display, detection)
     }
 }
 

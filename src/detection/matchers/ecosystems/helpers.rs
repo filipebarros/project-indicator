@@ -152,13 +152,6 @@ pub fn check_text_dependencies(content: &str, dep_names: &[String]) -> Vec<Strin
         return found_deps;
     }
 
-    if dep_names.len() == 1 {
-        if has_text_dependency(content, &dep_names[0]) {
-            found_deps.push(dep_names[0].clone());
-        }
-        return found_deps;
-    }
-
     for dep_name in dep_names {
         if has_text_dependency(content, dep_name) {
             found_deps.push(dep_name.to_string());
@@ -169,14 +162,26 @@ pub fn check_text_dependencies(content: &str, dep_names: &[String]) -> Vec<Strin
 }
 
 fn has_text_dependency(content: &str, dep_name: &str) -> bool {
-    if content.contains(&format!("gem '{}'", dep_name))
-        || content.contains(&format!("gem \"{}\"", dep_name))
-    {
-        return true;
-    }
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
 
-    if content.contains(dep_name) {
-        return true;
+        if line.contains(&format!("gem '{}'", dep_name))
+            || line.contains(&format!("gem \"{}\"", dep_name))
+        {
+            return true;
+        }
+
+        // requirements.txt style: name anchored at line start, followed by end
+        // of line, a version specifier, extras, or an environment marker —
+        // avoids matching substrings of other names or mentions in comments
+        if let Some(rest) = line.strip_prefix(dep_name) {
+            if rest.is_empty() || rest.starts_with(|c: char| "=<>!~[; ".contains(c)) {
+                return true;
+            }
+        }
     }
 
     false
@@ -218,8 +223,13 @@ pub fn check_yarn_lock_dependencies(content: &str, dep_names: &[String]) -> Vec<
     }
 
     for dep_name in dep_names {
-        if content.contains(&format!("{}@", dep_name))
-            || content.contains(&format!("\"{}@", dep_name))
+        // Entry keys start at column 0, e.g. `react@^18.2.0:` or `"@babel/core@^7.0.0":`
+        // Anchoring to the line start avoids matching `react@` inside `preact@`
+        let bare = format!("{}@", dep_name);
+        let quoted = format!("\"{}@", dep_name);
+        if content
+            .lines()
+            .any(|line| line.starts_with(&bare) || line.starts_with(&quoted))
         {
             found_deps.push(dep_name.to_string());
         }
@@ -237,8 +247,12 @@ pub fn check_pnpm_lock_dependencies(content: &str, dep_names: &[String]) -> Vec<
     }
 
     for dep_name in dep_names {
-        if content.contains(&format!("{}:", dep_name))
-            || content.contains(&format!("  {}:", dep_name))
+        // YAML keys like `  react:` — anchoring to the (indented) line start
+        // avoids matching `react:` inside `preact:`
+        let key = format!("{}:", dep_name);
+        if content
+            .lines()
+            .any(|line| line.trim_start().starts_with(&key))
         {
             found_deps.push(dep_name.to_string());
         }
@@ -299,7 +313,7 @@ pub fn check_poetry_lock_dependencies(content: &str, dep_names: &[String]) -> Ve
 
     for dep_name in dep_names {
         if content.contains(&format!("name = \"{}\"", dep_name))
-            || content.contains(&format!("name = '{}']", dep_name))
+            || content.contains(&format!("name = '{}'", dep_name))
         {
             found_deps.push(dep_name.to_string());
         }
@@ -561,4 +575,86 @@ where
         }
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_yarn_lock_does_not_match_substring_package() {
+        let content = "preact@^10.0.0:\n  version \"10.19.3\"\n\n\"preact-render-to-string@^6.0.0\":\n  version \"6.3.1\"\n";
+        let deps = vec!["react".to_string()];
+        assert!(check_yarn_lock_dependencies(content, &deps).is_empty());
+    }
+
+    #[test]
+    fn test_yarn_lock_matches_exact_package() {
+        let content = "react@^18.2.0:\n  version \"18.2.0\"\n\n\"@babel/core@^7.0.0\":\n  version \"7.23.0\"\n";
+        let deps = vec!["react".to_string(), "@babel/core".to_string()];
+        let found = check_yarn_lock_dependencies(content, &deps);
+        assert_eq!(found, vec!["react".to_string(), "@babel/core".to_string()]);
+    }
+
+    #[test]
+    fn test_pnpm_lock_does_not_match_substring_package() {
+        let content = "dependencies:\n  preact: 10.19.3\n";
+        let deps = vec!["react".to_string()];
+        assert!(check_pnpm_lock_dependencies(content, &deps).is_empty());
+    }
+
+    #[test]
+    fn test_pnpm_lock_matches_exact_package() {
+        let content = "dependencies:\n  react: 18.2.0\n";
+        let deps = vec!["react".to_string()];
+        let found = check_pnpm_lock_dependencies(content, &deps);
+        assert_eq!(found, vec!["react".to_string()]);
+    }
+
+    #[test]
+    fn test_text_dependency_ignores_comments() {
+        let content = "# django is not actually used here\nflask==3.0.0\n";
+        let deps = vec!["django".to_string()];
+        assert!(check_text_dependencies(content, &deps).is_empty());
+    }
+
+    #[test]
+    fn test_text_dependency_requires_name_boundary() {
+        // `django-extensions` is a different package than `django`
+        let content = "django-extensions==3.2.3\n";
+        let deps = vec!["django".to_string()];
+        assert!(check_text_dependencies(content, &deps).is_empty());
+    }
+
+    #[test]
+    fn test_text_dependency_matches_specifiers() {
+        for line in ["django", "django==4.2", "django>=4", "django[argon2]==4.2"] {
+            let deps = vec!["django".to_string()];
+            assert_eq!(
+                check_text_dependencies(line, &deps),
+                vec!["django".to_string()],
+                "should match line: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_text_dependency_matches_gemfile() {
+        let content = "source 'https://rubygems.org'\ngem 'rails', '~> 7.1'\n";
+        let deps = vec!["rails".to_string()];
+        assert_eq!(
+            check_text_dependencies(content, &deps),
+            vec!["rails".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_poetry_lock_matches_single_quoted_name() {
+        let content = "[[package]]\nname = 'django'\nversion = \"4.2\"\n";
+        let deps = vec!["django".to_string()];
+        assert_eq!(
+            check_poetry_lock_dependencies(content, &deps),
+            vec!["django".to_string()]
+        );
+    }
 }

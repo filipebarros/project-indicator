@@ -38,10 +38,6 @@ pub enum Commands {
         verbose: bool,
     },
     Benchmark,
-    Cache {
-        #[command(subcommand)]
-        action: CacheAction,
-    },
     RootIndicators {
         #[command(subcommand)]
         action: RootIndicatorAction,
@@ -94,12 +90,6 @@ pub enum ConfigAction {
         )]
         path: Option<String>,
     },
-}
-
-#[derive(Subcommand)]
-pub enum CacheAction {
-    Clear,
-    Stats,
 }
 
 #[derive(Subcommand)]
@@ -193,30 +183,6 @@ mod tests {
     fn test_cli_benchmark_subcommand() -> Result<(), Box<dyn std::error::Error>> {
         let cli = Cli::try_parse_from(["project-indicator", "benchmark"])?;
         assert!(matches!(cli.command, Some(Commands::Benchmark)));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_cache_clear() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from(["project-indicator", "cache", "clear"])?;
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Cache {
-                action: CacheAction::Clear
-            })
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_cache_stats() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from(["project-indicator", "cache", "stats"])?;
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Cache {
-                action: CacheAction::Stats
-            })
-        ));
         Ok(())
     }
 

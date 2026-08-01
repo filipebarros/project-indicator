@@ -6,7 +6,6 @@ use crate::types::{
 };
 use crate::Result;
 use anyhow::Context;
-use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -90,10 +89,10 @@ impl FrameworkDetector {
             all_matches.append(&mut dependency_matches);
         }
 
-        // Parallelize file exists checks
+        // Check file-existence frameworks
         if !file_exists_frameworks.is_empty() {
             let file_exists_matches: Vec<FrameworkMatch> = file_exists_frameworks
-                .par_iter()
+                .iter()
                 .filter_map(|framework| {
                     if let DetectionType::FileExists { files } = &framework.detection {
                         if self.check_file_exists(&path_buf, files, file_cache) {
@@ -118,10 +117,10 @@ impl FrameworkDetector {
             all_matches.extend(file_exists_matches);
         }
 
-        // Parallelize config file checks
+        // Check config-file frameworks
         if !config_file_frameworks.is_empty() {
             let config_file_matches: Vec<FrameworkMatch> = config_file_frameworks
-                .par_iter()
+                .iter()
                 .filter_map(|framework| {
                     if let DetectionType::ConfigFile { file, keys } = &framework.detection {
                         if let Ok(Some(confidence)) =
@@ -316,7 +315,7 @@ mod tests {
         ));
 
         let temp_dir = TempDir::new()?;
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let parsed_cache = crate::detection::caches::ParsedFileCache::new();
         let result = detector.detect_frameworks(
             temp_dir.path(),
@@ -343,7 +342,7 @@ mod tests {
         ));
 
         let temp_dir = TempDir::new()?;
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let parsed_cache = crate::detection::caches::ParsedFileCache::new();
         let frameworks =
             detector.detect_frameworks(temp_dir.path(), &language, &file_cache, &parsed_cache)?;
@@ -363,7 +362,7 @@ mod tests {
             ("src/main.js", "console.log('hello');"),
         ])?;
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         assert!(detector.check_file_exists(
             temp_dir.path(),
             &["package.json".to_string()],
@@ -445,7 +444,7 @@ tokio = "1.0"
         )])?;
 
         let keys = vec!["dependencies.serde".to_string()];
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let confidence =
             detector.check_config_file(temp_dir.path(), "Cargo.toml", &keys, &file_cache)?;
         assert!(confidence.is_some());
@@ -464,7 +463,7 @@ tokio = "1.0"
         let temp_dir = TempDir::new()?;
 
         let keys = vec!["any.key".to_string()];
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let confidence =
             detector.check_config_file(temp_dir.path(), "nonexistent.toml", &keys, &file_cache)?;
         assert!(confidence.is_none());
@@ -545,7 +544,7 @@ tokio = "1.0"
         let temp_dir = TempDir::new()?;
         let mut evidence = DetectionEvidence::new();
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let parsed_cache = crate::detection::caches::ParsedFileCache::new();
         let frameworks = detector.detect_frameworks_with_evidence(
             temp_dir.path(),

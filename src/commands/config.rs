@@ -75,8 +75,6 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                         println!("📍 Config file: {}", config_path.display());
                         println!("📊 Languages configured: {}", config.languages.len());
                         println!("🏗️  Total frameworks: {}", config.frameworks().len());
-                        println!("⚡ Cache enabled: {}", config.cache.enabled);
-                        println!("🕐 Cache TTL: {}s", config.cache.ttl_seconds);
                         Ok(())
                     }
                     Err(validation_error) => {
@@ -149,7 +147,6 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                         println!("📦 Active Configuration:");
                         println!("   Languages: {}", config.languages.len());
                         println!("   Total frameworks: {}", config.frameworks().len());
-                        println!("   Cache enabled: {}", config.cache.enabled);
                         println!("   Detection mode: {:?}", config.detection.detection_mode);
                         println!();
                         println!(

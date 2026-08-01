@@ -8,7 +8,6 @@
 
 #[cfg(unix)]
 mod unix_symlink_tests {
-    use project_indicator::detection::caches::FileSystemCacheManager;
     use project_indicator::detection::engine::DetectionEngineBuilder;
     use project_indicator::Config;
     use std::fs;
@@ -44,14 +43,9 @@ edition = "2021"
         symlink(&project_dir, &link_path)?;
 
         // Test detection through symlink
-        // Using builder pattern to inject custom cache with longer TTL
-        // This demonstrates how builder enables controlled testing
         let config = Config::load_default()?;
 
-        let custom_cache = FileSystemCacheManager::with_ttl(600); // 10 minutes
-        let detector = DetectionEngineBuilder::new(config.languages.clone())
-            .with_cache_manager(custom_cache)
-            .build();
+        let detector = DetectionEngineBuilder::new(config.languages.clone()).build();
 
         let result = detector.detect(&link_path)?;
 
@@ -86,13 +80,9 @@ edition = "2021"
         symlink(&link1, &link2)?;
 
         // Detection should not crash with circular symlinks
-        // Using builder pattern with minimal cache (demonstrates testing control)
         let config = Config::load_default()?;
 
-        let minimal_cache = FileSystemCacheManager::with_ttl(1);
-        let detector = DetectionEngineBuilder::new(config.languages.clone())
-            .with_cache_manager(minimal_cache)
-            .build();
+        let detector = DetectionEngineBuilder::new(config.languages.clone()).build();
 
         let result = detector.detect(&project_dir)?;
 

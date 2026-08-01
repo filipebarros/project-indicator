@@ -149,6 +149,10 @@ impl PatternProcessor {
         Arc::clone(&self.unique_patterns)
     }
 
+    pub fn get_exact_patterns(&self) -> &HashSet<String> {
+        &self.exact_patterns
+    }
+
     pub fn get_high_priority_files(&self) -> &HashSet<String> {
         &self.high_priority_files
     }

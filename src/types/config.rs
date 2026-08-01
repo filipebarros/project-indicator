@@ -9,7 +9,6 @@
 //!
 //! - [`DetectionConfig`] - Core detection behavior (depth, confidence, root indicators)
 //! - [`DisplayConfig`] - Output formatting and display preferences
-//! - [`CacheConfig`] - Cache behavior and performance tuning
 //! - [`ConfigMeta`] - Configuration file metadata and versioning
 //! - [`DetectionMode`] - Fast vs Thorough detection strategies
 //!
@@ -23,7 +22,7 @@
 //! # Example
 //!
 //! ```rust
-//! use project_indicator::types::{DetectionConfig, DetectionMode, DisplayConfig, CacheConfig};
+//! use project_indicator::types::{DetectionConfig, DetectionMode, DisplayConfig};
 //!
 //! // Create custom detection configuration
 //! let mut config = DetectionConfig::default();
@@ -36,13 +35,6 @@
 //!     show_frameworks: true,
 //!     max_frameworks: 3,
 //!     framework_separator: " + ".to_string(),
-//! };
-//!
-//! // Configure caching
-//! let cache = CacheConfig {
-//!     enabled: true,
-//!     max_entries: 500,
-//!     ttl_seconds: 600,
 //! };
 //! ```
 //!
@@ -129,12 +121,6 @@ impl Default for DetectionConfig {
     }
 }
 
-impl DetectionConfig {
-    pub fn all_root_indicators(&self) -> Vec<&RootIndicator> {
-        self.root_indicators.iter().collect()
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DisplayConfig {
     pub show_frameworks: bool,
@@ -148,23 +134,6 @@ impl Default for DisplayConfig {
             show_frameworks: true,
             max_frameworks: 2,
             framework_separator: "+".to_string(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CacheConfig {
-    pub enabled: bool,
-    pub max_entries: usize,
-    pub ttl_seconds: u64,
-}
-
-impl Default for CacheConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            max_entries: 1000,
-            ttl_seconds: 300,
         }
     }
 }

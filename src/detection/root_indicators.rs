@@ -663,7 +663,7 @@ edition = "2021"
 "#;
         fs::write(temp_dir.path().join("Cargo.toml"), cargo_content)?;
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
 
         assert!(result.is_some());
@@ -709,7 +709,7 @@ edition = "2021"
 "#;
         fs::write(temp_dir.path().join("package.json"), ts_package_json)?;
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
 
         assert!(result.is_some());
@@ -741,7 +741,7 @@ not-python = true
 "#;
         fs::write(temp_dir.path().join("pyproject.toml"), invalid_content)?;
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
 
         assert!(result.is_none());
@@ -842,7 +842,7 @@ not-python = true
             "[package]\nname = \"test\"",
         )?;
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
 
         // In thorough mode, should return None (no early termination)
@@ -870,7 +870,7 @@ not-python = true
             "[package]\nname = \"test\"",
         )?;
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
 
         // Should return None because confidence is below threshold
@@ -911,7 +911,7 @@ not-python = true
             "[package]\nname = \"test\"",
         )?;
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
 
         // Should find framework indicator
@@ -935,7 +935,7 @@ not-python = true
             "[package]\nname = \"test\"",
         )?;
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.find_project_root(&subdir, &file_cache)?;
 
         assert!(result.is_some());
@@ -958,7 +958,7 @@ not-python = true
         fs::create_dir(&subdir)?;
         // Don't create Cargo.toml
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.find_project_root(&subdir, &file_cache)?;
 
         assert!(result.is_none());
@@ -985,7 +985,7 @@ not-python = true
             "[package]\nname = \"test\"",
         )?;
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.find_project_root(&subdir, &file_cache)?;
 
         // Should not find it due to max traversal limit
@@ -1012,7 +1012,7 @@ not-python = true
         )?;
         // Don't create .git
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.find_project_root(temp_dir.path(), &file_cache)?;
 
         // Should not find it because VCS root is required but not present
@@ -1041,7 +1041,7 @@ not-python = true
         )?;
         fs::create_dir(temp_dir.path().join(".git"))?; // Create VCS root
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.find_project_root(temp_dir.path(), &file_cache)?;
 
         // Should find it because VCS root is present
@@ -1063,7 +1063,7 @@ not-python = true
             "[package]\nname = \"test\"",
         )?;
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.check_language_root_indicators(temp_dir.path(), &file_cache)?;
 
         assert!(result.is_some());
@@ -1103,7 +1103,7 @@ not-python = true
             "[package]\nname = \"test\"",
         )?;
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.check_framework_root_indicators(temp_dir.path(), &file_cache)?;
 
         assert!(result.is_some());
@@ -1127,7 +1127,7 @@ not-python = true
             "[package]\nname = \"test\"",
         )?;
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let mut result = engine
             .check_language_root_indicators(temp_dir.path(), &file_cache)?
             .ok_or("Expected Some but got None")?;
@@ -1224,7 +1224,7 @@ not-python = true
         )?;
         fs::write(temp_dir.path().join("tsconfig.json"), "{}")?;
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.check_language_root_indicators(temp_dir.path(), &file_cache)?;
 
         assert!(result.is_some());
@@ -1258,7 +1258,7 @@ not-python = true
             "[package]\nname = \"test\"",
         )?;
 
-        let file_cache = Arc::new(FileSystemCache::new(300, 1000));
+        let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
 
         // Should not terminate early due to low confidence

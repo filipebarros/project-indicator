@@ -45,7 +45,7 @@ fn filename_strategy() -> impl Strategy<Value = String> {
 #[derive(Debug, Clone)]
 enum CacheOp {
     Get(PathBuf),
-    Store(PathBuf, u64), // path and mock timestamp
+    Store(PathBuf),
     HasChanged(PathBuf),
 }
 
@@ -53,7 +53,7 @@ enum CacheOp {
 fn cache_operation_strategy() -> impl Strategy<Value = CacheOp> {
     prop_oneof![
         path_strategy().prop_map(CacheOp::Get),
-        (path_strategy(), any::<u64>()).prop_map(|(path, ts)| CacheOp::Store(path, ts)),
+        path_strategy().prop_map(CacheOp::Store),
         path_strategy().prop_map(CacheOp::HasChanged),
     ]
 }
@@ -61,35 +61,33 @@ fn cache_operation_strategy() -> impl Strategy<Value = CacheOp> {
 // Property Tests
 
 proptest! {
-    /// Invariant: FileSystemCache never exceeds its configured capacity
+    /// Invariant: FileSystemCache holds at most one entry per distinct path
     #[test]
-    fn test_cache_never_exceeds_capacity(
+    fn test_cache_bounded_by_distinct_paths(
         operations in prop::collection::vec(cache_operation_strategy(), 1..500)
     ) {
-        let max_entries = 50;
-        let cache = FileSystemCache::new(3600, max_entries);
+        let cache = FileSystemCache::new();
+        let mut distinct_paths = std::collections::HashSet::new();
 
         for op in operations {
             match op {
-                CacheOp::Store(path, _timestamp) => {
+                CacheOp::Store(path) | CacheOp::Get(path) => {
                     let _ = cache.get_metadata(&path);
-                },
-                CacheOp::Get(path) => {
-                    let _ = cache.get_metadata(&path);
+                    distinct_paths.insert(path);
                 },
                 CacheOp::HasChanged(path) => {
                     let _ = cache.exists(&path);
+                    distinct_paths.insert(path);
                 },
             }
         }
 
         let stats = cache.stats();
-        let entries = stats.metadata_entries;
         prop_assert!(
-            entries <= max_entries,
-            "Cache size {} exceeds capacity {}",
-            entries,
-            max_entries
+            stats.metadata_entries <= distinct_paths.len(),
+            "Cache size {} exceeds distinct paths touched {}",
+            stats.metadata_entries,
+            distinct_paths.len()
         );
     }
 
@@ -131,10 +129,10 @@ proptest! {
     fn test_cache_stats_consistency(
         operations in prop::collection::vec(cache_operation_strategy(), 1..100)
     ) {
-        let cache = FileSystemCache::new(3600, 100);
+        let cache = FileSystemCache::new();
 
         for op in operations {
-            if let CacheOp::Store(path, _) = op {
+            if let CacheOp::Store(path) = op {
                 let _ = cache.get_metadata(&path);
             }
         }
@@ -155,23 +153,23 @@ proptest! {
             prop_assert_eq!(stats.hit_rate, 0.0, "Hit rate should be 0 with no accesses");
         }
 
-        // Entry count should be non-negative
-        prop_assert!(stats.metadata_entries <= stats.metadata_capacity, "Entry count cannot exceed capacity");
     }
 
-    /// Invariant: Pattern cache memory tracking is consistent
+    /// Invariant: Pattern cache bookkeeping is consistent
     #[test]
-    fn test_pattern_cache_memory_consistency(
+    fn test_pattern_cache_bookkeeping_consistency(
         operations in prop::collection::vec((filename_strategy(), pattern_strategy()), 1..100)
     ) {
         let matcher = PatternMatcher::new();
+        let mut total_lookups = 0usize;
 
         for (filename, pattern) in operations {
-            let (entries_before, _, _) = matcher.cache_stats();
+            let (entries_before, _) = matcher.cache_stats();
 
             matcher.matches_pattern(&filename, &pattern);
+            total_lookups += 1;
 
-            let (entries_after, memory_after, hit_rate) = matcher.cache_stats();
+            let (entries_after, hit_rate) = matcher.cache_stats();
 
             // Entry count should only increase or stay the same (cache hits)
             prop_assert!(
@@ -181,11 +179,6 @@ proptest! {
                 entries_after
             );
 
-            // Memory should be positive if we have entries
-            if entries_after > 0 {
-                prop_assert!(memory_after > 0, "Memory should be tracked when entries exist");
-            }
-
             // Hit rate should be between 0 and 100
             prop_assert!(
                 (0.0..=100.0).contains(&hit_rate),
@@ -194,14 +187,14 @@ proptest! {
             );
         }
 
-        let (final_entries, final_memory, final_hit_rate) = matcher.cache_stats();
+        let (final_entries, final_hit_rate) = matcher.cache_stats();
+        let (hits, misses) = matcher.hit_miss_counts();
 
-        // Sanity checks on final state
-        prop_assert!(final_entries <= 10000, "Entry count {} exceeds max cache size", final_entries);
+        // Every lookup was either a hit or a miss; entries equal misses
+        // because each miss memoizes exactly one new pair
+        prop_assert_eq!(hits + misses, total_lookups);
+        prop_assert_eq!(final_entries, misses);
         prop_assert!((0.0..=100.0).contains(&final_hit_rate));
-        if final_entries > 0 {
-            prop_assert!(final_memory > 0);
-        }
     }
 }
 
@@ -217,7 +210,8 @@ fn test_concurrent_cache_operations_maintain_invariants() {
             2..10
         )
     )| {
-        let cache = Arc::new(FileSystemCache::new(3600, 100));
+        let cache = Arc::new(FileSystemCache::new());
+        let total_ops: usize = operations.iter().map(|thread_ops| thread_ops.len()).sum();
         let mut handles = vec![];
 
         // Spawn thread for each operation set
@@ -226,10 +220,7 @@ fn test_concurrent_cache_operations_maintain_invariants() {
             let handle = thread::spawn(move || {
                 for op in thread_ops {
                     match op {
-                        CacheOp::Store(path, _) => {
-                            let _ = cache_clone.get_metadata(&path);
-                        },
-                        CacheOp::Get(path) => {
+                        CacheOp::Store(path) | CacheOp::Get(path) => {
                             let _ = cache_clone.get_metadata(&path);
                         },
                         CacheOp::HasChanged(path) => {
@@ -252,9 +243,10 @@ fn test_concurrent_cache_operations_maintain_invariants() {
         let stats = cache.stats();
 
         prop_assert!(
-            stats.metadata_entries <= 100,
-            "Cache size {} exceeds capacity 100 after concurrent access",
-            stats.metadata_entries
+            stats.metadata_entries <= total_ops,
+            "Cache size {} exceeds total operations {} after concurrent access",
+            stats.metadata_entries,
+            total_ops
         );
 
         prop_assert!(

@@ -216,11 +216,6 @@ show_frameworks = true
 max_frameworks = 3
 framework_separator = \" | \"
 
-[cache]
-enabled = true
-max_entries = 500
-ttl_seconds = 600
-
 [detection]
 max_upward_traversal = 5
 require_vcs_root = true
@@ -257,8 +252,6 @@ priority = 1
 
     assert_eq!(config.display.max_frameworks, 3);
     assert_eq!(config.display.framework_separator, " | ");
-    assert_eq!(config.cache.max_entries, 500);
-    assert_eq!(config.cache.ttl_seconds, 600);
     assert_eq!(config.languages.len(), 1);
     assert_eq!(config.languages[0].name, "Test Language");
 

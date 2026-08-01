@@ -23,7 +23,7 @@ pub mod shared;
 pub use shared::{generate_root_indicators_simple_max_weight, vcs_root_indicators};
 
 use crate::config::Config;
-use crate::types::{CacheConfig, ConfigMeta, DetectionConfig, DisplayConfig, TrackingConfig};
+use crate::types::{ConfigMeta, DetectionConfig, DisplayConfig, TrackingConfig};
 use anyhow::Result;
 use shared::ConfigBuilder;
 use std::collections::HashMap;
@@ -123,16 +123,14 @@ pub fn create_minimal_template() -> ConfigTemplate {
         create_go_language(),
     ];
 
-    let (meta, display, cache, detection) = ConfigBuilder::new()
+    let (meta, display, detection) = ConfigBuilder::new()
         .display(false, 2, " | ")
-        .cache(false, 300, 500)
         .detection(2, false, 0.7)
         .build();
 
     let config = Config {
         meta,
         display,
-        cache,
         detection,
         tracking: TrackingConfig::default(),
         languages,
@@ -168,16 +166,17 @@ pub fn create_full_template() -> ConfigTemplate {
         create_lua_language(),
     ];
 
-    let (meta, display, cache, detection) = ConfigBuilder::new()
+    // Threshold 0.3: a canonical single-language project (e.g. package.json +
+    // tsconfig.json) scores ~0.36, so 0.4 would skip framework detection for
+    // most real projects
+    let (meta, display, detection) = ConfigBuilder::new()
         .display(true, 5, " • ")
-        .cache(true, 600, 2000)
-        .detection(4, false, 0.4)
+        .detection(4, false, 0.3)
         .build();
 
     let config = Config {
         meta,
         display,
-        cache,
         detection,
         tracking: TrackingConfig::default(),
         languages,
@@ -193,16 +192,14 @@ pub fn create_full_template() -> ConfigTemplate {
 pub fn create_rust_dev_template() -> ConfigTemplate {
     let languages = vec![create_rust_language()];
 
-    let (meta, display, cache, detection) = ConfigBuilder::new()
+    let (meta, display, detection) = ConfigBuilder::new()
         .display(true, 3, " + ")
-        .cache(true, 600, 1000)
         .detection(3, false, 0.6)
         .build();
 
     let config = Config {
         meta,
         display,
-        cache,
         detection,
         tracking: TrackingConfig::default(),
         languages,
@@ -224,11 +221,6 @@ pub fn create_python_dev_template() -> ConfigTemplate {
             show_frameworks: true,
             max_frameworks: 4,
             framework_separator: " | ".to_string(),
-        },
-        cache: CacheConfig {
-            enabled: true,
-            ttl_seconds: 450,
-            max_entries: 800,
         },
         detection: DetectionConfig {
             max_upward_traversal: 3,
@@ -263,11 +255,6 @@ pub fn create_web_dev_template() -> ConfigTemplate {
             max_frameworks: 5,
             framework_separator: ", ".to_string(),
         },
-        cache: CacheConfig {
-            enabled: true,
-            ttl_seconds: 300,
-            max_entries: 2000,
-        },
         detection: DetectionConfig {
             max_upward_traversal: 4,
             require_vcs_root: false,
@@ -299,11 +286,6 @@ pub fn create_mobile_dev_template() -> ConfigTemplate {
             show_frameworks: true,
             max_frameworks: 4,
             framework_separator: " + ".to_string(),
-        },
-        cache: CacheConfig {
-            enabled: true,
-            ttl_seconds: 400,
-            max_entries: 1500,
         },
         detection: DetectionConfig {
             max_upward_traversal: 3,
@@ -344,11 +326,6 @@ pub fn create_data_science_template() -> ConfigTemplate {
             max_frameworks: 8,
             framework_separator: " • ".to_string(),
         },
-        cache: CacheConfig {
-            enabled: true,
-            ttl_seconds: 900,
-            max_entries: 2000,
-        },
         detection: DetectionConfig {
             max_upward_traversal: 3,
             require_vcs_root: false,
@@ -386,11 +363,6 @@ pub fn create_enterprise_template() -> ConfigTemplate {
             show_frameworks: true,
             max_frameworks: 6,
             framework_separator: " | ".to_string(),
-        },
-        cache: CacheConfig {
-            enabled: true,
-            ttl_seconds: 900,
-            max_entries: 3000,
         },
         detection: DetectionConfig {
             max_upward_traversal: 5,

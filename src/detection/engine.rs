@@ -1,5 +1,5 @@
 use crate::constants::*;
-use crate::detection::caches::{DetectionCache, FileSystemCacheManager};
+use crate::detection::caches::FileSystemCacheManager;
 use crate::detection::confidence_scorer::ConfidenceScorer;
 use crate::detection::framework_detector::FrameworkDetector;
 use crate::detection::language_resolver::LanguageResolver;
@@ -9,71 +9,25 @@ use crate::detection::pattern_processor::PatternProcessor;
 use crate::detection::root_indicators::RootIndicatorEngine;
 use crate::detection::scanner::ScanningEngine;
 use crate::tracking::{DetectionMetadata, DetectionSnapshot, ResultTracker};
-use crate::types::{
-    DetectionConfig, DetectionEvidence, DetectionResult, DetectionType, ProjectIndicator,
-};
+use crate::types::{DetectionConfig, DetectionEvidence, DetectionResult, ProjectIndicator};
 use crate::Result;
 use anyhow::Context;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Estimated duration in microseconds for cached detection results.
-/// Cached results are typically very fast (< 100 microseconds).
-const CACHED_DETECTION_DURATION_MICROS: u64 = 100;
-
-/// Builder for creating `DetectionEngine` instances with optional component injection.
-///
-/// The builder pattern enables:
-/// - **Flexible construction**: Inject custom components for testing or customization
-/// - **Backward compatibility**: Existing code continues to work via `DetectionEngine::new()`
-/// - **Future extensibility**: Easy to add new optional components (e.g., metrics)
+/// Builder for creating `DetectionEngine` instances.
 ///
 /// ## Usage
 ///
-/// ### Default construction (simple)
 /// ```rust
 /// # use project_indicator::detection::engine::DetectionEngineBuilder;
 /// # use project_indicator::types::ProjectIndicator;
 /// let languages = vec![/* ... */];
 /// let engine = DetectionEngineBuilder::new(languages).build();
 /// ```
-///
-/// ### Custom cache configuration
-/// ```rust
-/// # use project_indicator::detection::engine::DetectionEngineBuilder;
-/// # use project_indicator::detection::caches::FileSystemCacheManager;
-/// # use project_indicator::types::ProjectIndicator;
-/// let languages = vec![/* ... */];
-/// let custom_cache = FileSystemCacheManager::with_ttl(60); // 1 minute TTL
-///
-/// let engine = DetectionEngineBuilder::new(languages)
-///     .with_cache_manager(custom_cache)
-///     .build();
-/// ```
-///
-/// ### Testing with custom components
-/// ```rust
-/// # use project_indicator::detection::engine::DetectionEngineBuilder;
-/// # use project_indicator::detection::pattern_matching::PatternMatcher;
-/// # use project_indicator::types::ProjectIndicator;
-/// # use std::sync::Arc;
-/// let languages = vec![/* ... */];
-/// let test_matcher = Arc::new(PatternMatcher::new());
-///
-/// let engine = DetectionEngineBuilder::new(languages)
-///     .with_pattern_matcher(test_matcher)
-///     .build();
-/// ```
 pub struct DetectionEngineBuilder {
     languages: Vec<ProjectIndicator>,
     config: DetectionConfig,
-
-    // Optional injected components
-    pattern_matcher: Option<Arc<PatternMatcher>>,
-    cache_manager: Option<FileSystemCacheManager>,
-    confidence_scorer: Option<ConfidenceScorer>,
-    language_resolver: Option<LanguageResolver>,
-    framework_detector: Option<FrameworkDetector>,
     result_tracker: Option<Arc<ResultTracker>>,
 }
 
@@ -86,11 +40,6 @@ impl DetectionEngineBuilder {
         Self {
             languages,
             config: DetectionConfig::default(),
-            pattern_matcher: None,
-            cache_manager: None,
-            confidence_scorer: None,
-            language_resolver: None,
-            framework_detector: None,
             result_tracker: None,
         }
     }
@@ -98,58 +47,6 @@ impl DetectionEngineBuilder {
     /// Sets a custom detection configuration.
     pub fn with_config(mut self, config: DetectionConfig) -> Self {
         self.config = config;
-        self
-    }
-
-    /// Injects a custom pattern matcher.
-    ///
-    /// Useful for:
-    /// - Testing with pre-populated caches
-    /// - Sharing a matcher across multiple engines
-    /// - Custom pattern matching behavior
-    pub fn with_pattern_matcher(mut self, matcher: Arc<PatternMatcher>) -> Self {
-        self.pattern_matcher = Some(matcher);
-        self
-    }
-
-    /// Injects a custom cache manager.
-    ///
-    /// Useful for:
-    /// - Custom TTL configurations
-    /// - Testing with controlled cache behavior
-    /// - Sharing cache across multiple engines
-    pub fn with_cache_manager(mut self, cache: FileSystemCacheManager) -> Self {
-        self.cache_manager = Some(cache);
-        self
-    }
-
-    /// Injects a custom confidence scorer.
-    ///
-    /// Useful for:
-    /// - Testing with custom scoring algorithms
-    /// - Custom confidence thresholds
-    pub fn with_confidence_scorer(mut self, scorer: ConfidenceScorer) -> Self {
-        self.confidence_scorer = Some(scorer);
-        self
-    }
-
-    /// Injects a custom language resolver.
-    ///
-    /// Useful for:
-    /// - Testing language conflict resolution
-    /// - Custom resolution strategies
-    pub fn with_language_resolver(mut self, resolver: LanguageResolver) -> Self {
-        self.language_resolver = Some(resolver);
-        self
-    }
-
-    /// Injects a custom framework detector.
-    ///
-    /// Useful for:
-    /// - Testing framework detection
-    /// - Custom framework detection logic
-    pub fn with_framework_detector(mut self, detector: FrameworkDetector) -> Self {
-        self.framework_detector = Some(detector);
         self
     }
 
@@ -161,35 +58,19 @@ impl DetectionEngineBuilder {
         self
     }
 
-    /// Builds the `DetectionEngine` with configured or default components.
+    /// Builds the `DetectionEngine`.
     ///
-    /// ## Component Dependencies
-    ///
-    /// Components have dependencies on each other:
-    /// - `ConfidenceScorer` needs `PatternMatcher`
-    /// - `ScanningEngine` needs `PatternMatcher` and `FileSystemCache`
-    ///
-    /// The builder handles these dependencies automatically:
-    /// - If you provide a custom `PatternMatcher`, it's shared with all components
-    /// - If you don't provide one, a default is created and shared
+    /// A single `PatternMatcher` is created and shared across the scorer and
+    /// scanner so pattern-match memoization works across the whole pipeline.
     pub fn build(self) -> DetectionEngine {
         let languages: Vec<Arc<ProjectIndicator>> =
             self.languages.into_iter().map(Arc::new).collect();
 
-        // Use provided components or create defaults
-        let pattern_matcher = self
-            .pattern_matcher
-            .unwrap_or_else(|| Arc::new(PatternMatcher::new()));
-
-        let cache_manager = self.cache_manager.unwrap_or_default();
-
-        let confidence_scorer = self
-            .confidence_scorer
-            .unwrap_or_else(|| ConfidenceScorer::with_pattern_matcher(pattern_matcher.clone()));
-
-        let language_resolver = self.language_resolver.unwrap_or_default();
-
-        let framework_detector = self.framework_detector.unwrap_or_default();
+        let pattern_matcher = Arc::new(PatternMatcher::new());
+        let cache_manager = FileSystemCacheManager::new();
+        let confidence_scorer = ConfidenceScorer::with_pattern_matcher(pattern_matcher.clone());
+        let language_resolver = LanguageResolver::default();
+        let framework_detector = FrameworkDetector::new();
 
         // Create pattern compiler and scanning engine
         let pattern_compiler = PatternCompiler::new(&languages);
@@ -216,6 +97,7 @@ impl DetectionEngineBuilder {
         DetectionEngine {
             languages, // Use the converted Arc<ProjectIndicator> version
             config: self.config,
+            pattern_matcher,
             cache_manager,
             confidence_scorer,
             language_resolver,
@@ -276,6 +158,10 @@ impl DetectionEngineBuilder {
 pub struct DetectionEngine {
     languages: Vec<Arc<ProjectIndicator>>,
     config: DetectionConfig,
+
+    // Shared pattern matcher (also held by scorer and scanner); kept here so
+    // cache hit/miss deltas can be recorded in detection metadata
+    pattern_matcher: Arc<PatternMatcher>,
 
     // Specialized components
     cache_manager: FileSystemCacheManager,
@@ -371,6 +257,7 @@ impl DetectionEngine {
 
         // Capture cache state BEFORE detection (for tracking)
         let fs_stats_before = self.cache_manager.stats();
+        let (pm_hits_before, pm_misses_before) = self.pattern_matcher.hit_miss_counts();
 
         // Safety check: Don't scan from boundary directories (home, system dirs)
         // These are too large and not meaningful to scan
@@ -464,12 +351,13 @@ impl DetectionEngine {
 
             // Record detection snapshot if tracking is enabled
             let (fs_hits, fs_misses) = self.calculate_cache_delta(&fs_stats_before);
+            let (pm_hits, pm_misses) = self.pattern_matcher.hit_miss_counts();
             let metadata = DetectionMetadata {
                 duration_micros: detection_start.elapsed().as_micros() as u64,
                 from_cache: false,
                 cached_at: None,
-                pattern_cache_hits: 0, // Pattern matcher cache not directly accessible
-                pattern_cache_misses: 0,
+                pattern_cache_hits: pm_hits.saturating_sub(pm_hits_before),
+                pattern_cache_misses: pm_misses.saturating_sub(pm_misses_before),
                 fs_cache_hits: fs_hits as usize,
                 fs_cache_misses: fs_misses as usize,
             };
@@ -483,7 +371,7 @@ impl DetectionEngine {
 
         let detailed_files = self
             .scanning_engine
-            .scan_matching_files(&scan_path)
+            .scan(&scan_path)
             .with_context(|| format!("Failed to scan files in path: {}", scan_path.display()))?;
 
         evidence.set_scan_metrics(
@@ -554,88 +442,17 @@ impl DetectionEngine {
 
         // Record detection snapshot if tracking is enabled
         let (fs_hits, fs_misses) = self.calculate_cache_delta(&fs_stats_before);
+        let (pm_hits, pm_misses) = self.pattern_matcher.hit_miss_counts();
         let metadata = DetectionMetadata {
             duration_micros: detection_start.elapsed().as_micros() as u64,
             from_cache: false,
             cached_at: None,
-            pattern_cache_hits: 0,
-            pattern_cache_misses: 0,
+            pattern_cache_hits: pm_hits.saturating_sub(pm_hits_before),
+            pattern_cache_misses: pm_misses.saturating_sub(pm_misses_before),
             fs_cache_hits: fs_hits as usize,
             fs_cache_misses: fs_misses as usize,
         };
         self.record_detection(&result, path, metadata)?;
-
-        Ok(result)
-    }
-
-    /// Detect project with persistent caching support.
-    ///
-    /// This method populates the cache with relevant files before detection,
-    /// enabling faster subsequent detections for the same project structure.
-    pub fn detect_cached(
-        &mut self,
-        path: &Path,
-        cache: &DetectionCache,
-    ) -> Result<DetectionResult> {
-        // PERFORMANCE OPTIMIZATION: Check cache FIRST before doing expensive dynamic_relevant work
-        // This avoids iterating through all languages/frameworks on cache hits
-        let cached_result = cache.get_with_metadata(path)?;
-
-        if let Some((cached, created_at)) = cached_result {
-            // Result is from cache - record snapshot if tracking is enabled
-            // Convert SystemTime to Unix timestamp
-            let cached_at_timestamp = created_at
-                .duration_since(std::time::UNIX_EPOCH)
-                .ok()
-                .map(|d| d.as_secs());
-
-            let metadata = DetectionMetadata {
-                duration_micros: CACHED_DETECTION_DURATION_MICROS,
-                from_cache: true,
-                cached_at: cached_at_timestamp,
-                pattern_cache_hits: 0,
-                pattern_cache_misses: 0,
-                fs_cache_hits: 0,
-                fs_cache_misses: 0,
-            };
-            self.record_detection(&cached, path, metadata)?;
-
-            return Ok(cached);
-        }
-
-        // Cache miss - prepare dynamic relevant files before fresh detection
-        cache.clear_dynamic_relevant();
-
-        for lang in &self.languages {
-            for pat in &lang.files {
-                if !pat.contains('*') {
-                    cache.add_dynamic_relevant(pat.clone());
-                }
-            }
-            for fw in &lang.frameworks {
-                match &fw.detection {
-                    DetectionType::NodeEcosystem { .. } => cache.add_dynamic_relevant(PACKAGE_JSON),
-                    DetectionType::RustEcosystem { .. } => cache.add_dynamic_relevant(CARGO_TOML),
-                    DetectionType::GoEcosystem { .. } => cache.add_dynamic_relevant(GO_MOD),
-                    DetectionType::PythonEcosystem { .. } => {
-                        cache.add_dynamic_relevant(PYPROJECT_TOML)
-                    }
-                    DetectionType::PHPEcosystem { .. } => cache.add_dynamic_relevant(COMPOSER_JSON),
-                    DetectionType::RubyEcosystem { .. } => cache.add_dynamic_relevant(GEMFILE),
-                    DetectionType::JavaEcosystem { .. } => {}
-                    DetectionType::DotNetEcosystem { .. } => {}
-                    DetectionType::ScalaEcosystem { .. } => cache.add_dynamic_relevant(BUILD_SBT),
-                    DetectionType::DartEcosystem { .. } => cache.add_dynamic_relevant(PUBSPEC_YAML),
-                    _ => {}
-                }
-            }
-        }
-
-        // Not cached, do fresh detection
-        let result = self.detect(path)?;
-
-        // Store result in cache for future lookups
-        cache.put(path, result.clone())?;
 
         Ok(result)
     }

@@ -12,20 +12,17 @@ Project Indicator is a high-performance replacement for shell-based project dete
 - ✨ **Rich Output Format**: Detailed table format for comprehensive project information
 - 📊 **Result Tracking**: Track detection history, compare snapshots, and analyze project evolution over time
 - 🔒 **Enhanced Security**: EDITOR validation to prevent shell injection attacks
-- 📈 **Lock Contention Metrics**: Monitor cache performance with detailed lock contention tracking
 - ⚙️ **Configurable Thresholds**: Fine-tune detection with configurable performance thresholds
-- 🧪 **Property-Based Testing**: 368 total tests including rigorous property-based testing with proptest
+- 🧪 **Property-Based Testing**: Extensive test suite including rigorous property-based testing with proptest
 - 🔗 **Symlink Handling**: Comprehensive edge case handling for Unix symlinks
-- ⚡ **Performance**: Optimized cache eviction algorithm (O(n log k) complexity)
 
 ## Features
 
 - 🔍 **Multi-language Detection**: Supports 19 programming languages (Rust, JavaScript/TypeScript, Python, Go, Java, PHP, Ruby, and more)
 - 🏗️ **Framework Recognition**: Detects 51+ popular frameworks like React, Next.js, Django, Flask, Gin, Spring Boot, Laravel, Rails
-- ⚡ **Blazing Performance**: 3-5ms typical detection, ~3µs shell prompt scenario
+- ⚡ **Blazing Performance**: 3-5ms typical detection
 - 🎨 **Multiple Output Formats**: Simple, Full, JSON, Compact, Debug, and Rich formats
-- 📁 **Unified Cache Architecture**: Single DashMap with progressive enhancement (raw → parsed), lock-free concurrency, and smart upgrades
-- 🔧 **Comprehensive CLI**: Configuration management, cache control, debugging tools, and root indicator analysis
+- 🔧 **Comprehensive CLI**: Configuration management, debugging tools, and root indicator analysis
 - 🧠 **Advanced Detection**: Confidence-based scoring with weighted root indicators and early termination
 - 🔧 **Configuration Templates**: Pre-built templates for different development environments
 - 🐚 **Shell Integration**: Ready-to-use integration scripts for Bash, Zsh, and Fish
@@ -120,12 +117,6 @@ project-indicator debug [--verbose]
 project-indicator benchmark
 ```
 
-**Cache Management:**
-```bash
-project-indicator cache clear
-project-indicator cache stats  # Shows cache performance metrics including lock contention
-```
-
 **Root Indicator Analysis:**
 ```bash
 project-indicator root-indicators conflicts [--detailed] [--compare-legacy] [--show-strategies]
@@ -187,33 +178,15 @@ $ project-indicator --format rich
 
 ## Performance
 
-Project Indicator v0.4.0 achieves exceptional performance through comprehensive optimization:
+Detection is fast enough for real-time shell prompt integration:
 
-```bash
-$ project-indicator benchmark
-Performance Metrics (v0.4.0)
-============================
-Shell Prompt Scenario: ~3µs (20x improvement)
-Typical Detection: 3-5ms (warm cache)
-Best Case: ~1ms (strong root indicators)
-Worst Case: ~20-30ms (deep nesting, cold cache)
+- Typical detection: 3-5ms
+- Best case (strong root indicators): ~1ms
+- Worst case (deep nesting): ~20-30ms
 
-Cache Performance:
-- Pattern cache (warm): 283ns (67x faster)
-- JSON parsing (cached): 719ns (23x faster)
-- TOML parsing (cached): 1.4µs (16x faster)
-- FileSystemCache hit: 114ns
-- Result tracking overhead: ~1.25µs (when enabled)
-```
-
-**Cache Architecture:**
-- **Unified Cache**: Single DashMap for all entry types with progressive enhancement (None → RawContent → ParsedJson/ParsedToml)
-- **Lock-Free Concurrency**: DashMap provides fine-grained locking, multiple threads access different shards simultaneously
-- **Generic Parser Trait**: Extensible design supporting new formats with ~25 lines vs ~127 lines
-- **Smart Upgrades**: Files automatically upgrade from raw content to parsed values on demand
-- **O(1) Statistics**: Atomic type counters eliminate cache iteration
-- **Early Termination**: Root indicators enable fast detection without full scans
-- **Batch Eviction**: LRU evicts 75% of entries when threshold reached vs single-entry eviction
+Every invocation performs a fresh detection; within a run, file metadata,
+parsed manifests, and pattern-match results are memoized to avoid repeated
+work. Run `project-indicator benchmark` to measure on your machine.
 
 ## Configuration
 
@@ -243,12 +216,6 @@ Create `~/.config/project-indicator/config.toml`:
 # Metadata
 [meta]
 version = "2.0"
-
-# Cache settings
-[cache]
-enabled = true
-max_entries = 1000
-ttl_seconds = 300
 
 # Display settings
 [display]

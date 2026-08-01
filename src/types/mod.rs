@@ -10,9 +10,7 @@ mod indicators;
 mod matched_file;
 
 // Re-export all public types
-pub use config::{
-    CacheConfig, ConfigMeta, DetectionConfig, DetectionMode, DisplayConfig, TrackingConfig,
-};
+pub use config::{ConfigMeta, DetectionConfig, DetectionMode, DisplayConfig, TrackingConfig};
 pub use detection::{
     ConfidenceFactor, DetectionEvidence, DetectionResult, EvidenceItem, EvidenceType,
 };
@@ -174,15 +172,6 @@ mod tests {
         assert!(config.show_frameworks);
         assert_eq!(config.max_frameworks, 2);
         assert_eq!(config.framework_separator, "+");
-        Ok(())
-    }
-
-    #[test]
-    fn test_cache_config_defaults() -> Result<(), Box<dyn std::error::Error>> {
-        let config = CacheConfig::default();
-        assert!(config.enabled);
-        assert_eq!(config.max_entries, 1000);
-        assert_eq!(config.ttl_seconds, 300);
         Ok(())
     }
 
