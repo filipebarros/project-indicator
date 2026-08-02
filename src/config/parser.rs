@@ -11,6 +11,10 @@ pub enum ConfigError {
     #[error("Unsupported configuration version: {version}")]
     UnsupportedVersion { version: String },
 }
+fn first_existing(paths: Vec<PathBuf>) -> Option<PathBuf> {
+    paths.into_iter().find(|p| p.exists())
+}
+
 pub struct ConfigParser;
 
 impl ConfigParser {
@@ -38,6 +42,11 @@ impl ConfigParser {
             .ok()
             .map(PathBuf::from)
             .or_else(|| dirs::home_dir().map(|home| home.join(".config")))
+    }
+    /// The config file `load_default` would read, without parsing it.
+    /// `None` means detection runs on the built-in fallback config.
+    pub fn active_config_path() -> Option<PathBuf> {
+        first_existing(Self::default_config_paths())
     }
     pub fn load_default() -> Result<Config> {
         let paths = Self::default_config_paths();
@@ -165,6 +174,23 @@ priority = 1
         let invalid_toml = "this is not valid toml [[[";
         let result = ConfigParser::parse_toml_content(invalid_toml);
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_first_existing_picks_earliest_present_path() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::TempDir::new()?;
+        let missing = dir.path().join("missing.toml");
+        let present_a = dir.path().join("a.toml");
+        let present_b = dir.path().join("b.toml");
+        fs::write(&present_a, "x")?;
+        fs::write(&present_b, "x")?;
+
+        assert_eq!(
+            first_existing(vec![missing.clone(), present_a.clone(), present_b.clone()]),
+            Some(present_a)
+        );
+        assert_eq!(first_existing(vec![missing]), None);
         Ok(())
     }
 

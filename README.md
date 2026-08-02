@@ -178,15 +178,28 @@ $ project-indicator --format rich
 
 ## Performance
 
-Detection is fast enough for real-time shell prompt integration:
+Detection results are cached persistently across invocations, so shell
+prompt redraws cost almost nothing:
 
-- Typical detection: 3-5ms
-- Best case (strong root indicators): ~1ms
-- Worst case (deep nesting): ~20-30ms
+- Warm (cached) invocation: ~0.2ms of work — total wall time is dominated
+  by OS process spawn
+- Fresh detection (first visit or after a change): typically 3-5ms
+- Worst case (deep nesting, cold): ~20-30ms
 
-Every invocation performs a fresh detection; within a run, file metadata,
-parsed manifests, and pattern-match results are memoized to avoid repeated
-work. Run `project-indicator benchmark` to measure on your machine.
+The cache lives under `$XDG_CACHE_HOME/project-indicator/` (default
+`~/.cache`) and invalidates automatically when the project root, the
+manifests that produced the result, your config file, or the binary version
+change. Changes deep in subdirectories are only picked up when something at
+the project root changes — use `--no-cache` or `cache clear` if you hit
+that edge.
+
+```bash
+project-indicator cache stats   # entry count and disk usage
+project-indicator cache clear   # start fresh
+project-indicator --no-cache .  # bypass for one invocation
+```
+
+Run `project-indicator benchmark` to measure on your machine.
 
 ## Configuration
 

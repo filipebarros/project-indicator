@@ -319,7 +319,7 @@ impl Default for DetectionEvidence {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DetectionResult {
     pub language: Option<Arc<ProjectIndicator>>,
     pub frameworks: Vec<FrameworkMatch>,
@@ -384,5 +384,27 @@ impl DetectionResult {
         self.best_framework()
             .and_then(|f| f.framework.color.as_deref())
             .or_else(|| self.language.as_ref().map(|l| l.color.as_str()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detection_result_serde_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+        let lang = crate::types::ProjectIndicator::new(
+            "Rust".to_string(),
+            vec!["Cargo.toml".to_string()],
+            "#dea584".to_string(),
+            "R".to_string(),
+            1,
+            vec![],
+        );
+        let result = DetectionResult::new(Some(std::sync::Arc::new(lang)), vec![], 0.9);
+        let json = serde_json::to_string(&result)?;
+        let back: DetectionResult = serde_json::from_str(&json)?;
+        assert_eq!(result, back);
+        Ok(())
     }
 }

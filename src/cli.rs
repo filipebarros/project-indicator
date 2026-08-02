@@ -17,6 +17,9 @@ pub struct Cli {
     #[arg(short, long, help = "Enable verbose logging output")]
     pub verbose: bool,
 
+    #[arg(long, help = "Skip the persistent result cache for this invocation")]
+    pub no_cache: bool,
+
     #[arg(
         long,
         help = "Detection mode: 'thorough' (default, full analysis) or 'fast' (early termination with secondary check)"
@@ -38,6 +41,11 @@ pub enum Commands {
         verbose: bool,
     },
     Benchmark,
+    /// Manage the persistent detection result cache
+    Cache {
+        #[command(subcommand)]
+        action: CacheAction,
+    },
     RootIndicators {
         #[command(subcommand)]
         action: RootIndicatorAction,
@@ -90,6 +98,14 @@ pub enum ConfigAction {
         )]
         path: Option<String>,
     },
+}
+
+#[derive(Subcommand)]
+pub enum CacheAction {
+    /// Delete all cached detection results
+    Clear,
+    /// Show cache entry count and disk usage
+    Stats,
 }
 
 #[derive(Subcommand)]
@@ -183,6 +199,39 @@ mod tests {
     fn test_cli_benchmark_subcommand() -> Result<(), Box<dyn std::error::Error>> {
         let cli = Cli::try_parse_from(["project-indicator", "benchmark"])?;
         assert!(matches!(cli.command, Some(Commands::Benchmark)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_cache_clear() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["project-indicator", "cache", "clear"])?;
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Cache {
+                action: CacheAction::Clear
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_cache_stats() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["project-indicator", "cache", "stats"])?;
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Cache {
+                action: CacheAction::Stats
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_no_cache_flag() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["project-indicator", "--no-cache"])?;
+        assert!(cli.no_cache);
+        let cli = Cli::try_parse_from(["project-indicator"])?;
+        assert!(!cli.no_cache);
         Ok(())
     }
 
