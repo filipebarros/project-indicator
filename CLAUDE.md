@@ -86,6 +86,10 @@ cargo run -- --mode thorough # Full scan (default)
 cargo run -- debug --verbose
 cargo run -- benchmark
 
+# Persistent cache management
+cargo run -- cache stats
+cargo run -- cache clear
+
 # Configuration
 cargo run -- config validate
 cargo run -- config show
@@ -136,8 +140,21 @@ The detection flow follows this path:
 
 ### Caching Architecture
 
-All caches live and die within a single detection run (one CLI invocation);
-there is no cross-invocation persistence.
+#### 0. PersistentCache (Cross-invocation)
+
+- **Location**: `src/cache.rs`
+- **Purpose**: One JSON entry per project directory under
+  `$XDG_CACHE_HOME/project-indicator/results/`; a warm prompt hit skips
+  config parsing and engine construction entirely
+- **Invalidation**: evidence-keyed mtimes — the entry stores mtimes of the
+  directory, active config file, and every file that influenced the result,
+  plus the binary version; any mismatch is a miss
+- **Failure policy**: every error degrades silently to a fresh detection
+  (`log::debug` only) — the cache must never break a prompt
+- **Bypass**: `--no-cache`, or automatically when `--max-depth`/`--mode`
+  overrides are passed
+
+The remaining caches live and die within a single detection run:
 
 #### 1. FileSystemCacheManager (Per-detection run)
 
