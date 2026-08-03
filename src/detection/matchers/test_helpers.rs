@@ -1,6 +1,6 @@
 #[cfg(test)]
 pub mod helpers {
-    use crate::types::{DetectionType, FrameworkDetector};
+    use crate::types::{DetectionType, Framework};
     use std::fs;
     use tempfile::TempDir;
 
@@ -14,13 +14,10 @@ pub mod helpers {
         Ok(temp_dir)
     }
 
-    fn create_framework_detector(
-        name: &str,
-        detection: DetectionType,
-        priority: u8,
-    ) -> FrameworkDetector {
-        FrameworkDetector {
+    fn create_framework_detector(name: &str, detection: DetectionType, priority: u8) -> Framework {
+        Framework {
             name: name.to_string(),
+            ecosystems: vec![],
             detection,
             icon: None,
             color: None,
@@ -30,8 +27,8 @@ pub mod helpers {
         }
     }
 
-    pub fn create_test_language(name: &str, patterns: Vec<&str>) -> crate::types::ProjectIndicator {
-        crate::types::ProjectIndicator::new(
+    pub fn create_test_indicator(name: &str, patterns: Vec<&str>) -> crate::types::Indicator {
+        crate::types::Indicator::new(
             name.to_string(),
             patterns.iter().map(|s| s.to_string()).collect(),
             "#FF0000".to_string(),
@@ -41,12 +38,12 @@ pub mod helpers {
         )
     }
 
-    pub fn create_test_language_with_priority(
+    pub fn create_test_indicator_with_priority(
         name: &str,
         patterns: Vec<&str>,
         priority: u8,
-    ) -> crate::types::ProjectIndicator {
-        crate::types::ProjectIndicator::new(
+    ) -> crate::types::Indicator {
+        crate::types::Indicator::new(
             name.to_string(),
             patterns.iter().map(|s| s.to_string()).collect(),
             "#FF0000".to_string(),
@@ -60,7 +57,7 @@ pub mod helpers {
         crate::types::MatchedFile::new(filename.to_string(), path.to_string())
     }
 
-    pub fn create_test_framework_generic(name: &str, priority: u8) -> FrameworkDetector {
+    pub fn create_test_framework_generic(name: &str, priority: u8) -> Framework {
         create_framework_detector(
             name,
             DetectionType::FileExists {
@@ -70,13 +67,13 @@ pub mod helpers {
         )
     }
 
-    pub fn create_test_language_with_indicators(
+    pub fn create_test_indicator_with_indicators(
         name: &str,
         indicators: Vec<(&str, f32)>,
-    ) -> crate::types::ProjectIndicator {
+    ) -> crate::types::Indicator {
         use crate::types::IndicatorContext;
 
-        crate::types::ProjectIndicator::with_root_indicators(
+        crate::types::Indicator::with_root_indicators(
             name.to_string(),
             vec![],
             "#000000".to_string(),

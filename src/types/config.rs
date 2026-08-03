@@ -138,17 +138,6 @@ impl Default for DisplayConfig {
     }
 }
 
-/// Configuration for result tracking and monitoring
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct TrackingConfig {
-    /// Enable tracking of detection results
-    #[serde(default)]
-    pub enabled: bool,
-    /// Custom storage path (defaults to platform cache directory if not specified)
-    #[serde(default)]
-    pub storage_path: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ConfigMeta {
     pub version: String,
@@ -157,7 +146,7 @@ pub struct ConfigMeta {
 impl Default for ConfigMeta {
     fn default() -> Self {
         Self {
-            version: "2.0".to_string(),
+            version: "3.0".to_string(),
         }
     }
 }

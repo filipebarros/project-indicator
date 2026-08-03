@@ -1,7 +1,7 @@
 use crate::constants::*;
 use crate::types::{
-    ConfigMeta, DetectionConfig, DetectionType, DisplayConfig, FrameworkDetector, IndicatorContext,
-    ProjectIndicator, RootIndicator,
+    ConfigMeta, DetectionConfig, DetectionType, DisplayConfig, Ecosystem, Framework, Indicator,
+    IndicatorContext, RootIndicator,
 };
 
 pub fn root_indicator(pattern: &str, weight: f32, context: IndicatorContext) -> RootIndicator {
@@ -14,14 +14,16 @@ pub fn root_indicator(pattern: &str, weight: f32, context: IndicatorContext) -> 
 
 pub fn framework(
     name: &str,
+    ecosystems: Vec<Ecosystem>,
     detection: DetectionType,
     icon: Option<String>,
     color: Option<&str>,
     priority: u8,
     root_indicators: Vec<RootIndicator>,
-) -> FrameworkDetector {
-    FrameworkDetector {
+) -> Framework {
+    Framework {
         name: name.to_string(),
+        ecosystems,
         detection,
         icon,
         color: color.map(String::from),
@@ -33,18 +35,20 @@ pub fn framework(
 
 pub fn simple_framework(
     name: &str,
+    ecosystems: Vec<Ecosystem>,
     detection: DetectionType,
     icon: Option<String>,
     color: Option<&str>,
     priority: u8,
-) -> FrameworkDetector {
-    framework(name, detection, icon, color, priority, vec![])
+) -> Framework {
+    framework(name, ecosystems, detection, icon, color, priority, vec![])
 }
 
-pub fn create_react_framework() -> FrameworkDetector {
-    FrameworkDetector {
+pub fn create_react_framework() -> Framework {
+    Framework {
         name: "React".to_string(),
-        detection: DetectionType::NodeEcosystem {
+        ecosystems: vec![Ecosystem::Npm],
+        detection: DetectionType::Dependencies {
             dependencies: vec!["react".to_string()],
         },
         icon: Some(nerd_icon("e7ba")),
@@ -55,10 +59,11 @@ pub fn create_react_framework() -> FrameworkDetector {
     }
 }
 
-pub fn create_angular_framework() -> FrameworkDetector {
-    FrameworkDetector {
+pub fn create_angular_framework() -> Framework {
+    Framework {
         name: "Angular".to_string(),
-        detection: DetectionType::NodeEcosystem {
+        ecosystems: vec![Ecosystem::Npm],
+        detection: DetectionType::Dependencies {
             dependencies: vec!["@angular/core".to_string()],
         },
         icon: Some(nerd_icon("e753")),
@@ -73,10 +78,11 @@ pub fn create_angular_framework() -> FrameworkDetector {
     }
 }
 
-pub fn create_nextjs_framework() -> FrameworkDetector {
-    FrameworkDetector {
+pub fn create_nextjs_framework() -> Framework {
+    Framework {
         name: "Next.js".to_string(),
-        detection: DetectionType::NodeEcosystem {
+        ecosystems: vec![Ecosystem::Npm],
+        detection: DetectionType::Dependencies {
             dependencies: vec!["next".to_string()],
         },
         icon: Some(nerd_icon("e83e")),
@@ -102,10 +108,11 @@ pub fn create_nextjs_framework() -> FrameworkDetector {
     }
 }
 
-pub fn create_vue_framework() -> FrameworkDetector {
-    FrameworkDetector {
+pub fn create_vue_framework() -> Framework {
+    Framework {
         name: "Vue".to_string(),
-        detection: DetectionType::NodeEcosystem {
+        ecosystems: vec![Ecosystem::Npm],
+        detection: DetectionType::Dependencies {
             dependencies: vec!["vue".to_string()],
         },
         icon: Some(nerd_icon("e8dc")),
@@ -116,10 +123,11 @@ pub fn create_vue_framework() -> FrameworkDetector {
     }
 }
 
-pub fn create_nestjs_framework() -> FrameworkDetector {
-    FrameworkDetector {
+pub fn create_nestjs_framework() -> Framework {
+    Framework {
         name: "NestJS".to_string(),
-        detection: DetectionType::NodeEcosystem {
+        ecosystems: vec![Ecosystem::Npm],
+        detection: DetectionType::Dependencies {
             dependencies: vec!["@nestjs/core".to_string()],
         },
         icon: Some(nerd_icon("e83b")),
@@ -134,10 +142,11 @@ pub fn create_nestjs_framework() -> FrameworkDetector {
     }
 }
 
-pub fn create_astro_framework() -> FrameworkDetector {
-    FrameworkDetector {
+pub fn create_astro_framework() -> Framework {
+    Framework {
         name: "Astro".to_string(),
-        detection: DetectionType::NodeEcosystem {
+        ecosystems: vec![Ecosystem::Npm],
+        detection: DetectionType::Dependencies {
             dependencies: vec!["astro".to_string()],
         },
         icon: Some(nerd_icon("e735")),
@@ -156,6 +165,60 @@ pub fn create_astro_framework() -> FrameworkDetector {
     }
 }
 
+pub fn create_vite_framework() -> Framework {
+    Framework {
+        name: "Vite".to_string(),
+        ecosystems: vec![Ecosystem::Npm],
+        detection: DetectionType::Dependencies {
+            dependencies: vec!["vite".to_string()],
+        },
+        icon: None,
+        color: Some("#646cff".to_string()),
+        // Build tooling: app frameworks (React, Svelte, …) win the display
+        priority: 5,
+        files: vec![
+            "vite.config.js".to_string(),
+            "vite.config.ts".to_string(),
+            "vite.config.mjs".to_string(),
+        ],
+        root_indicators: vec![],
+    }
+}
+
+pub fn create_svelte_framework() -> Framework {
+    Framework {
+        name: "Svelte".to_string(),
+        ecosystems: vec![Ecosystem::Npm],
+        detection: DetectionType::Dependencies {
+            dependencies: vec!["svelte".to_string(), "@sveltejs/kit".to_string()],
+        },
+        icon: None,
+        color: Some("#ff3e00".to_string()),
+        priority: 2,
+        files: vec!["svelte.config.js".to_string()],
+        root_indicators: vec![RootIndicator {
+            pattern: "svelte.config.js".to_string(),
+            weight: 0.9,
+            context: IndicatorContext::FrameworkRoot,
+        }],
+    }
+}
+
+pub fn create_solid_framework() -> Framework {
+    Framework {
+        name: "SolidJS".to_string(),
+        ecosystems: vec![Ecosystem::Npm],
+        detection: DetectionType::Dependencies {
+            dependencies: vec!["solid-js".to_string()],
+        },
+        icon: None,
+        color: Some("#2c4f7c".to_string()),
+        priority: 2,
+        files: vec![],
+        root_indicators: vec![],
+    }
+}
+
 pub fn nerd_icon(hex_code: &str) -> String {
     if let Ok(code_point) = u32::from_str_radix(hex_code, 16) {
         if let Some(character) = char::from_u32(code_point) {
@@ -171,6 +234,8 @@ pub fn node_lockfiles() -> Vec<String> {
         PACKAGE_LOCK_JSON.to_string(),
         YARN_LOCK.to_string(),
         PNPM_LOCK_YAML.to_string(),
+        "bun.lockb".to_string(),
+        "bun.lock".to_string(),
     ]
 }
 
@@ -193,6 +258,16 @@ pub fn node_lockfile_root_indicators() -> Vec<RootIndicator> {
         },
         RootIndicator {
             pattern: PNPM_LOCK_YAML.to_string(),
+            weight: 0.8,
+            context: IndicatorContext::LanguageRoot,
+        },
+        RootIndicator {
+            pattern: "bun.lockb".to_string(),
+            weight: 0.8,
+            context: IndicatorContext::LanguageRoot,
+        },
+        RootIndicator {
+            pattern: "bun.lock".to_string(),
             weight: 0.8,
             context: IndicatorContext::LanguageRoot,
         },
@@ -220,7 +295,8 @@ pub fn vcs_root_indicators() -> Vec<RootIndicator> {
 }
 
 pub fn generate_root_indicators_simple_max_weight(
-    languages: &[ProjectIndicator],
+    indicators: &[Indicator],
+    frameworks: &[Framework],
 ) -> Vec<RootIndicator> {
     use std::collections::HashMap;
 
@@ -230,8 +306,8 @@ pub fn generate_root_indicators_simple_max_weight(
         indicator_weights.insert(vcs_indicator.pattern, vcs_indicator.weight);
     }
 
-    for language in languages {
-        for root_indicator in &language.root_indicators {
+    for indicator in indicators {
+        for root_indicator in &indicator.root_indicators {
             let existing_weight = indicator_weights
                 .get(&root_indicator.pattern)
                 .unwrap_or(&0.0);
@@ -240,17 +316,17 @@ pub fn generate_root_indicators_simple_max_weight(
                 existing_weight.max(root_indicator.weight),
             );
         }
+    }
 
-        for framework in &language.frameworks {
-            for root_indicator in &framework.root_indicators {
-                let existing_weight = indicator_weights
-                    .get(&root_indicator.pattern)
-                    .unwrap_or(&0.0);
-                indicator_weights.insert(
-                    root_indicator.pattern.clone(),
-                    existing_weight.max(root_indicator.weight),
-                );
-            }
+    for framework in frameworks {
+        for root_indicator in &framework.root_indicators {
+            let existing_weight = indicator_weights
+                .get(&root_indicator.pattern)
+                .unwrap_or(&0.0);
+            indicator_weights.insert(
+                root_indicator.pattern.clone(),
+                existing_weight.max(root_indicator.weight),
+            );
         }
     }
 
@@ -312,7 +388,7 @@ impl ConfigBuilder {
 
     pub fn build(self) -> (ConfigMeta, DisplayConfig, DetectionConfig) {
         let meta = ConfigMeta {
-            version: "2.0".to_string(),
+            version: "3.0".to_string(),
         };
 
         let display = DisplayConfig {

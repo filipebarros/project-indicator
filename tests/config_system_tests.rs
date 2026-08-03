@@ -61,7 +61,7 @@ fn test_detection_engine_with_custom_config() -> Result<(), Box<dyn std::error::
         extreme_size_threshold: 500,
     };
 
-    let engine = DetectionEngineBuilder::new(vec![])
+    let engine = DetectionEngineBuilder::new(vec![], vec![])
         .with_config(detection_config)
         .build();
 
@@ -92,7 +92,7 @@ fn test_custom_root_indicators_replace_builtin() -> Result<(), Box<dyn std::erro
         extreme_size_threshold: 500,
     };
 
-    let engine = DetectionEngineBuilder::new(vec![])
+    let engine = DetectionEngineBuilder::new(vec![], vec![])
         .with_config(detection_config)
         .build();
 
@@ -116,7 +116,7 @@ fn test_custom_root_indicators_replace_builtin() -> Result<(), Box<dyn std::erro
     let result_custom = engine.detect(&sub_dir)?;
 
     let default_config = DetectionConfig::default();
-    let default_engine = DetectionEngineBuilder::new(vec![])
+    let default_engine = DetectionEngineBuilder::new(vec![], vec![])
         .with_config(default_config)
         .build();
 
@@ -209,7 +209,7 @@ fn test_config_file_loading_with_detection() -> Result<(), Box<dyn std::error::E
     let config_file = temp_dir.path().join("config.toml");
 
     let config_content = "[meta]
-version = \"2.0\"
+version = \"3.0\"
 
 [display]
 show_frameworks = true
@@ -229,7 +229,7 @@ weight = 0.9
 pattern = \"project.clj\"
 weight = 0.85
 
-[[languages]]
+[[indicators]]
 name = \"Test Language\"
 files = [\"test.file\"]
 color = \"#FF0000\"
@@ -252,8 +252,8 @@ priority = 1
 
     assert_eq!(config.display.max_frameworks, 3);
     assert_eq!(config.display.framework_separator, " | ");
-    assert_eq!(config.languages.len(), 1);
-    assert_eq!(config.languages[0].name, "Test Language");
+    assert_eq!(config.indicators.len(), 1);
+    assert_eq!(config.indicators[0].name, "Test Language");
 
     Ok(())
 }

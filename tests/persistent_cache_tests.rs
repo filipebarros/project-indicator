@@ -28,7 +28,7 @@ fn test_cached_result_renders_identically() -> Result<(), Box<dyn std::error::Er
     let cache = PersistentCache::at_base(cache_dir.path().join("results"));
 
     let config = TemplateGenerator::generate_template(Some("full"))?;
-    let engine = DetectionEngineBuilder::new(config.languages.clone())
+    let engine = DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
         .with_config(config.detection.clone())
         .build();
 
@@ -55,7 +55,7 @@ fn test_manifest_edit_invalidates_entry() -> Result<(), Box<dyn std::error::Erro
     let cache = PersistentCache::at_base(cache_dir.path().join("results"));
 
     let config = TemplateGenerator::generate_template(Some("full"))?;
-    let engine = DetectionEngineBuilder::new(config.languages.clone())
+    let engine = DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
         .with_config(config.detection.clone())
         .build();
 
@@ -125,6 +125,38 @@ fn test_binary_end_to_end_cache_behavior() -> Result<(), Box<dyn std::error::Err
     assert_eq!(
         String::from_utf8_lossy(&first.stdout),
         String::from_utf8_lossy(&third.stdout)
+    );
+    Ok(())
+}
+
+/// A config file that fails to parse (old schema, garbage) must not break
+/// detection: the binary falls back to the built-in template and exits 0.
+#[test]
+fn test_unparsable_config_soft_fallback() -> Result<(), Box<dyn std::error::Error>> {
+    let project = react_project()?;
+    let home = TempDir::new()?;
+    let config_dir = home.path().join("xdg-config").join("project-indicator");
+    fs::create_dir_all(&config_dir)?;
+    fs::write(
+        config_dir.join("config.toml"),
+        "this is not [ valid toml {{{",
+    )?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_project-indicator"))
+        .args([project.path().to_str().unwrap_or("."), "--format", "json"])
+        .env("HOME", home.path())
+        .env("XDG_CACHE_HOME", home.path().join("xdg-cache"))
+        .env("XDG_CONFIG_HOME", home.path().join("xdg-config"))
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "detection must succeed despite the broken config"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"indicator\":\"TypeScript\""),
+        "fallback template must detect the project, got: {stdout}"
     );
     Ok(())
 }

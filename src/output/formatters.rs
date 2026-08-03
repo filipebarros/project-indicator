@@ -64,11 +64,11 @@ pub fn format_result(result: &DetectionResult, format: OutputFormat) -> String {
 mod tests {
     use super::*;
     use crate::test_utils::create_test_result;
-    use crate::types::{DetectionType, FrameworkDetector, FrameworkMatch};
+    use crate::types::{DetectionType, Framework, FrameworkMatch};
 
     #[derive(Debug, Serialize, Deserialize)]
     struct JsonOutput {
-        pub language: Option<String>,
+        pub indicator: Option<String>,
         pub frameworks: Vec<String>,
         pub icon: Option<String>,
         pub color: Option<String>,
@@ -125,7 +125,7 @@ mod tests {
         let output = formatter.format(&result, OutputFormat::Json);
 
         let json: JsonOutput = serde_json::from_str(&output)?;
-        assert_eq!(json.language, Some("TypeScript".to_string()));
+        assert_eq!(json.indicator, Some("TypeScript".to_string()));
         assert_eq!(json.frameworks, vec!["React".to_string()]);
         assert_eq!(json.icon, Some("⚛️".to_string()));
         assert_eq!(json.color, Some("#61DAFB".to_string()));
@@ -151,7 +151,7 @@ mod tests {
         let formatter = OutputFormatter::new(display_config);
 
         let output = formatter.format(&result, OutputFormat::Debug);
-        assert!(output.contains("Language: TypeScript"));
+        assert!(output.contains("Project: TypeScript"));
         assert!(output.contains("React"));
         assert!(output.contains("confidence: 0.90"));
         assert!(output.contains("evidence"));
@@ -188,9 +188,10 @@ mod tests {
     fn test_framework_limiting() -> Result<(), Box<dyn std::error::Error>> {
         let mut result = create_test_result();
 
-        let vue_framework = FrameworkDetector {
+        let vue_framework = Framework {
             name: "Vue".to_string(),
-            detection: DetectionType::NodeEcosystem {
+            ecosystems: vec![],
+            detection: DetectionType::Dependencies {
                 dependencies: vec![],
             },
             icon: None,
@@ -228,7 +229,7 @@ mod tests {
         let parsed: JsonOutput = serde_json::from_str(&json_output)?;
 
         assert_eq!(parsed.confidence, 0.0);
-        assert!(parsed.language.is_some());
+        assert!(parsed.indicator.is_some());
 
         result.confidence = f32::INFINITY;
         let json_output = formatter.format(&result, OutputFormat::Json);
@@ -246,7 +247,7 @@ mod tests {
         let json_output = formatter.format(&result, OutputFormat::Json);
         let json: JsonOutput = serde_json::from_str(&json_output)?;
 
-        assert!(json.language.is_some());
+        assert!(json.indicator.is_some());
         assert!(!json.frameworks.is_empty());
         assert!(json.confidence >= 0.0);
         assert!(!json.evidence.is_empty());

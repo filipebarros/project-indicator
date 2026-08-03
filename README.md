@@ -10,7 +10,6 @@ Project Indicator is a high-performance replacement for shell-based project dete
 ## Key Features
 
 - ✨ **Rich Output Format**: Detailed table format for comprehensive project information
-- 📊 **Result Tracking**: Track detection history, compare snapshots, and analyze project evolution over time
 - 🔒 **Enhanced Security**: EDITOR validation to prevent shell injection attacks
 - ⚙️ **Configurable Thresholds**: Fine-tune detection with configurable performance thresholds
 - 🧪 **Property-Based Testing**: Extensive test suite including rigorous property-based testing with proptest
@@ -18,8 +17,8 @@ Project Indicator is a high-performance replacement for shell-based project dete
 
 ## Features
 
-- 🔍 **Multi-language Detection**: Supports 19 programming languages (Rust, JavaScript/TypeScript, Python, Go, Java, PHP, Ruby, and more)
-- 🏗️ **Framework Recognition**: Detects 51+ popular frameworks like React, Next.js, Django, Flask, Gin, Spring Boot, Laravel, Rails
+- 🔍 **Multi-language Detection**: Supports 22 languages and toolchains (Rust, JavaScript/TypeScript, Python, Go, Deno, Terraform, Nix, and more)
+- 🏗️ **Framework Recognition**: Detects 38 popular frameworks like React, Svelte, Axum, Django, Gin, Spring Boot, Laravel, Rails
 - ⚡ **Blazing Performance**: 3-5ms typical detection
 - 🎨 **Multiple Output Formats**: Simple, Full, JSON, Compact, Debug, and Rich formats
 - 🔧 **Comprehensive CLI**: Configuration management, debugging tools, and root indicator analysis
@@ -120,16 +119,9 @@ project-indicator benchmark
 **Root Indicator Analysis:**
 ```bash
 project-indicator root-indicators conflicts [--detailed] [--compare-legacy] [--show-strategies]
-project-indicator root-indicators list [--language NAME] [--framework NAME] [--conflicts-only]
+project-indicator root-indicators list [--indicator NAME] [--framework NAME] [--conflicts-only]
 project-indicator root-indicators validate [--strict] [--suggest]
 project-indicator root-indicators stats
-```
-
-**Result Tracking:**
-```bash
-project-indicator history [PATH] [-n LIMIT] [--changes-only]
-project-indicator diff <FROM> [TO]
-project-indicator stats [PATH] [--since TIME_RANGE]
 ```
 
 ## Output Examples
@@ -149,28 +141,14 @@ $ project-indicator
 
 # JSON format
 $ project-indicator --format json
-{
-  "language": {
-    "name": "TypeScript",
-    "icon": "󰛦",
-    "color": "#3178C6"
-  },
-  "frameworks": [
-    {
-      "name": "React",
-      "icon": "",
-      "priority": 1
-    }
-  ],
-  "confidence": 0.95
-}
+{"indicator":"TypeScript","frameworks":["React"],"icon":"","color":"#61dafb","confidence":0.85,"evidence":["package.json"]}
 
 # Rich format (detailed table view)
 $ project-indicator --format rich
 ╭────────────────────────────────────╮
 │ Project Detection Results         │
 ├────────────────────────────────────┤
-│ Language:    TypeScript           │
+│ Project:     TypeScript           │
 │ Framework:   React                │
 │ Confidence:  95%                  │
 ╰────────────────────────────────────╯
@@ -228,7 +206,7 @@ Create `~/.config/project-indicator/config.toml`:
 ```toml
 # Metadata
 [meta]
-version = "2.0"
+version = "3.0"
 
 # Display settings
 [display]
@@ -262,22 +240,27 @@ pattern = "Cargo.toml"
 weight = 0.9
 context = "BuildSystem"
 
-# Custom language
-[[languages]]
+# Custom indicator (project type). `ecosystems` links it to the framework
+# catalog: frameworks sharing an ecosystem are detected for this indicator.
+[[indicators]]
 name = "My Language"
 files = ["*.mylang", "mylang.config"]
 color = "#FF6B6B"
-icon = "󰛦"
+icon = "M"
 priority = 1
+ecosystems = ["npm"]
 
-# Custom framework
+# Custom framework — defined once, surfaced by every indicator that shares
+# one of its ecosystems
 [[frameworks]]
 name = "My Framework"
-detection = { type = "NodeEcosystem", dependencies = ["my-framework"] }
-icon = ""
+ecosystems = ["npm"]
 color = "#4ECDC4"
 priority = 1
-files = ["my-framework.json"]
+
+[frameworks.detection]
+type = "Dependencies"
+dependencies = ["my-framework"]
 ```
 
 ### Configuration Locations
@@ -288,14 +271,6 @@ Priority order (first match wins):
 3. Windows: `%APPDATA%\project-indicator\config.toml`
 4. `./project-indicator.toml` (current directory)
 
-### Environment Variables
-
-Override settings via environment:
-```bash
-export PROJECT_INDICATOR_CACHE_ENABLED=false
-export PROJECT_INDICATOR_CACHE_TTL=600
-export PROJECT_INDICATOR_MAX_ENTRIES=500
-```
 
 ## Shell Integration
 
@@ -381,23 +356,23 @@ Frameworks are detected through multiple methods:
 ```toml
 [[frameworks]]
 name = "React"
-detection = { type = "NodeEcosystem", dependencies = ["react"] }
-files = ["src/App.jsx"]
+ecosystems = ["npm"]
 icon = "⚛️"
 color = "#61DAFB"
 priority = 1
+
+[frameworks.detection]
+type = "Dependencies"
+dependencies = ["react"]
 ```
 
 **Detection Types:**
-- `NodeEcosystem` - npm/yarn dependencies (JavaScript/TypeScript)
-- `PythonEcosystem` - pip/poetry dependencies
-- `RustEcosystem` - Cargo dependencies
-- `GoEcosystem` - Go module dependencies
-- `PHPEcosystem` - Composer packages
-- `RubyEcosystem` - Gemfile gems
-- `JavaEcosystem` - Maven/Gradle dependencies
-- `FileExists` - File/directory presence
-- `ConfigFile` - Config file contents
+- `Dependencies` - dependency names checked in the manifests of the
+  framework's ecosystems (`npm`, `pypi`, `cargo`, `go`, `packagist`,
+  `rubygems`, `maven`, `gradle`, `nuget`, `sbt`, `pub`, `hex`, `luarocks`,
+  `swiftpm`)
+- `FileExists` - file/directory presence
+- `ConfigFile` - config file contents
 
 ### Root Indicator System
 
@@ -454,157 +429,6 @@ Detection uses weighted scoring based on:
 
 Implementation: `src/types/matched_file.rs`, `src/detection/confidence_scorer.rs`, `src/detection/engine.rs`
 
-### Result Tracking
-
-Track detection results over time for debugging, performance analysis, and project evolution monitoring.
-
-**Enable Tracking:**
-
-Add to `~/.config/project-indicator/config.toml`:
-
-```toml
-[tracking]
-enabled = true
-# storage_path = "/custom/path"  # Optional custom location
-```
-
-**Features:**
-- 📊 Records every detection with full context and evidence
-- 🔍 Change detection (language changes, framework additions/removals)
-- ⚡ Performance tracking (duration, cache hit rates)
-- 📈 Statistics aggregation (median/min/max durations, language frequencies)
-- 🕒 Timeline analysis (first seen, last seen)
-- ⚠️ Zero overhead when disabled (no I/O operations)
-
-**Storage:**
-- macOS/Linux: `~/.cache/project-indicator/snapshots/YYYY-MM-DD.jsonl`
-- Windows: `%APPDATA%\Local\project-indicator\snapshots\YYYY-MM-DD.jsonl`
-- Format: JSON Lines (one JSON object per line)
-
-**View Detection History:**
-
-```bash
-# Recent detections for current directory
-project-indicator history
-
-# History for specific path
-project-indicator history ~/my-project
-
-# Show more results
-project-indicator history -n 20
-
-# Only show detections with changes
-project-indicator history --changes-only
-```
-
-**Compare Snapshots:**
-
-```bash
-# Compare by snapshot IDs
-project-indicator diff abc-123 def-456
-
-# Compare latest two snapshots for a path
-project-indicator diff ~/my-project
-
-# Shows changes: language, frameworks, confidence, cache status, performance
-```
-
-**View Statistics:**
-
-```bash
-# Stats for current directory
-project-indicator stats
-
-# Stats for specific path
-project-indicator stats ~/my-project
-
-# Shows:
-# - Total detections, cache hit rate
-# - Performance metrics (median/min/max duration)
-# - Language frequency distribution
-# - Timeline (first/last seen)
-```
-
-**Snapshot Data:**
-
-Each detection snapshot includes:
-- Unique snapshot ID and timestamp
-- Detected language and frameworks with confidence scores
-- Sample matched files and root indicators
-- Cache performance (detection from cache, hit/miss stats)
-- Duration in microseconds, files scanned
-
-**Change Detection:**
-
-The system automatically detects:
-- Language changes (e.g., JavaScript → TypeScript)
-- Framework additions/removals
-- Confidence score changes
-- Cache status changes (cached ↔ fresh)
-- Performance variations
-
-**Use Cases:**
-- **Debugging**: Understand why a project was detected differently
-- **Performance Analysis**: Track detection speed over time
-- **Cache Effectiveness**: Measure cache hit rates
-- **Project Evolution**: See how projects change languages/frameworks
-- **Testing**: Validate detection consistency
-
-**Example Output:**
-
-```bash
-$ project-indicator history -n 3
-
-History for: /Users/name/my-project
-
-Time                 Language        Frameworks                     Duration   Source
-────────────────────────────────────────────────────────────────────────────────────
-2025-01-21 14:23:45  TypeScript      React, Next.js                 3.2ms      fresh
-2025-01-21 14:20:12  TypeScript      React, Next.js                 0.8ms      cached
-2025-01-21 13:15:30  JavaScript      React                          4.1ms      fresh
-
-Total: 3 detections shown
-
-$ project-indicator stats
-
-📊 Statistics for: /Users/name/my-project
-════════════════════════════════════════════════════════════
-
-Detection Summary:
-  Total detections:   42
-  Cached detections:  38 (90.5%)
-  Fresh detections:   4
-
-Performance:
-  Median duration:    1.2ms
-  Min duration:       0.5ms
-  Max duration:       8.3ms
-
-Languages Detected:
-  TypeScript      38 (90.5%)
-  JavaScript      4 (9.5%)
-
-Timeline:
-  First seen: 2025-01-15 09:30:00
-  Last seen:  2025-01-21 14:23:45
-```
-
-**Performance:**
-
-The tracking system is highly optimized with minimal overhead:
-- **~1.25µs overhead** per detection (total snapshot creation and recording)
-- **Non-blocking I/O**: Background thread handles all file writes
-- **Path cache**: 250x faster on cache hits (52ns vs 13µs for canonicalization)
-- **Pre-serialized buffers**: 28% faster than direct serialization
-- **Arc<str> for names**: 5-10% reduction in allocation overhead
-
-Technical optimizations:
-- Thread-safe path canonicalization cache using DashMap
-- Pre-allocated 2KB serialization buffers
-- Shared string references (Arc<str>) for language/framework names
-- Channel-based background writer with batch flushing
-- Daily file rotation with kept-open file handles
-
 ## Development
 
 ### Building
@@ -642,14 +466,12 @@ cargo test --lib
 cargo test --test property_tests
 ```
 
-**Test Coverage**: 368 tests passing across multiple categories:
+**Test Coverage**: extensive suite across multiple categories:
 - Unit tests: Core functionality and edge cases
-- Integration tests: End-to-end CLI behavior
-- Property-based tests: Invariant validation with proptest (6 tests, 100+ scenarios each)
+- Integration tests: End-to-end CLI behavior, persistent cache, fixture snapshots
+- Property-based tests: Invariant validation with proptest
 - Symlink handling tests: Unix symlink edge cases
 - Concurrent stress tests: Thread safety verification
-- Cache behavior tests: Unified cache, upgrades, and eviction
-- Tracking E2E tests: Complete workflow validation, change detection, performance tracking
 
 ### Contributing
 
@@ -696,16 +518,8 @@ src/
 │   ├── root_indicators.rs
 │   ├── caches/         # Cache implementations
 │   └── scanner/        # File scanning
-├── tracking/
-│   ├── types.rs        # Snapshot data structures
-│   ├── storage.rs      # JSON Lines persistence
-│   ├── comparison.rs   # Diff and change detection
-│   ├── formatting.rs   # Colored terminal output
-│   └── utils.rs        # Shared utilities
-├── commands/
-│   ├── history.rs      # History command
-│   ├── diff.rs         # Diff command
-│   └── stats.rs        # Stats command
+├── cache.rs            # Persistent cross-invocation result cache
+├── commands/           # CLI command implementations
 ├── output/             # Output formatting
 ├── types/              # Core type definitions
 └── config/
@@ -718,17 +532,11 @@ src/
 
 - **DetectionEngine**: Orchestrates detection workflow
 - **PatternMatcher**: Thread-safe pattern matching with nested DashMap cache
-- **ParsedFileCache**: Unified cache with progressive enhancement (None → RawContent → ParsedJson/ParsedToml)
-  - Generic ParsedType trait for extensibility
-  - Smart upgrades from raw to parsed on demand
-  - O(1) statistics via atomic counters
-- **FileSystemCache**: Metadata caching with TTL and eviction
+- **ParsedFileCache**: Per-run manifest parse memoization (JSON/TOML)
+- **FileSystemCache**: Per-run metadata memoization
+- **PersistentCache**: Cross-invocation result cache with mtime invalidation
 - **ConfidenceScorer**: Calculates detection confidence with root indicators
-- **FrameworkDetector**: Parallel framework detection
-- **ResultTracker**: Optional detection history tracking with JSON Lines storage
-  - Zero overhead when disabled
-  - Snapshot comparison and change detection
-  - Performance statistics aggregation
+- **FrameworkDetector**: Ecosystem-aware framework detection
 
 ## Exit Codes
 

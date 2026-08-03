@@ -1,13 +1,16 @@
 pub mod cpp;
 pub mod csharp;
 pub mod dart;
+pub mod deno;
 pub mod elixir;
+pub mod frameworks;
 pub mod go;
 pub mod java;
 pub mod javascript;
 pub mod julia;
 pub mod kotlin;
 pub mod lua;
+pub mod nix;
 pub mod php;
 pub mod python;
 pub mod r;
@@ -15,6 +18,7 @@ pub mod ruby;
 pub mod rust;
 pub mod scala;
 pub mod swift;
+pub mod terraform;
 pub mod typescript;
 pub mod zig;
 
@@ -23,30 +27,34 @@ pub mod shared;
 pub use shared::{generate_root_indicators_simple_max_weight, vcs_root_indicators};
 
 use crate::config::Config;
-use crate::types::{ConfigMeta, DetectionConfig, DisplayConfig, TrackingConfig};
+use crate::types::{ConfigMeta, DetectionConfig, DisplayConfig};
 use anyhow::Result;
 use shared::ConfigBuilder;
 use std::collections::HashMap;
 
-use cpp::create_cpp_language;
-use csharp::create_csharp_language;
-use dart::create_dart_language;
-use elixir::create_elixir_language;
-use go::create_go_language;
-use java::create_java_language;
-use javascript::create_javascript_language;
-use julia::create_julia_language;
-use kotlin::create_kotlin_language;
-use lua::create_lua_language;
-use php::create_php_language;
-use python::create_python_language;
-use r::create_r_language;
-use ruby::create_ruby_language;
-use rust::create_rust_language;
-use scala::create_scala_language;
-use swift::create_swift_language;
-use typescript::create_typescript_language;
-use zig::create_zig_language;
+use cpp::create_cpp_indicator;
+use csharp::create_csharp_indicator;
+use dart::create_dart_indicator;
+use deno::create_deno_indicator;
+use elixir::create_elixir_indicator;
+use frameworks::framework_catalog;
+use go::create_go_indicator;
+use java::create_java_indicator;
+use javascript::create_javascript_indicator;
+use julia::create_julia_indicator;
+use kotlin::create_kotlin_indicator;
+use lua::create_lua_indicator;
+use nix::create_nix_indicator;
+use php::create_php_indicator;
+use python::create_python_indicator;
+use r::create_r_indicator;
+use ruby::create_ruby_indicator;
+use rust::create_rust_indicator;
+use scala::create_scala_indicator;
+use swift::create_swift_indicator;
+use terraform::create_terraform_indicator;
+use typescript::create_typescript_indicator;
+use zig::create_zig_indicator;
 
 pub struct ConfigTemplate {
     pub name: String,
@@ -117,10 +125,10 @@ impl TemplateGenerator {
 
 pub fn create_minimal_template() -> ConfigTemplate {
     let languages = vec![
-        create_rust_language(),
-        create_javascript_language(),
-        create_python_language(),
-        create_go_language(),
+        create_rust_indicator(),
+        create_javascript_indicator(),
+        create_python_indicator(),
+        create_go_indicator(),
     ];
 
     let (meta, display, detection) = ConfigBuilder::new()
@@ -132,8 +140,8 @@ pub fn create_minimal_template() -> ConfigTemplate {
         meta,
         display,
         detection,
-        tracking: TrackingConfig::default(),
-        languages,
+        frameworks: framework_catalog(),
+        indicators: languages,
     };
 
     ConfigTemplate::new(
@@ -145,25 +153,28 @@ pub fn create_minimal_template() -> ConfigTemplate {
 
 pub fn create_full_template() -> ConfigTemplate {
     let languages = vec![
-        create_rust_language(),
-        create_javascript_language(),
-        create_typescript_language(),
-        create_python_language(),
-        create_go_language(),
-        create_java_language(),
-        create_csharp_language(),
-        create_cpp_language(),
-        create_php_language(),
-        create_ruby_language(),
-        create_swift_language(),
-        create_kotlin_language(),
-        create_dart_language(),
-        create_elixir_language(),
-        create_zig_language(),
-        create_r_language(),
-        create_julia_language(),
-        create_scala_language(),
-        create_lua_language(),
+        create_rust_indicator(),
+        create_javascript_indicator(),
+        create_typescript_indicator(),
+        create_python_indicator(),
+        create_go_indicator(),
+        create_java_indicator(),
+        create_csharp_indicator(),
+        create_cpp_indicator(),
+        create_php_indicator(),
+        create_ruby_indicator(),
+        create_swift_indicator(),
+        create_kotlin_indicator(),
+        create_dart_indicator(),
+        create_elixir_indicator(),
+        create_zig_indicator(),
+        create_r_indicator(),
+        create_julia_indicator(),
+        create_scala_indicator(),
+        create_lua_indicator(),
+        create_deno_indicator(),
+        create_terraform_indicator(),
+        create_nix_indicator(),
     ];
 
     // Threshold 0.3: a canonical single-language project (e.g. package.json +
@@ -178,8 +189,8 @@ pub fn create_full_template() -> ConfigTemplate {
         meta,
         display,
         detection,
-        tracking: TrackingConfig::default(),
-        languages,
+        frameworks: framework_catalog(),
+        indicators: languages,
     };
 
     ConfigTemplate::new(
@@ -190,7 +201,7 @@ pub fn create_full_template() -> ConfigTemplate {
 }
 
 pub fn create_rust_dev_template() -> ConfigTemplate {
-    let languages = vec![create_rust_language()];
+    let languages = vec![create_rust_indicator()];
 
     let (meta, display, detection) = ConfigBuilder::new()
         .display(true, 3, " + ")
@@ -201,8 +212,8 @@ pub fn create_rust_dev_template() -> ConfigTemplate {
         meta,
         display,
         detection,
-        tracking: TrackingConfig::default(),
-        languages,
+        frameworks: framework_catalog(),
+        indicators: languages,
     };
 
     ConfigTemplate::new(
@@ -215,7 +226,7 @@ pub fn create_rust_dev_template() -> ConfigTemplate {
 pub fn create_python_dev_template() -> ConfigTemplate {
     let config = Config {
         meta: ConfigMeta {
-            version: "2.0".to_string(),
+            version: "3.0".to_string(),
         },
         display: DisplayConfig {
             show_frameworks: true,
@@ -233,8 +244,8 @@ pub fn create_python_dev_template() -> ConfigTemplate {
             small_project_threshold: 50,
             extreme_size_threshold: 500,
         },
-        tracking: TrackingConfig::default(),
-        languages: vec![create_python_language()],
+        frameworks: framework_catalog(),
+        indicators: vec![create_python_indicator()],
     };
 
     ConfigTemplate::new(
@@ -248,7 +259,7 @@ pub fn create_python_dev_template() -> ConfigTemplate {
 pub fn create_web_dev_template() -> ConfigTemplate {
     let config = Config {
         meta: ConfigMeta {
-            version: "2.0".to_string(),
+            version: "3.0".to_string(),
         },
         display: DisplayConfig {
             show_frameworks: true,
@@ -266,8 +277,8 @@ pub fn create_web_dev_template() -> ConfigTemplate {
             small_project_threshold: 50,
             extreme_size_threshold: 500,
         },
-        tracking: TrackingConfig::default(),
-        languages: vec![create_javascript_language(), create_typescript_language()],
+        frameworks: framework_catalog(),
+        indicators: vec![create_javascript_indicator(), create_typescript_indicator()],
     };
 
     ConfigTemplate::new(
@@ -280,7 +291,7 @@ pub fn create_web_dev_template() -> ConfigTemplate {
 pub fn create_mobile_dev_template() -> ConfigTemplate {
     let config = Config {
         meta: ConfigMeta {
-            version: "2.0".to_string(),
+            version: "3.0".to_string(),
         },
         display: DisplayConfig {
             show_frameworks: true,
@@ -298,14 +309,14 @@ pub fn create_mobile_dev_template() -> ConfigTemplate {
             small_project_threshold: 50,
             extreme_size_threshold: 500,
         },
-        tracking: TrackingConfig::default(),
-        languages: vec![
-            create_javascript_language(),
-            create_typescript_language(),
-            create_dart_language(),
-            create_swift_language(),
-            create_kotlin_language(),
-            create_csharp_language(),
+        frameworks: framework_catalog(),
+        indicators: vec![
+            create_javascript_indicator(),
+            create_typescript_indicator(),
+            create_dart_indicator(),
+            create_swift_indicator(),
+            create_kotlin_indicator(),
+            create_csharp_indicator(),
         ],
     };
 
@@ -319,7 +330,7 @@ pub fn create_mobile_dev_template() -> ConfigTemplate {
 pub fn create_data_science_template() -> ConfigTemplate {
     let config = Config {
         meta: ConfigMeta {
-            version: "2.0".to_string(),
+            version: "3.0".to_string(),
         },
         display: DisplayConfig {
             show_frameworks: true,
@@ -337,12 +348,12 @@ pub fn create_data_science_template() -> ConfigTemplate {
             small_project_threshold: 50,
             extreme_size_threshold: 500,
         },
-        tracking: TrackingConfig::default(),
-        languages: vec![
-            create_python_language(),
-            create_r_language(),
-            create_julia_language(),
-            create_scala_language(),
+        frameworks: framework_catalog(),
+        indicators: vec![
+            create_python_indicator(),
+            create_r_indicator(),
+            create_julia_indicator(),
+            create_scala_indicator(),
         ],
     };
 
@@ -357,7 +368,7 @@ pub fn create_data_science_template() -> ConfigTemplate {
 pub fn create_enterprise_template() -> ConfigTemplate {
     let config = Config {
         meta: ConfigMeta {
-            version: "2.0".to_string(),
+            version: "3.0".to_string(),
         },
         display: DisplayConfig {
             show_frameworks: true,
@@ -375,16 +386,16 @@ pub fn create_enterprise_template() -> ConfigTemplate {
             small_project_threshold: 50,
             extreme_size_threshold: 500,
         },
-        tracking: TrackingConfig::default(),
-        languages: vec![
-            create_rust_language(),
-            create_python_language(),
-            create_go_language(),
-            create_java_language(),
-            create_csharp_language(),
-            create_php_language(),
-            create_ruby_language(),
-            create_javascript_language(),
+        frameworks: framework_catalog(),
+        indicators: vec![
+            create_rust_indicator(),
+            create_python_indicator(),
+            create_go_indicator(),
+            create_java_indicator(),
+            create_csharp_indicator(),
+            create_php_indicator(),
+            create_ruby_indicator(),
+            create_javascript_indicator(),
         ],
     };
 

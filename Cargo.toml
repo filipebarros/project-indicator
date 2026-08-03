@@ -27,11 +27,6 @@ env_logger = "0.11"
 
 dashmap = "6.2"
 
-uuid = { version = "1.23", features = ["v4", "serde"] }
-
-chrono = "0.4" # For date formatting (YYYY-MM-DD.jsonl filenames)
-colored = "3.1" # For terminal output formatting in diffs
-
 [dev-dependencies]
 criterion = "0.8"
 tempfile = "3.27"
@@ -60,10 +55,6 @@ harness = false
 
 [[bench]]
 name = "framework_detection_benchmark"
-harness = false
-
-[[bench]]
-name = "tracking_benchmark"
 harness = false
 
 [profile.release]

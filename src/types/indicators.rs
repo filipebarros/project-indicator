@@ -7,13 +7,13 @@
 //!
 //! The indicator system consists of three main components:
 //!
-//! - [`ProjectIndicator`] - Language definitions with file patterns and frameworks
+//! - [`Indicator`] - Language definitions with file patterns and frameworks
 //! - [`RootIndicator`] - Files that indicate a project root (Cargo.toml, package.json, etc.)
 //! - [`IndicatorContext`] - Context classification for root indicators
 //!
 //! # Project Indicators
 //!
-//! A [`ProjectIndicator`] defines a programming language with:
+//! A [`Indicator`] defines a programming language with:
 //!
 //! - **File patterns** - Glob patterns to match (*.rs, *.py, tsconfig.json)
 //! - **Frameworks** - Associated framework detectors
@@ -33,31 +33,15 @@
 //! ## Example: Defining a Language
 //!
 //! ```rust
-//! use project_indicator::types::{ProjectIndicator, FrameworkDetector, DetectionType};
+//! use project_indicator::types::{Ecosystem, Indicator};
 //!
-//! let typescript = ProjectIndicator::new(
+//! let typescript = Indicator::new(
 //!     "TypeScript".to_string(),
-//!     vec![
-//!         "*.ts".to_string(),
-//!         "*.tsx".to_string(),
-//!         "tsconfig.json".to_string(),
-//!     ],
-//!     "#3178C6".to_string(), // TypeScript blue
-//!     "󰛦".to_string(),        // Nerd font icon
-//!     1,                     // Priority
-//!     vec![                  // Frameworks
-//!         FrameworkDetector {
-//!             name: "React".to_string(),
-//!             detection: DetectionType::NodeEcosystem {
-//!                 dependencies: vec!["react".to_string()],
-//!             },
-//!             icon: Some("⚛️".to_string()),
-//!             color: Some("#61DAFB".to_string()),
-//!             priority: 1,
-//!             files: vec![],
-//!             root_indicators: vec![],
-//!         },
-//!     ],
+//!     vec!["*.ts".to_string(), "tsconfig.json".to_string()],
+//!     "#3178C6".to_string(),
+//!     "TS".to_string(),
+//!     1,
+//!     vec![Ecosystem::Npm],
 //! );
 //!
 //! // Test pattern matching
@@ -105,9 +89,9 @@
 //! For performance, patterns are compiled once and cached:
 //!
 //! ```rust
-//! use project_indicator::types::ProjectIndicator;
+//! use project_indicator::types::Indicator;
 //!
-//! let rust = ProjectIndicator::new(
+//! let rust = Indicator::new(
 //!     "Rust".to_string(),
 //!     vec!["*.rs".to_string(), "Cargo.toml".to_string()],
 //!     "#DEA584".to_string(),
@@ -129,7 +113,7 @@
 //! - Zero runtime overhead after first compilation
 
 use crate::patterns::{pattern_to_regex, simple_wildcard_match};
-use crate::types::FrameworkDetector;
+use crate::types::Ecosystem;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -166,33 +150,33 @@ pub struct RootIndicator {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectIndicator {
+pub struct Indicator {
     pub name: String,
     pub files: Vec<String>,
     pub color: String,
     pub icon: String,
     pub priority: u8,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub frameworks: Vec<FrameworkDetector>,
+    pub ecosystems: Vec<Ecosystem>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub root_indicators: Vec<RootIndicator>,
     #[serde(skip)]
     compiled_patterns: OnceLock<HashMap<String, Option<Regex>>>,
 }
 
-impl PartialEq for ProjectIndicator {
+impl PartialEq for Indicator {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
             && self.files == other.files
             && self.color == other.color
             && self.icon == other.icon
             && self.priority == other.priority
-            && self.frameworks == other.frameworks
+            && self.ecosystems == other.ecosystems
             && self.root_indicators == other.root_indicators
     }
 }
 
-impl Default for ProjectIndicator {
+impl Default for Indicator {
     fn default() -> Self {
         Self {
             name: String::new(),
@@ -200,21 +184,21 @@ impl Default for ProjectIndicator {
             color: String::new(),
             icon: String::new(),
             priority: 1,
-            frameworks: Vec::new(),
+            ecosystems: Vec::new(),
             root_indicators: Vec::new(),
             compiled_patterns: OnceLock::new(),
         }
     }
 }
 
-impl ProjectIndicator {
+impl Indicator {
     pub fn new(
         name: String,
         files: Vec<String>,
         color: String,
         icon: String,
         priority: u8,
-        frameworks: Vec<FrameworkDetector>,
+        ecosystems: Vec<Ecosystem>,
     ) -> Self {
         Self {
             name,
@@ -222,7 +206,7 @@ impl ProjectIndicator {
             color,
             icon,
             priority,
-            frameworks,
+            ecosystems,
             root_indicators: Vec::new(),
             compiled_patterns: OnceLock::new(),
         }
@@ -234,7 +218,7 @@ impl ProjectIndicator {
         color: String,
         icon: String,
         priority: u8,
-        frameworks: Vec<FrameworkDetector>,
+        ecosystems: Vec<Ecosystem>,
         root_indicators: Vec<RootIndicator>,
     ) -> Self {
         Self {
@@ -243,7 +227,7 @@ impl ProjectIndicator {
             color,
             icon,
             priority,
-            frameworks,
+            ecosystems,
             root_indicators,
             compiled_patterns: OnceLock::new(),
         }
@@ -276,10 +260,5 @@ impl ProjectIndicator {
                 }
             })
         })
-    }
-    pub fn frameworks_by_priority(&self) -> Vec<&FrameworkDetector> {
-        let mut frameworks: Vec<&FrameworkDetector> = self.frameworks.iter().collect();
-        frameworks.sort_by_key(|f| f.priority);
-        frameworks
     }
 }

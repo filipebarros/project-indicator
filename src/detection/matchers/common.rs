@@ -70,10 +70,11 @@ mod tests {
 
     #[test]
     fn test_sort_framework_matches() -> Result<(), Box<dyn std::error::Error>> {
-        use crate::types::{DetectionType, FrameworkDetector};
+        use crate::types::{DetectionType, Framework};
 
-        let framework1 = FrameworkDetector {
+        let framework1 = Framework {
             name: "High Confidence, Low Priority".to_string(),
+            ecosystems: vec![],
             detection: DetectionType::FileExists { files: vec![] },
             icon: None,
             color: None,
@@ -82,8 +83,9 @@ mod tests {
             root_indicators: vec![],
         };
 
-        let framework2 = FrameworkDetector {
+        let framework2 = Framework {
             name: "High Confidence, High Priority".to_string(),
+            ecosystems: vec![],
             detection: DetectionType::FileExists { files: vec![] },
             icon: None,
             color: None,
@@ -92,8 +94,9 @@ mod tests {
             root_indicators: vec![],
         };
 
-        let framework3 = FrameworkDetector {
+        let framework3 = Framework {
             name: "Low Confidence, High Priority".to_string(),
+            ecosystems: vec![],
             detection: DetectionType::FileExists { files: vec![] },
             icon: None,
             color: None,
@@ -118,10 +121,11 @@ mod tests {
 
     #[test]
     fn test_sort_framework_matches_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
-        use crate::types::{DetectionType, FrameworkDetector};
+        use crate::types::{DetectionType, Framework};
 
-        let framework1 = FrameworkDetector {
+        let framework1 = Framework {
             name: "First".to_string(),
+            ecosystems: vec![],
             detection: DetectionType::FileExists { files: vec![] },
             icon: None,
             color: None,
@@ -130,8 +134,9 @@ mod tests {
             root_indicators: vec![],
         };
 
-        let framework2 = FrameworkDetector {
+        let framework2 = Framework {
             name: "Second".to_string(),
+            ecosystems: vec![],
             detection: DetectionType::FileExists { files: vec![] },
             icon: None,
             color: None,

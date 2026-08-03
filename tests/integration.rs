@@ -36,13 +36,14 @@ fn test_typescript_react_detection() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
+    let engine =
+        DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
-    assert!(result.language.is_some());
+    assert!(result.indicator.is_some());
     assert_eq!(
         result
-            .language
+            .indicator
             .as_ref()
             .ok_or("Failed to get language reference")?
             .name,
@@ -60,7 +61,7 @@ fn test_typescript_react_detection() -> Result<(), Box<dyn std::error::Error>> {
 
     let json_output = formatter.format(&result, OutputFormat::Json);
     let json: Value = serde_json::from_str(&json_output)?;
-    assert_eq!(json["language"], "TypeScript");
+    assert_eq!(json["indicator"], "TypeScript");
     assert_eq!(json["frameworks"][0], "React");
     assert_eq!(json["icon"], "⚛️");
     assert_eq!(json["color"], "#61DAFB");
@@ -88,13 +89,14 @@ serde = { version = "1.0", features = ["derive"] }
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
+    let engine =
+        DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
-    assert!(result.language.is_some());
+    assert!(result.indicator.is_some());
     assert_eq!(
         result
-            .language
+            .indicator
             .as_ref()
             .ok_or("Failed to get language reference")?
             .name,
@@ -141,13 +143,14 @@ build-backend = "setuptools.build_meta"
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
+    let engine =
+        DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
-    assert!(result.language.is_some());
+    assert!(result.indicator.is_some());
     assert_eq!(
         result
-            .language
+            .indicator
             .as_ref()
             .ok_or("Failed to get language reference")?
             .name,
@@ -161,7 +164,7 @@ build-backend = "setuptools.build_meta"
     let formatter = OutputFormatter::new(display_config);
 
     let debug = formatter.format(&result, OutputFormat::Debug);
-    assert!(debug.contains("Language: Python"));
+    assert!(debug.contains("Project: Python"));
     assert!(debug.contains("Django"));
     assert!(debug.contains("confidence"));
     Ok(())
@@ -189,7 +192,8 @@ fn test_nextjs_priority_over_react() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
+    let engine =
+        DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
     assert!(result.frameworks.len() >= 2);
@@ -214,13 +218,14 @@ fn test_language_only_detection() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
+    let engine =
+        DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
-    assert!(result.language.is_some());
+    assert!(result.indicator.is_some());
     assert_eq!(
         result
-            .language
+            .indicator
             .as_ref()
             .ok_or("Failed to get language reference")?
             .name,
@@ -247,10 +252,11 @@ fn test_no_detection() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
+    let engine =
+        DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
-    assert!(result.language.is_none());
+    assert!(result.indicator.is_none());
     assert!(result.frameworks.is_empty());
     assert_eq!(result.confidence, 0.0);
 
@@ -262,7 +268,7 @@ fn test_no_detection() -> Result<(), Box<dyn std::error::Error>> {
 
     let json_output = formatter.format(&result, OutputFormat::Json);
     let json: Value = serde_json::from_str(&json_output)?;
-    assert_eq!(json["language"], Value::Null);
+    assert_eq!(json["indicator"], Value::Null);
     assert_eq!(json["frameworks"], Value::Array(vec![]));
     assert_eq!(json["confidence"], 0.0);
     Ok(())
@@ -286,7 +292,8 @@ fn test_framework_limiting() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
 
-    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
+    let engine =
+        DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
     let formatter = OutputFormatter::new(display_config);
@@ -320,7 +327,8 @@ fn test_all_output_formats() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngineBuilder::new(config.languages.clone()).build();
+    let engine =
+        DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone()).build();
     let result = engine.detect(temp_dir.path())?;
 
     let display_config = DisplayConfig::default();

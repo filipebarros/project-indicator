@@ -1,4 +1,4 @@
-use crate::types::ProjectIndicator;
+use crate::types::Indicator;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -45,7 +45,7 @@ pub struct PatternCompiler {
 }
 
 impl PatternCompiler {
-    pub fn new(languages: &[Arc<ProjectIndicator>]) -> Self {
+    pub fn new(languages: &[Arc<Indicator>]) -> Self {
         let total_patterns_estimate: usize = languages.iter().map(|lang| lang.files.len()).sum();
         let mut all_patterns = HashSet::with_capacity(total_patterns_estimate);
 
@@ -145,10 +145,10 @@ impl PatternCompiler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ProjectIndicator;
+    use crate::types::Indicator;
 
-    fn create_test_language(name: &str, patterns: Vec<&str>) -> Arc<ProjectIndicator> {
-        Arc::new(ProjectIndicator::new(
+    fn create_test_indicator(name: &str, patterns: Vec<&str>) -> Arc<Indicator> {
+        Arc::new(Indicator::new(
             name.to_string(),
             patterns.iter().map(|s| s.to_string()).collect(),
             "#FF0000".to_string(),
@@ -161,8 +161,8 @@ mod tests {
     #[test]
     fn test_pattern_compiler_creation() {
         let languages = vec![
-            create_test_language("Rust", vec!["*.rs", "Cargo.toml", "src/**/*.rs"]),
-            create_test_language("JavaScript", vec!["*.js", "package.json", "**/*.test.js"]),
+            create_test_indicator("Rust", vec!["*.rs", "Cargo.toml", "src/**/*.rs"]),
+            create_test_indicator("JavaScript", vec!["*.js", "package.json", "**/*.test.js"]),
         ];
 
         let compiler = PatternCompiler::new(&languages);
@@ -183,8 +183,8 @@ mod tests {
     #[test]
     fn test_pattern_deduplication() {
         let languages = vec![
-            create_test_language("TypeScript", vec!["*.ts", "package.json"]),
-            create_test_language("JavaScript", vec!["*.js", "package.json"]),
+            create_test_indicator("TypeScript", vec!["*.ts", "package.json"]),
+            create_test_indicator("JavaScript", vec!["*.js", "package.json"]),
         ];
 
         let compiler = PatternCompiler::new(&languages);
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn test_wildcard_pattern_compilation() {
-        let languages = vec![create_test_language(
+        let languages = vec![create_test_indicator(
             "Rust",
             vec!["*.rs", "Cargo.toml", "*.test.*"],
         )];
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_empty_languages() {
-        let languages: Vec<Arc<ProjectIndicator>> = vec![];
+        let languages: Vec<Arc<Indicator>> = vec![];
         let compiler = PatternCompiler::new(&languages);
 
         assert_eq!(compiler.pattern_count(), 0);

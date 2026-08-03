@@ -23,7 +23,7 @@
 //!
 //! Different types of evidence contribute to confidence differently:
 //!
-//! - **LanguageFile** - Source files matching patterns (*.rs, *.py)
+//! - **IndicatorFile** - Source files matching patterns (*.rs, *.py)
 //! - **ManifestFile** - Package manifests (Cargo.toml, package.json) - Higher weight
 //! - **ConfigFile** - Configuration files (tsconfig.json, .eslintrc)
 //! - **FrameworkDependency** - Framework detected in dependencies
@@ -38,14 +38,14 @@
 //! let mut evidence = DetectionEvidence::new();
 //!
 //! // Add language file evidence
-//! evidence.add_language_evidence(EvidenceItem::language_file(
+//! evidence.add_indicator_evidence(EvidenceItem::indicator_file(
 //!     "src/main.rs".to_string(),
 //!     "*.rs".to_string(),
 //!     0.8,
 //! ));
 //!
 //! // Add manifest evidence (higher weight)
-//! evidence.add_language_evidence(EvidenceItem::manifest_file(
+//! evidence.add_indicator_evidence(EvidenceItem::manifest_file(
 //!     "Cargo.toml".to_string(),
 //!     "Cargo.toml".to_string(),
 //!     0.95,
@@ -61,7 +61,7 @@
 //! // Set scan metrics
 //! evidence.set_scan_metrics(42, 150);
 //!
-//! assert_eq!(evidence.language_evidence.len(), 2);
+//! assert_eq!(evidence.indicator_evidence.len(), 2);
 //! assert_eq!(evidence.framework_evidence.len(), 1);
 //! assert_eq!(evidence.files_scanned, 42);
 //! ```
@@ -72,13 +72,13 @@
 //!
 //! ```rust
 //! use project_indicator::types::{
-//!     DetectionResult, ProjectIndicator, FrameworkMatch,
-//!     FrameworkDetector, DetectionType
+//!     DetectionResult, Indicator, FrameworkMatch,
+//!     Framework, DetectionType
 //! };
 //! use std::sync::Arc;
 //!
 //! // Create language
-//! let rust = Arc::new(ProjectIndicator::new(
+//! let rust = Arc::new(Indicator::new(
 //!     "Rust".to_string(),
 //!     vec!["*.rs".to_string()],
 //!     "#DEA584".to_string(),
@@ -88,9 +88,10 @@
 //! ));
 //!
 //! // Create framework match
-//! let rocket = FrameworkDetector {
+//! let rocket = Framework {
 //!     name: "Rocket".to_string(),
-//!     detection: DetectionType::RustEcosystem {
+//!     ecosystems: vec![],
+//!     detection: DetectionType::Dependencies {
 //!         dependencies: vec!["rocket".to_string()],
 //!     },
 //!     icon: Some("🚀".to_string()),
@@ -126,10 +127,10 @@
 //! 2. **Language fallback** - If no frameworks, use language icon/color
 //!
 //! ```rust
-//! use project_indicator::types::{DetectionResult, ProjectIndicator};
+//! use project_indicator::types::{DetectionResult, Indicator};
 //! use std::sync::Arc;
 //!
-//! let python = Arc::new(ProjectIndicator::new(
+//! let python = Arc::new(Indicator::new(
 //!     "Python".to_string(),
 //!     vec!["*.py".to_string()],
 //!     "#3776AB".to_string(),
@@ -155,13 +156,13 @@
 //!
 //! Each factor contributes a weighted score to the final confidence value.
 
-use crate::types::{FrameworkMatch, ProjectIndicator};
+use crate::types::{FrameworkMatch, Indicator};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EvidenceType {
-    LanguageFile,
+    IndicatorFile,
     ManifestFile,
     ConfigFile,
     FrameworkDependency,
@@ -195,10 +196,10 @@ impl EvidenceItem {
         }
     }
 
-    pub fn language_file(file_path: String, pattern: String, weight: f32) -> Self {
+    pub fn indicator_file(file_path: String, pattern: String, weight: f32) -> Self {
         let description = format!("Matched {} against pattern {}", file_path, pattern);
         Self {
-            evidence_type: EvidenceType::LanguageFile,
+            evidence_type: EvidenceType::IndicatorFile,
             file_path,
             pattern_matched: pattern,
             weight,
@@ -271,7 +272,7 @@ impl ConfidenceFactor {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DetectionEvidence {
-    pub language_evidence: Vec<EvidenceItem>,
+    pub indicator_evidence: Vec<EvidenceItem>,
     pub framework_evidence: Vec<EvidenceItem>,
     pub root_discovery: Vec<EvidenceItem>,
     pub confidence_factors: Vec<ConfidenceFactor>,
@@ -282,7 +283,7 @@ pub struct DetectionEvidence {
 impl DetectionEvidence {
     pub fn new() -> Self {
         Self {
-            language_evidence: Vec::new(),
+            indicator_evidence: Vec::new(),
             framework_evidence: Vec::new(),
             root_discovery: Vec::new(),
             confidence_factors: Vec::new(),
@@ -291,8 +292,8 @@ impl DetectionEvidence {
         }
     }
 
-    pub fn add_language_evidence(&mut self, evidence: EvidenceItem) {
-        self.language_evidence.push(evidence);
+    pub fn add_indicator_evidence(&mut self, evidence: EvidenceItem) {
+        self.indicator_evidence.push(evidence);
     }
 
     pub fn add_framework_evidence(&mut self, evidence: EvidenceItem) {
@@ -321,7 +322,7 @@ impl Default for DetectionEvidence {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DetectionResult {
-    pub language: Option<Arc<ProjectIndicator>>,
+    pub indicator: Option<Arc<Indicator>>,
     pub frameworks: Vec<FrameworkMatch>,
     pub confidence: f32,
     pub evidence: DetectionEvidence,
@@ -329,12 +330,12 @@ pub struct DetectionResult {
 
 impl DetectionResult {
     pub fn new(
-        language: Option<Arc<ProjectIndicator>>,
+        indicator: Option<Arc<Indicator>>,
         frameworks: Vec<FrameworkMatch>,
         confidence: f32,
     ) -> Self {
         Self {
-            language,
+            indicator,
             frameworks,
             confidence,
             evidence: DetectionEvidence::new(),
@@ -342,13 +343,13 @@ impl DetectionResult {
     }
 
     pub fn new_with_evidence(
-        language: Option<Arc<ProjectIndicator>>,
+        indicator: Option<Arc<Indicator>>,
         frameworks: Vec<FrameworkMatch>,
         confidence: f32,
         evidence: DetectionEvidence,
     ) -> Self {
         Self {
-            language,
+            indicator,
             frameworks,
             confidence,
             evidence,
@@ -357,14 +358,14 @@ impl DetectionResult {
 
     pub fn empty() -> Self {
         Self {
-            language: None,
+            indicator: None,
             frameworks: Vec::new(),
             confidence: 0.0,
             evidence: DetectionEvidence::new(),
         }
     }
     pub fn is_empty(&self) -> bool {
-        self.language.is_none() && self.frameworks.is_empty()
+        self.indicator.is_none() && self.frameworks.is_empty()
     }
     pub fn best_framework(&self) -> Option<&FrameworkMatch> {
         self.frameworks.iter().min_by(|a, b| {
@@ -378,12 +379,12 @@ impl DetectionResult {
     pub fn display_icon(&self) -> Option<&str> {
         self.best_framework()
             .and_then(|f| f.framework.icon.as_deref())
-            .or_else(|| self.language.as_ref().map(|l| l.icon.as_str()))
+            .or_else(|| self.indicator.as_ref().map(|l| l.icon.as_str()))
     }
     pub fn display_color(&self) -> Option<&str> {
         self.best_framework()
             .and_then(|f| f.framework.color.as_deref())
-            .or_else(|| self.language.as_ref().map(|l| l.color.as_str()))
+            .or_else(|| self.indicator.as_ref().map(|l| l.color.as_str()))
     }
 }
 
@@ -393,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_detection_result_serde_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-        let lang = crate::types::ProjectIndicator::new(
+        let lang = crate::types::Indicator::new(
             "Rust".to_string(),
             vec!["Cargo.toml".to_string()],
             "#dea584".to_string(),

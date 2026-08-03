@@ -16,9 +16,9 @@ impl RichFormatter {
             "╭─ Project Analysis ──────────────────────────────────────────────────╮".to_string(),
         );
 
-        if let Some(language) = &result.language {
+        if let Some(language) = &result.indicator {
             output.push(format!(
-                "│ 🎯 Language: {} {} │",
+                "│ 🎯 Project: {} {} │",
                 language.icon, language.name
             ));
             output.push(format!(
@@ -35,7 +35,7 @@ impl RichFormatter {
             ));
         } else {
             output.push(
-                "│ 🎯 Language: Not detected                                          │"
+                "│ 🎯 Project: Not detected                                           │"
                     .to_string(),
             );
         }
@@ -98,11 +98,11 @@ impl RichFormatter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{DetectionType, FrameworkDetector, FrameworkMatch, ProjectIndicator};
+    use crate::types::{DetectionType, Framework, FrameworkMatch, Indicator};
     use std::sync::Arc;
 
     fn create_test_result() -> DetectionResult {
-        let language = ProjectIndicator::new(
+        let language = Indicator::new(
             "TypeScript".to_string(),
             vec!["package.json".to_string()],
             "#3178C6".to_string(),
@@ -111,9 +111,10 @@ mod tests {
             vec![],
         );
 
-        let framework = FrameworkDetector {
+        let framework = Framework {
             name: "React".to_string(),
-            detection: DetectionType::NodeEcosystem {
+            ecosystems: vec![],
+            detection: DetectionType::Dependencies {
                 dependencies: vec!["react".to_string()],
             },
             icon: Some("⚛️".to_string()),
@@ -137,7 +138,7 @@ mod tests {
         let output = formatter.create_detailed_table(&result);
 
         assert!(output.contains("Project Analysis"));
-        assert!(output.contains("Language:"));
+        assert!(output.contains("Project:"));
         assert!(output.contains("Frameworks Detected:"));
         assert!(output.contains("TypeScript"));
         assert!(output.contains("React"));

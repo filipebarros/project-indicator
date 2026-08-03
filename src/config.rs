@@ -9,7 +9,7 @@ pub use self::templates::{
 };
 pub use self::validator::validate_config;
 
-use crate::types::{ConfigMeta, DetectionConfig, DisplayConfig, ProjectIndicator, TrackingConfig};
+use crate::types::{ConfigMeta, DetectionConfig, DisplayConfig, Framework, Indicator};
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Config {
@@ -19,16 +19,16 @@ pub struct Config {
     pub display: DisplayConfig,
     #[serde(default)]
     pub detection: DetectionConfig,
-    #[serde(default)]
-    pub tracking: TrackingConfig,
-    #[serde(rename = "languages")]
-    pub languages: Vec<ProjectIndicator>,
+    #[serde(default, rename = "frameworks")]
+    pub frameworks: Vec<Framework>,
+    #[serde(rename = "indicators")]
+    pub indicators: Vec<Indicator>,
 }
 
 impl Config {
-    pub fn new(languages: Vec<ProjectIndicator>) -> Self {
+    pub fn new(indicators: Vec<Indicator>) -> Self {
         Self {
-            languages,
+            indicators,
             ..Default::default()
         }
     }
@@ -41,12 +41,6 @@ impl Config {
     pub fn get_config_path() -> crate::Result<std::path::PathBuf> {
         ConfigParser::default_save_path()
     }
-    pub fn frameworks(&self) -> Vec<&crate::types::FrameworkDetector> {
-        self.languages
-            .iter()
-            .flat_map(|lang| &lang.frameworks)
-            .collect()
-    }
 }
 
 #[cfg(test)]
@@ -54,22 +48,22 @@ mod tests {
     use super::*;
 
     use crate::detection::matchers::test_helpers::helpers::{
-        create_test_framework_generic, create_test_language_with_priority,
+        create_test_framework_generic, create_test_indicator_with_priority,
     };
 
     #[test]
     fn test_config_creation() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::new(vec![]);
-        assert!(config.languages.is_empty());
-        assert_eq!(config.meta.version, "2.0");
+        assert!(config.indicators.is_empty());
+        assert_eq!(config.meta.version, "3.0");
         Ok(())
     }
 
     #[test]
     fn test_config_with_languages() -> Result<(), Box<dyn std::error::Error>> {
         let languages = vec![
-            create_test_language_with_priority("Rust", vec!["Cargo.toml"], 1),
-            create_test_language_with_priority(
+            create_test_indicator_with_priority("Rust", vec!["Cargo.toml"], 1),
+            create_test_indicator_with_priority(
                 "TypeScript",
                 vec!["package.json", "tsconfig.json"],
                 2,
@@ -78,9 +72,9 @@ mod tests {
 
         let config = Config::new(languages);
 
-        assert_eq!(config.languages.len(), 2);
-        assert_eq!(config.languages[0].name, "Rust");
-        assert_eq!(config.languages[1].name, "TypeScript");
+        assert_eq!(config.indicators.len(), 2);
+        assert_eq!(config.indicators[0].name, "Rust");
+        assert_eq!(config.indicators[1].name, "TypeScript");
         Ok(())
     }
 
@@ -91,15 +85,18 @@ mod tests {
             create_test_framework_generic("Vue", 2),
         ];
 
-        let mut languages = vec![create_test_language_with_priority(
+        let languages = vec![create_test_indicator_with_priority(
             "JavaScript",
             vec!["package.json"],
             1,
         )];
-        languages[0].frameworks = frameworks;
 
-        let config = Config::new(languages);
-        let all_frameworks = config.frameworks();
+        let config = Config {
+            frameworks,
+            indicators: languages,
+            ..Default::default()
+        };
+        let all_frameworks = config.frameworks;
 
         assert_eq!(all_frameworks.len(), 2);
         assert_eq!(all_frameworks[0].name, "React");
@@ -110,28 +107,32 @@ mod tests {
     #[test]
     fn test_config_with_multiple_languages_and_frameworks() -> Result<(), Box<dyn std::error::Error>>
     {
-        let frameworks1 = vec![create_test_framework_generic("React", 1)];
-        let frameworks2 = vec![create_test_framework_generic("Express", 2)];
-
-        let mut languages = vec![
-            create_test_language_with_priority("JavaScript", vec!["package.json", "*.js"], 1),
-            create_test_language_with_priority("TypeScript", vec!["package.json", "*.ts"], 2),
+        let frameworks = vec![
+            create_test_framework_generic("React", 1),
+            create_test_framework_generic("Express", 2),
         ];
-        languages[0].frameworks = frameworks1;
-        languages[1].frameworks = frameworks2;
 
-        let config = Config::new(languages);
+        let languages = vec![
+            create_test_indicator_with_priority("JavaScript", vec!["package.json", "*.js"], 1),
+            create_test_indicator_with_priority("TypeScript", vec!["package.json", "*.ts"], 2),
+        ];
 
-        assert_eq!(config.languages.len(), 2);
-        assert_eq!(config.frameworks().len(), 2);
-        assert_eq!(config.languages[0].name, "JavaScript");
-        assert_eq!(config.languages[1].name, "TypeScript");
+        let config = Config {
+            frameworks,
+            indicators: languages,
+            ..Default::default()
+        };
+
+        assert_eq!(config.indicators.len(), 2);
+        assert_eq!(config.frameworks.len(), 2);
+        assert_eq!(config.indicators[0].name, "JavaScript");
+        assert_eq!(config.indicators[1].name, "TypeScript");
         Ok(())
     }
 
     #[test]
     fn test_config_serialization() -> Result<(), Box<dyn std::error::Error>> {
-        let config = Config::new(vec![create_test_language_with_priority(
+        let config = Config::new(vec![create_test_indicator_with_priority(
             "Test",
             vec!["test.file"],
             1,
@@ -148,10 +149,10 @@ mod tests {
     fn test_config_defaults() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::default();
 
-        assert_eq!(config.meta.version, "2.0");
+        assert_eq!(config.meta.version, "3.0");
         assert_eq!(config.display.max_frameworks, 2);
         assert_eq!(config.detection.max_upward_traversal, 10);
-        assert!(config.languages.is_empty());
+        assert!(config.indicators.is_empty());
         Ok(())
     }
 
@@ -167,8 +168,8 @@ mod tests {
     fn test_config_empty_languages() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::new(vec![]);
 
-        assert!(config.languages.is_empty());
-        assert!(config.frameworks().is_empty());
+        assert!(config.indicators.is_empty());
+        assert!(config.frameworks.is_empty());
         Ok(())
     }
 }

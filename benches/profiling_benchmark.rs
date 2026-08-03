@@ -151,7 +151,7 @@ fn benchmark_monorepo_detection(c: &mut Criterion) -> Result<(), Box<dyn std::er
 
     let config = TemplateGenerator::generate_template(Some("full"))
         .map_err(|e| format!("Failed to generate template: {}", e))?;
-    let engine = DetectionEngineBuilder::new(config.languages).build();
+    let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks).build();
 
     // Benchmark each sub-project
     for (idx, path) in project_paths.iter().enumerate() {
@@ -182,7 +182,7 @@ fn benchmark_file_count_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::er
 
         let config = TemplateGenerator::generate_template(Some("full"))
             .map_err(|e| format!("Failed to generate template: {}", e))?;
-        let engine = DetectionEngineBuilder::new(config.languages).build();
+        let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks).build();
 
         group.bench_with_input(BenchmarkId::new("files", file_count), file_count, |b, _| {
             b.iter(|| {
@@ -207,7 +207,7 @@ fn benchmark_upward_traversal(c: &mut Criterion) -> Result<(), Box<dyn std::erro
 
         let config = TemplateGenerator::generate_template(Some("full"))
             .map_err(|e| format!("Failed to generate template: {}", e))?;
-        let engine = DetectionEngineBuilder::new(config.languages).build();
+        let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks).build();
 
         group.bench_with_input(BenchmarkId::new("depth", depth), depth, |b, _| {
             b.iter(|| {
@@ -253,7 +253,7 @@ fn benchmark_early_termination(c: &mut Criterion) -> Result<(), Box<dyn std::err
 
     let config = TemplateGenerator::generate_template(Some("full"))
         .map_err(|e| format!("Failed to generate template: {}", e))?;
-    let engine = DetectionEngineBuilder::new(config.languages).build();
+    let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks).build();
 
     group.bench_function("strong_indicators", |b| {
         b.iter(|| {
@@ -308,7 +308,7 @@ fn benchmark_framework_detection_overhead(
 
     let config = TemplateGenerator::generate_template(Some("full"))
         .map_err(|e| format!("Failed to generate template: {}", e))?;
-    let engine = DetectionEngineBuilder::new(config.languages).build();
+    let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks).build();
 
     c.bench_function("framework_detection_overhead", |b| {
         b.iter(|| {
@@ -333,7 +333,7 @@ fn benchmark_cache_effectiveness(c: &mut Criterion) -> Result<(), Box<dyn std::e
 
     let config = TemplateGenerator::generate_template(Some("full"))
         .map_err(|e| format!("Failed to generate template: {}", e))?;
-    let engine = DetectionEngineBuilder::new(config.languages).build();
+    let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks).build();
 
     c.bench_function("repeated_detection_with_cache", |b| {
         b.iter(|| {

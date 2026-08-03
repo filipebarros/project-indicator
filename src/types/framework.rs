@@ -13,7 +13,7 @@
 //! # Core Types
 //!
 //! - [`DetectionType`] - Enum defining different detection strategies per ecosystem
-//! - [`FrameworkDetector`] - Complete framework definition with detection rules
+//! - [`Framework`] - Complete framework definition with detection rules
 //! - [`FrameworkMatch`] - A detected framework with confidence score and evidence
 //!
 //! # Detection Strategies
@@ -49,12 +49,13 @@
 //! # Example: Node.js Framework Detection
 //!
 //! ```rust
-//! use project_indicator::types::{DetectionType, FrameworkDetector};
+//! use project_indicator::types::{DetectionType, Ecosystem, Framework};
 //!
 //! // Define React framework detector
-//! let react = FrameworkDetector {
+//! let react = Framework {
 //!     name: "React".to_string(),
-//!     detection: DetectionType::NodeEcosystem {
+//!     ecosystems: vec![Ecosystem::Npm],
+//!     detection: DetectionType::Dependencies {
 //!         dependencies: vec!["react".to_string(), "react-dom".to_string()],
 //!     },
 //!     icon: Some("⚛️".to_string()),
@@ -65,9 +66,10 @@
 //! };
 //!
 //! // Next.js detector with both dependencies and files
-//! let nextjs = FrameworkDetector {
+//! let nextjs = Framework {
 //!     name: "Next.js".to_string(),
-//!     detection: DetectionType::NodeEcosystem {
+//!     ecosystems: vec![Ecosystem::Npm],
+//!     detection: DetectionType::Dependencies {
 //!         dependencies: vec!["next".to_string()],
 //!     },
 //!     icon: Some("▲".to_string()),
@@ -97,11 +99,12 @@
 //! - Evidence list (files/dependencies that matched)
 //!
 //! ```rust
-//! use project_indicator::types::{FrameworkMatch, FrameworkDetector, DetectionType};
+//! use project_indicator::types::{DetectionType, Ecosystem, Framework, FrameworkMatch};
 //!
-//! let framework = FrameworkDetector {
+//! let framework = Framework {
 //!     name: "Django".to_string(),
-//!     detection: DetectionType::PythonEcosystem {
+//!     ecosystems: vec![Ecosystem::Pypi],
+//!     detection: DetectionType::Dependencies {
 //!         dependencies: vec!["django".to_string()],
 //!     },
 //!     icon: Some("🎸".to_string()),
@@ -124,30 +127,51 @@
 use crate::types::RootIndicator;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type")]
-pub enum DetectionType {
-    NodeEcosystem { dependencies: Vec<String> },
-    PythonEcosystem { dependencies: Vec<String> },
-    RustEcosystem { dependencies: Vec<String> },
-    GoEcosystem { modules: Vec<String> },
-    PHPEcosystem { packages: Vec<String> },
-    RubyEcosystem { gems: Vec<String> },
-    JavaEcosystem { dependencies: Vec<String> },
-    DotNetEcosystem { packages: Vec<String> },
-    ScalaEcosystem { dependencies: Vec<String> },
-    DartEcosystem { dependencies: Vec<String> },
-    LuaEcosystem { packages: Vec<String> },
-    KotlinEcosystem { dependencies: Vec<String> },
-    SwiftEcosystem { dependencies: Vec<String> },
-    ElixirEcosystem { dependencies: Vec<String> },
-    FileExists { files: Vec<String> },
-    ConfigFile { file: String, keys: Vec<String> },
+/// A package ecosystem: where dependency declarations live and how they are
+/// parsed. Mirrors the ecosystem matcher functions 1:1.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Ecosystem {
+    Npm,
+    Pypi,
+    Cargo,
+    Go,
+    Packagist,
+    Rubygems,
+    Maven,
+    Gradle,
+    Nuget,
+    Sbt,
+    Pub,
+    Hex,
+    Luarocks,
+    Swiftpm,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct FrameworkDetector {
+#[serde(tag = "type")]
+pub enum DetectionType {
+    /// Match dependency names in the manifests of the framework's ecosystems
+    Dependencies {
+        dependencies: Vec<String>,
+    },
+    FileExists {
+        files: Vec<String>,
+    },
+    ConfigFile {
+        file: String,
+        keys: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Framework {
     pub name: String,
+    /// Ecosystems this framework belongs to. Scopes which indicators can
+    /// surface it (intersection with the indicator's ecosystems) and which
+    /// matchers run for `Dependencies` detection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ecosystems: Vec<Ecosystem>,
     pub detection: DetectionType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
@@ -162,13 +186,13 @@ pub struct FrameworkDetector {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FrameworkMatch {
-    pub framework: FrameworkDetector,
+    pub framework: Framework,
     pub confidence: f32,
     pub evidence: Vec<String>,
 }
 
 impl FrameworkMatch {
-    pub fn new(framework: FrameworkDetector, confidence: f32, evidence: Vec<String>) -> Self {
+    pub fn new(framework: Framework, confidence: f32, evidence: Vec<String>) -> Self {
         Self {
             framework,
             confidence,

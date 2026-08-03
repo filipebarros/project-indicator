@@ -6,19 +6,15 @@ pub mod detection;
 pub mod output;
 pub mod patterns;
 pub mod performance;
-pub mod tracking;
 pub mod types;
 
 #[cfg(test)]
 pub mod test_utils;
 
-pub use types::{
-    DetectionResult, DetectionType, FrameworkDetector, FrameworkMatch, ProjectIndicator,
-};
+pub use types::{DetectionResult, DetectionType, Framework, FrameworkMatch, Indicator};
 
 pub use config::Config;
 pub use detection::DetectionEngine;
-pub use tracking::{DetectionSnapshot, ResultTracker};
 pub type Result<T, E = anyhow::Error> = std::result::Result<T, E>;
 
 #[cfg(test)]
@@ -32,19 +28,19 @@ mod tests {
             std::mem::size_of::<crate::types::DetectionResult>()
         );
         assert_eq!(
-            std::mem::size_of::<FrameworkDetector>(),
-            std::mem::size_of::<crate::types::FrameworkDetector>()
+            std::mem::size_of::<Framework>(),
+            std::mem::size_of::<crate::types::Framework>()
         );
         assert_eq!(
-            std::mem::size_of::<ProjectIndicator>(),
-            std::mem::size_of::<crate::types::ProjectIndicator>()
+            std::mem::size_of::<Indicator>(),
+            std::mem::size_of::<crate::types::Indicator>()
         );
         Ok(())
     }
 
     #[test]
     fn test_detection_engine_creation() -> Result<(), Box<dyn std::error::Error>> {
-        let engine = detection::DetectionEngineBuilder::new(vec![]).build();
+        let engine = detection::DetectionEngineBuilder::new(vec![], vec![]).build();
         // Engine can be created with empty language list
         let _ = engine;
         Ok(())
@@ -53,23 +49,23 @@ mod tests {
     #[test]
     fn test_config_creation() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::new(vec![]);
-        assert!(config.languages.is_empty());
-        assert_eq!(config.meta.version, "2.0");
+        assert!(config.indicators.is_empty());
+        assert_eq!(config.meta.version, "3.0");
         Ok(())
     }
 
     #[test]
     fn test_module_imports() -> Result<(), Box<dyn std::error::Error>> {
         let config = config::Config::default();
-        let detection = detection::DetectionEngineBuilder::new(vec![]).build();
+        let detection = detection::DetectionEngineBuilder::new(vec![], vec![]).build();
         let output = output::formatters::OutputFormat::Simple;
         let patterns_result = patterns::pattern_to_regex("*.rs");
         let performance = performance::FileSystemCache::default();
         let types = types::DetectionResult::new(None, vec![], 0.0);
 
-        assert_eq!(config.languages.len(), 0);
+        assert_eq!(config.indicators.len(), 0);
         assert!(patterns_result.is_none());
-        assert!(types.language.is_none());
+        assert!(types.indicator.is_none());
         assert_eq!(types.confidence, 0.0);
 
         let cache_stats = performance.stats();
@@ -101,7 +97,7 @@ mod tests {
     #[test]
     fn test_detection_result_creation() -> Result<(), Box<dyn std::error::Error>> {
         let result = DetectionResult::new(None, vec![], 0.0);
-        assert!(result.language.is_none());
+        assert!(result.indicator.is_none());
         assert!(result.frameworks.is_empty());
         assert_eq!(result.confidence, 0.0);
         Ok(())
@@ -111,8 +107,9 @@ mod tests {
     fn test_framework_detector_creation() -> Result<(), Box<dyn std::error::Error>> {
         use crate::types::DetectionType;
 
-        let detector = FrameworkDetector {
+        let detector = Framework {
             name: "Test".to_string(),
+            ecosystems: vec![],
             detection: DetectionType::FileExists {
                 files: vec!["test.txt".to_string()],
             },
@@ -130,7 +127,7 @@ mod tests {
 
     #[test]
     fn test_project_indicator_creation() -> Result<(), Box<dyn std::error::Error>> {
-        let indicator = ProjectIndicator::new(
+        let indicator = Indicator::new(
             "Test Language".to_string(),
             vec!["test.txt".to_string()],
             "#FF0000".to_string(),
@@ -144,7 +141,7 @@ mod tests {
         assert_eq!(indicator.color, "#FF0000");
         assert_eq!(indicator.icon, "🔥");
         assert_eq!(indicator.priority, 1);
-        assert!(indicator.frameworks.is_empty());
+        assert!(indicator.ecosystems.is_empty());
         Ok(())
     }
 
@@ -157,10 +154,10 @@ mod tests {
         };
         assert!(matches!(file_exists, DetectionType::FileExists { .. }));
 
-        let package_json = DetectionType::NodeEcosystem {
+        let package_json = DetectionType::Dependencies {
             dependencies: vec!["react".to_string()],
         };
-        assert!(matches!(package_json, DetectionType::NodeEcosystem { .. }));
+        assert!(matches!(package_json, DetectionType::Dependencies { .. }));
         Ok(())
     }
 }

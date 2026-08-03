@@ -2,11 +2,11 @@ use super::shared::root_indicator;
 use crate::constants::JULIA_EXTENSION;
 use crate::{
     config::templates::shared::nerd_icon,
-    types::{IndicatorContext, ProjectIndicator},
+    types::{Indicator, IndicatorContext},
 };
 
-pub fn create_julia_language() -> ProjectIndicator {
-    ProjectIndicator::with_root_indicators(
+pub fn create_julia_indicator() -> Indicator {
+    Indicator::with_root_indicators(
         "Julia".to_string(),
         vec![
             JULIA_EXTENSION.to_string(),

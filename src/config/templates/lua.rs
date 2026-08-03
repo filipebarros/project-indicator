@@ -1,8 +1,8 @@
-use super::shared::{nerd_icon, root_indicator};
-use crate::types::{IndicatorContext, ProjectIndicator};
+use super::shared::{nerd_icon, root_indicator, simple_framework};
+use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
 
-pub fn create_lua_language() -> ProjectIndicator {
-    ProjectIndicator::with_root_indicators(
+pub fn create_lua_indicator() -> Indicator {
+    Indicator::with_root_indicators(
         "Lua".to_string(),
         vec![
             "*.lua".to_string(),
@@ -17,7 +17,7 @@ pub fn create_lua_language() -> ProjectIndicator {
         "#000080".to_string(),
         nerd_icon("e826"),
         8,
-        vec![],
+        vec![Ecosystem::Luarocks],
         vec![
             root_indicator("init.lua", 0.95, IndicatorContext::LanguageRoot),
             root_indicator("main.lua", 0.9, IndicatorContext::LanguageRoot),
@@ -25,4 +25,17 @@ pub fn create_lua_language() -> ProjectIndicator {
             root_indicator("luarocks.lock", 0.8, IndicatorContext::LanguageRoot),
         ],
     )
+}
+
+pub fn lua_frameworks() -> Vec<Framework> {
+    vec![simple_framework(
+        "LÖVE",
+        vec![Ecosystem::Luarocks],
+        DetectionType::FileExists {
+            files: vec!["conf.lua".to_string()],
+        },
+        None,
+        Some("#e74a99"),
+        1,
+    )]
 }

@@ -2,7 +2,7 @@ use crate::detection::caches::ParsedFileCache;
 use crate::detection::matchers::DependencyMatcher;
 use crate::performance::FileSystemCache;
 use crate::types::{
-    DetectionEvidence, DetectionType, EvidenceItem, FrameworkMatch, ProjectIndicator,
+    DetectionEvidence, DetectionType, EvidenceItem, Framework, FrameworkMatch, Indicator,
 };
 use crate::Result;
 use anyhow::Context;
@@ -17,15 +17,18 @@ impl FrameworkDetector {
         Self
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn detect_frameworks_with_evidence(
         &self,
         path: &Path,
-        language: &Arc<ProjectIndicator>,
+        indicator: &Arc<Indicator>,
+        catalog: &[Framework],
         evidence: &mut DetectionEvidence,
         file_cache: &Arc<FileSystemCache>,
         parsed_cache: &ParsedFileCache,
     ) -> Result<Vec<FrameworkMatch>> {
-        let frameworks = self.detect_frameworks(path, language, file_cache, parsed_cache)?;
+        let frameworks =
+            self.detect_frameworks(path, indicator, catalog, file_cache, parsed_cache)?;
 
         for framework in &frameworks {
             for evidence_file in &framework.evidence {
@@ -43,36 +46,34 @@ impl FrameworkDetector {
     pub fn detect_frameworks(
         &self,
         path: &Path,
-        language: &Arc<ProjectIndicator>,
+        indicator: &Arc<Indicator>,
+        catalog: &[Framework],
         file_cache: &Arc<FileSystemCache>,
         parsed_cache: &ParsedFileCache,
     ) -> Result<Vec<FrameworkMatch>> {
-        if language.frameworks.is_empty() {
+        // Candidates: frameworks whose ecosystems intersect the indicator's
+        let candidates: Vec<&Framework> = catalog
+            .iter()
+            .filter(|f| {
+                f.ecosystems
+                    .iter()
+                    .any(|e| indicator.ecosystems.contains(e))
+            })
+            .collect();
+
+        if candidates.is_empty() {
             return Ok(Vec::new());
         }
 
         let mut all_matches = Vec::new();
 
-        let mut file_exists_frameworks = Vec::with_capacity(language.frameworks.len());
-        let mut config_file_frameworks = Vec::with_capacity(language.frameworks.len());
-        let mut dependency_frameworks = Vec::with_capacity(language.frameworks.len());
+        let mut file_exists_frameworks = Vec::with_capacity(candidates.len());
+        let mut config_file_frameworks = Vec::with_capacity(candidates.len());
+        let mut dependency_frameworks = Vec::with_capacity(candidates.len());
 
-        for framework in &language.frameworks {
+        for framework in candidates {
             match &framework.detection {
-                DetectionType::NodeEcosystem { .. }
-                | DetectionType::RustEcosystem { .. }
-                | DetectionType::PythonEcosystem { .. }
-                | DetectionType::PHPEcosystem { .. }
-                | DetectionType::RubyEcosystem { .. }
-                | DetectionType::GoEcosystem { .. }
-                | DetectionType::JavaEcosystem { .. }
-                | DetectionType::DotNetEcosystem { .. }
-                | DetectionType::ScalaEcosystem { .. }
-                | DetectionType::DartEcosystem { .. }
-                | DetectionType::LuaEcosystem { .. }
-                | DetectionType::KotlinEcosystem { .. }
-                | DetectionType::SwiftEcosystem { .. }
-                | DetectionType::ElixirEcosystem { .. } => {
+                DetectionType::Dependencies { .. } => {
                     dependency_frameworks.push(framework.clone());
                 }
                 DetectionType::FileExists { .. } => file_exists_frameworks.push(framework),
@@ -84,8 +85,12 @@ impl FrameworkDetector {
         let path_buf = path.to_path_buf();
 
         if !dependency_frameworks.is_empty() {
-            let mut dependency_matches =
-                DependencyMatcher::detect_frameworks(path, &dependency_frameworks, parsed_cache)?;
+            let mut dependency_matches = DependencyMatcher::detect_frameworks(
+                path,
+                &dependency_frameworks,
+                &indicator.ecosystems,
+                parsed_cache,
+            )?;
             all_matches.append(&mut dependency_matches);
         }
 
@@ -265,22 +270,28 @@ impl Default for FrameworkDetector {
 mod tests {
     use super::*;
     use crate::performance::FileSystemCache;
-    use crate::types::{DetectionType, FrameworkDetector as FwDetector};
+    use crate::types::{DetectionType, Framework as FwDetector};
     use std::fs;
     use tempfile::TempDir;
 
     fn create_test_language_with_frameworks(
         name: &str,
-        frameworks: Vec<FwDetector>,
-    ) -> Arc<ProjectIndicator> {
-        Arc::new(ProjectIndicator::new(
+        mut frameworks: Vec<FwDetector>,
+    ) -> (Arc<Indicator>, Vec<FwDetector>) {
+        for framework in &mut frameworks {
+            if framework.ecosystems.is_empty() {
+                framework.ecosystems = vec![crate::types::Ecosystem::Npm];
+            }
+        }
+        let indicator = Arc::new(Indicator::new(
             name.to_owned(),
             vec!["*.rs".to_owned()],
             "#FF0000".to_owned(),
             "🔥".to_owned(),
             1,
-            frameworks,
-        ))
+            vec![crate::types::Ecosystem::Npm],
+        ));
+        (indicator, frameworks)
     }
 
     fn create_test_directory_with_files(
@@ -305,7 +316,7 @@ mod tests {
     fn test_framework_detector_creation() -> Result<(), Box<dyn std::error::Error>> {
         let detector = FrameworkDetector::new();
 
-        let empty_language = Arc::new(ProjectIndicator::new(
+        let empty_language = Arc::new(Indicator::new(
             "Empty".to_owned(),
             vec![],
             "#000000".to_owned(),
@@ -320,6 +331,7 @@ mod tests {
         let result = detector.detect_frameworks(
             temp_dir.path(),
             &empty_language,
+            &[],
             &file_cache,
             &parsed_cache,
         );
@@ -332,7 +344,7 @@ mod tests {
     #[test]
     fn test_detect_frameworks_empty_language() -> Result<(), Box<dyn std::error::Error>> {
         let detector = FrameworkDetector::new();
-        let language = Arc::new(ProjectIndicator::new(
+        let language = Arc::new(Indicator::new(
             "Test".to_owned(),
             vec!["*.test".to_owned()],
             "#000000".to_owned(),
@@ -344,8 +356,13 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let file_cache = Arc::new(FileSystemCache::new());
         let parsed_cache = crate::detection::caches::ParsedFileCache::new();
-        let frameworks =
-            detector.detect_frameworks(temp_dir.path(), &language, &file_cache, &parsed_cache)?;
+        let frameworks = detector.detect_frameworks(
+            temp_dir.path(),
+            &language,
+            &[],
+            &file_cache,
+            &parsed_cache,
+        )?;
 
         assert!(
             frameworks.is_empty(),
@@ -476,6 +493,7 @@ tokio = "1.0"
 
         let framework1 = FwDetector {
             name: "React".to_owned(),
+            ecosystems: vec![],
             detection: DetectionType::FileExists { files: vec![] },
             icon: None,
             color: None,
@@ -486,6 +504,7 @@ tokio = "1.0"
 
         let framework2 = FwDetector {
             name: "Vue".to_owned(),
+            ecosystems: vec![],
             detection: DetectionType::FileExists { files: vec![] },
             icon: None,
             color: None,
@@ -513,6 +532,7 @@ tokio = "1.0"
 
         let framework = FwDetector {
             name: "React".to_owned(),
+            ecosystems: vec![],
             detection: DetectionType::FileExists { files: vec![] },
             icon: None,
             color: None,
@@ -539,7 +559,7 @@ tokio = "1.0"
     #[test]
     fn test_detect_frameworks_with_evidence() -> Result<(), Box<dyn std::error::Error>> {
         let detector = FrameworkDetector::new();
-        let language = create_test_language_with_frameworks("Test", vec![]);
+        let (language, catalog) = create_test_language_with_frameworks("Test", vec![]);
 
         let temp_dir = TempDir::new()?;
         let mut evidence = DetectionEvidence::new();
@@ -549,6 +569,7 @@ tokio = "1.0"
         let frameworks = detector.detect_frameworks_with_evidence(
             temp_dir.path(),
             &language,
+            &catalog,
             &mut evidence,
             &file_cache,
             &parsed_cache,
