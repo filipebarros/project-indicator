@@ -1,3 +1,4 @@
+pub mod bun;
 pub mod cpp;
 pub mod csharp;
 pub mod dart;
@@ -32,6 +33,7 @@ use anyhow::Result;
 use shared::ConfigBuilder;
 use std::collections::HashMap;
 
+use bun::create_bun_indicator;
 use cpp::create_cpp_indicator;
 use csharp::create_csharp_indicator;
 use dart::create_dart_indicator;
@@ -173,6 +175,7 @@ pub fn create_full_template() -> ConfigTemplate {
         create_scala_indicator(),
         create_lua_indicator(),
         create_deno_indicator(),
+        create_bun_indicator(),
         create_terraform_indicator(),
         create_nix_indicator(),
     ];

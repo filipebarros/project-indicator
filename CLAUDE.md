@@ -178,7 +178,7 @@ The remaining caches live and die within a single detection run:
 
 ### Configuration System
 
-**Template-based**: 22 indicator templates (`src/config/templates/`) plus a
+**Template-based**: 23 indicator templates (`src/config/templates/`) plus a
 single ecosystem-keyed framework catalog (`src/config/templates/frameworks.rs`)
 
 - Each indicator module (e.g., `rust.rs`, `deno.rs`) defines file patterns,
