@@ -782,7 +782,7 @@ dependencies = [
 
 [[package]]
 name = "project-indicator"
-version = "4.0.3"
+version = "4.1.0"
 dependencies = [
  "anyhow",
  "clap",
