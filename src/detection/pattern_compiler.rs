@@ -33,10 +33,10 @@ fn create_exact_match_marker() -> Regex {
     }
 }
 
-/// Handles pattern extraction from languages and regex compilation.
+/// Handles pattern extraction from indicators and regex compilation.
 ///
 /// This module is responsible for:
-/// - Extracting unique file patterns from language definitions
+/// - Extracting unique file patterns from indicator definitions
 /// - Compiling wildcard patterns into regex for efficient matching
 /// - Maintaining a cache of compiled regex patterns
 pub struct PatternCompiler {
@@ -45,12 +45,15 @@ pub struct PatternCompiler {
 }
 
 impl PatternCompiler {
-    pub fn new(languages: &[Arc<Indicator>]) -> Self {
-        let total_patterns_estimate: usize = languages.iter().map(|lang| lang.files.len()).sum();
+    pub fn new(indicators: &[Arc<Indicator>]) -> Self {
+        let total_patterns_estimate: usize = indicators
+            .iter()
+            .map(|indicator| indicator.files.len())
+            .sum();
         let mut all_patterns = HashSet::with_capacity(total_patterns_estimate);
 
-        for language in languages {
-            for pattern in &language.files {
+        for indicator in indicators {
+            for pattern in &indicator.files {
                 all_patterns.insert(pattern.clone());
             }
         }
@@ -160,12 +163,12 @@ mod tests {
 
     #[test]
     fn test_pattern_compiler_creation() {
-        let languages = vec![
+        let indicators = vec![
             create_test_indicator("Rust", vec!["*.rs", "Cargo.toml", "src/**/*.rs"]),
             create_test_indicator("JavaScript", vec!["*.js", "package.json", "**/*.test.js"]),
         ];
 
-        let compiler = PatternCompiler::new(&languages);
+        let compiler = PatternCompiler::new(&indicators);
 
         assert_eq!(compiler.pattern_count(), 6);
         assert!(compiler.has_compiled_pattern("*.rs"));
@@ -182,24 +185,24 @@ mod tests {
 
     #[test]
     fn test_pattern_deduplication() {
-        let languages = vec![
+        let indicators = vec![
             create_test_indicator("TypeScript", vec!["*.ts", "package.json"]),
             create_test_indicator("JavaScript", vec!["*.js", "package.json"]),
         ];
 
-        let compiler = PatternCompiler::new(&languages);
+        let compiler = PatternCompiler::new(&indicators);
 
         assert_eq!(compiler.pattern_count(), 3);
     }
 
     #[test]
     fn test_wildcard_pattern_compilation() {
-        let languages = vec![create_test_indicator(
+        let indicators = vec![create_test_indicator(
             "Rust",
             vec!["*.rs", "Cargo.toml", "*.test.*"],
         )];
 
-        let compiler = PatternCompiler::new(&languages);
+        let compiler = PatternCompiler::new(&indicators);
 
         // All patterns should be tracked in the compiler
         assert!(compiler.has_compiled_pattern("*.rs"));
@@ -218,9 +221,9 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_languages() {
-        let languages: Vec<Arc<Indicator>> = vec![];
-        let compiler = PatternCompiler::new(&languages);
+    fn test_empty_indicators() {
+        let indicators: Vec<Arc<Indicator>> = vec![];
+        let compiler = PatternCompiler::new(&indicators);
 
         assert_eq!(compiler.pattern_count(), 0);
         assert_eq!(compiler.compiled_regex_count(), 0);

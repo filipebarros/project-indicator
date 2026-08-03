@@ -18,7 +18,7 @@ pub fn handle_debug_command(cli: &Cli, verbose: bool) -> Result<()> {
     );
 
     if verbose {
-        println!("Languages: {}", config.indicators.len());
+        println!("Indicators: {}", config.indicators.len());
         println!("Frameworks: {}", config.frameworks.len());
     }
 
@@ -38,7 +38,7 @@ pub fn handle_debug_command(cli: &Cli, verbose: bool) -> Result<()> {
         println!("\nAdditional Debug Information:");
         println!("  - Detection confidence: {:.2}", result.confidence);
         println!(
-            "  - Languages detected: {}",
+            "  - Indicators detected: {}",
             if result.indicator.is_some() { 1 } else { 0 }
         );
         println!("  - Frameworks detected: {}", result.frameworks.len());

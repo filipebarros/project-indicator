@@ -29,8 +29,8 @@ const FRAMEWORK_MATCH_CONFIDENCE_FLOOR: f32 = 0.75;
 /// ```rust
 /// # use project_indicator::detection::engine::DetectionEngineBuilder;
 /// # use project_indicator::types::Indicator;
-/// let languages = vec![/* ... */];
-/// let engine = DetectionEngineBuilder::new(languages, vec![]).build();
+/// let indicators = vec![/* ... */];
+/// let engine = DetectionEngineBuilder::new(indicators, vec![]).build();
 /// ```
 pub struct DetectionEngineBuilder {
     indicators: Vec<Indicator>,
@@ -39,7 +39,7 @@ pub struct DetectionEngineBuilder {
 }
 
 impl DetectionEngineBuilder {
-    /// Creates a new builder with the given languages.
+    /// Creates a new builder with the given indicators.
     ///
     /// All components will use default configurations unless overridden
     /// via `with_*` methods.
@@ -62,7 +62,7 @@ impl DetectionEngineBuilder {
     /// A single `PatternMatcher` is created and shared across the scorer and
     /// scanner so pattern-match memoization works across the whole pipeline.
     pub fn build(self) -> DetectionEngine {
-        let languages: Vec<Arc<Indicator>> = self.indicators.into_iter().map(Arc::new).collect();
+        let indicators: Vec<Arc<Indicator>> = self.indicators.into_iter().map(Arc::new).collect();
         let frameworks = Arc::new(self.frameworks);
 
         let pattern_matcher = Arc::new(PatternMatcher::new());
@@ -73,27 +73,27 @@ impl DetectionEngineBuilder {
         let framework_detector = FrameworkDetector::new();
 
         // Create pattern compiler and scanning engine
-        let pattern_compiler = PatternCompiler::new(&languages);
+        let pattern_compiler = PatternCompiler::new(&indicators);
         let file_cache = cache_manager.file_existence_cache();
 
         let scanning_engine = ScanningEngine::with_cache(
             PatternProcessor::new(
                 pattern_matcher.clone(),
                 pattern_compiler.unique_patterns(),
-                languages.clone(),
+                indicators.clone(),
             ),
             self.config.max_depth,
             Some(file_cache),
         );
 
         let root_indicator_engine = RootIndicatorEngine::from_parts(
-            languages.clone(),
+            indicators.clone(),
             frameworks.clone(),
             self.config.clone(),
         );
 
         DetectionEngine {
-            languages, // Use the converted Arc<Indicator> version
+            indicators, // Use the converted Arc<Indicator> version
             frameworks,
             cache_manager,
             confidence_scorer,
@@ -105,10 +105,10 @@ impl DetectionEngineBuilder {
     }
 }
 
-/// Main detection engine for identifying project languages and frameworks.
+/// Main detection engine for identifying project indicators and frameworks.
 ///
 /// The DetectionEngine coordinates multiple specialized components to analyze
-/// a project directory and determine its primary language and frameworks.
+/// a project directory and determine its primary indicator and frameworks.
 ///
 /// ## Construction
 ///
@@ -116,26 +116,26 @@ impl DetectionEngineBuilder {
 /// ```rust
 /// # use project_indicator::detection::engine::DetectionEngineBuilder;
 /// # use project_indicator::types::Indicator;
-/// let languages = vec![/* ... */];
-/// let engine = DetectionEngineBuilder::new(languages, vec![]).build();
+/// let indicators = vec![/* ... */];
+/// let engine = DetectionEngineBuilder::new(indicators, vec![]).build();
 /// ```
 ///
 /// **Simple**: Use direct constructors for default configuration:
 /// ```rust
 /// # use project_indicator::detection::engine::DetectionEngine;
 /// # use project_indicator::types::Indicator;
-/// let languages = vec![/* ... */];
-/// let engine = DetectionEngine::new(languages, vec![]);
+/// let indicators = vec![/* ... */];
+/// let engine = DetectionEngine::new(indicators, vec![]);
 /// ```
 ///
 /// ## Architecture
 ///
-/// - **PatternCompiler**: Extracts and compiles file patterns from language definitions
+/// - **PatternCompiler**: Extracts and compiles file patterns from indicator definitions
 /// - **FileSystemCacheManager**: Manages file existence and parsed file caches
 /// - **ScanningEngine**: Performs directory traversal and file matching with adaptive performance
-/// - **IndicatorResolver**: Resolves language conflicts when multiple languages detected
-/// - **ConfidenceScorer**: Calculates confidence scores for language matches
-/// - **FrameworkDetector**: Identifies frameworks within detected languages
+/// - **IndicatorResolver**: Resolves indicator conflicts when multiple indicators detected
+/// - **ConfidenceScorer**: Calculates confidence scores for indicator matches
+/// - **FrameworkDetector**: Identifies frameworks within detected indicators
 /// - **RootIndicatorEngine**: Fast path detection using root indicator files
 ///
 /// ## Shared Resources
@@ -143,7 +143,7 @@ impl DetectionEngineBuilder {
 /// ### PatternMatcher Ownership
 ///
 /// DetectionEngine creates a single `Arc<PatternMatcher>` instance and shares it with:
-/// - `ConfidenceScorer` - for calculating language match confidence
+/// - `ConfidenceScorer` - for calculating indicator match confidence
 /// - `ScanningEngine` (via `PatternProcessor`) - for efficient file pattern matching
 ///
 /// This design ensures:
@@ -152,7 +152,7 @@ impl DetectionEngineBuilder {
 /// 3. **Thread safety** - PatternMatcher uses DashMap for concurrent access
 /// 4. **Performance** - Cache hits across entire detection pipeline
 pub struct DetectionEngine {
-    languages: Vec<Arc<Indicator>>,
+    indicators: Vec<Arc<Indicator>>,
     frameworks: Arc<Vec<Framework>>,
 
     // Specialized components
@@ -174,9 +174,9 @@ impl DetectionEngine {
     /// ```rust
     /// # use project_indicator::detection::engine::DetectionEngineBuilder;
     /// # use project_indicator::types::{Indicator, DetectionConfig};
-    /// # let languages = vec![];
+    /// # let indicators = vec![];
     /// # let custom_config = DetectionConfig::default();
-    /// let engine = DetectionEngineBuilder::new(languages, vec![])
+    /// let engine = DetectionEngineBuilder::new(indicators, vec![])
     ///     .with_config(custom_config)
     ///     .build();
     /// ```
@@ -192,9 +192,9 @@ impl DetectionEngine {
     /// ```rust
     /// # use project_indicator::detection::engine::DetectionEngineBuilder;
     /// # use project_indicator::types::{Indicator, DetectionConfig};
-    /// # let languages = vec![];
+    /// # let indicators = vec![];
     /// # let config = DetectionConfig::default();
-    /// let engine = DetectionEngineBuilder::new(languages, vec![])
+    /// let engine = DetectionEngineBuilder::new(indicators, vec![])
     ///     .with_config(config)
     ///     .build();
     /// ```
@@ -282,11 +282,11 @@ impl DetectionEngine {
 
             // Framework detection is not gated on confidence: a framework
             // dependency in a manifest is evidence in its own right
-            let frameworks = if let Some(ref language) = early_result.indicator {
+            let frameworks = if let Some(ref indicator) = early_result.indicator {
                 self.framework_detector
                     .detect_frameworks_with_evidence(
                         &scan_path,
-                        language,
+                        indicator,
                         &self.frameworks,
                         &mut evidence,
                         &self.cache_manager.file_existence_cache(),
@@ -331,16 +331,16 @@ impl DetectionEngine {
             ));
         }
 
-        let detected_language = self
+        let detected_indicator = self
             .indicator_resolver
             .detect_indicator_with_conflict_resolution_and_evidence(
-                &self.languages,
+                &self.indicators,
                 &detailed_files,
                 &mut evidence,
             );
 
-        let language = match detected_language {
-            Some(lang) => lang,
+        let indicator = match detected_indicator {
+            Some(indicator) => indicator,
             None => {
                 return Ok(DetectionResult::new_with_evidence(
                     None,
@@ -354,10 +354,10 @@ impl DetectionEngine {
         let confidence = self
             .confidence_scorer
             .calculate_indicator_score_with_evidence(
-                &language,
+                &indicator,
                 &detailed_files,
                 &mut evidence,
-                &self.languages,
+                &self.indicators,
             );
 
         // Framework detection is not gated on confidence: a framework
@@ -366,7 +366,7 @@ impl DetectionEngine {
             .framework_detector
             .detect_frameworks_with_evidence(
                 &scan_path,
-                &language,
+                &indicator,
                 &self.frameworks,
                 &mut evidence,
                 &self.cache_manager.file_existence_cache(),
@@ -374,13 +374,13 @@ impl DetectionEngine {
             )
             .with_context(|| "Failed to detect frameworks")?;
 
-        // The ratio score punishes languages with many patterns for files
+        // The ratio score punishes indicators with many patterns for files
         // they don't have, so a canonical project can read implausibly low.
         // Floor the displayed confidence by the strongest evidence found: a
         // matched root manifest, or a confirmed framework dependency.
         let root_floor = self
             .confidence_scorer
-            .strongest_root_match(&language, &detailed_files)
+            .strongest_root_match(&indicator, &detailed_files)
             * ROOT_MATCH_CONFIDENCE_FACTOR;
         let framework_floor = if frameworks.is_empty() {
             0.0
@@ -398,7 +398,7 @@ impl DetectionEngine {
         }
 
         let result =
-            DetectionResult::new_with_evidence(Some(language), frameworks, floored, evidence);
+            DetectionResult::new_with_evidence(Some(indicator), frameworks, floored, evidence);
 
         Ok(result)
     }
@@ -419,31 +419,31 @@ mod tests {
 
     #[test]
     fn test_detection_engine_creation() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"])];
-        let engine = DetectionEngineBuilder::new(languages, vec![]).build();
+        let indicators = vec![create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"])];
+        let engine = DetectionEngineBuilder::new(indicators, vec![]).build();
 
-        assert_eq!(engine.languages.len(), 1);
-        assert_eq!(engine.languages[0].name, "Rust");
+        assert_eq!(engine.indicators.len(), 1);
+        assert_eq!(engine.indicators[0].name, "Rust");
         Ok(())
     }
 
     #[test]
     fn test_detection_engine_with_config() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"])];
+        let indicators = vec![create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"])];
         let config = DetectionConfig::default();
-        let engine = DetectionEngineBuilder::new(languages, vec![])
+        let engine = DetectionEngineBuilder::new(indicators, vec![])
             .with_config(config)
             .build();
 
-        assert_eq!(engine.languages.len(), 1);
+        assert_eq!(engine.indicators.len(), 1);
         // Pattern compilation is handled internally during initialization
         Ok(())
     }
 
     #[test]
     fn test_detect_rust_project() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"])];
-        let engine = DetectionEngineBuilder::new(languages, vec![]).build();
+        let indicators = vec![create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"])];
+        let engine = DetectionEngineBuilder::new(indicators, vec![]).build();
         let temp_dir = create_test_rust_project()?;
 
         let result = engine.detect(temp_dir.path())?;
@@ -453,7 +453,7 @@ mod tests {
             result
                 .indicator
                 .as_ref()
-                .ok_or("Failed to get language reference")?
+                .ok_or("Failed to get indicator reference")?
                 .name,
             "Rust"
         );
@@ -463,11 +463,11 @@ mod tests {
 
     #[test]
     fn test_detect_no_match() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator(
+        let indicators = vec![create_test_indicator(
             "Python",
             vec!["*.py", "requirements.txt"],
         )];
-        let engine = DetectionEngineBuilder::new(languages, vec![]).build();
+        let engine = DetectionEngineBuilder::new(indicators, vec![]).build();
         let temp_dir = create_test_rust_project()?;
 
         let result = engine.detect(temp_dir.path())?;

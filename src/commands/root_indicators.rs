@@ -128,7 +128,7 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
                     }
                 }
 
-                println!("\n🔤 Language: {}", lang.name);
+                println!("\n🔤 Indicator: {}", lang.name);
                 for indicator in &lang.root_indicators {
                     let is_conflicting = conflicting_patterns.contains(&indicator.pattern);
                     if *conflicts_only && !is_conflicting {
@@ -255,7 +255,7 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
                 println!("  • Consider standardizing weights across similar file types");
                 println!("  • Use context-aware resolution for better conflict handling");
                 println!(
-                    "  • Review framework-specific indicators for overlap with language indicators"
+                    "  • Review framework-specific indicators for overlap with indicator root indicators"
                 );
             }
 
@@ -271,10 +271,10 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
             let stats = engine.get_root_indicator_stats();
 
             println!("📊 Overview:");
-            println!("  Total languages: {}", stats.total_languages);
+            println!("  Total indicators: {}", stats.total_indicators);
             println!(
-                "  Language root indicators: {}",
-                stats.total_language_indicators
+                "  Indicator root indicators: {}",
+                stats.total_indicator_root_indicators
             );
             println!(
                 "  Framework root indicators: {}",
@@ -286,10 +286,10 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
             );
 
             let early_termination_ratio =
-                if stats.total_language_indicators + stats.total_framework_indicators > 0 {
+                if stats.total_indicator_root_indicators + stats.total_framework_indicators > 0 {
                     (stats.early_termination_patterns as f64)
-                        / ((stats.total_language_indicators + stats.total_framework_indicators)
-                            as f64)
+                        / ((stats.total_indicator_root_indicators
+                            + stats.total_framework_indicators) as f64)
                         * 100.0
                 } else {
                     0.0
