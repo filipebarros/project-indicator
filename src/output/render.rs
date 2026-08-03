@@ -8,8 +8,34 @@ pub struct SimpleRenderer;
 
 impl Render for SimpleRenderer {
     fn render(&self, result: &DetectionResult, _config: &DisplayConfig) -> String {
-        result.display_icon().unwrap_or("").into()
+        let icon = result.display_icon().unwrap_or("");
+        if icon.is_empty() {
+            return String::new();
+        }
+
+        // Color the icon with ANSI truecolor so prompts show the configured
+        // color. NO_COLOR (https://no-color.org) disables it.
+        if std::env::var_os("NO_COLOR").is_none() {
+            if let Some((r, g, b)) = result.display_color().and_then(hex_to_rgb) {
+                return format!("\x1b[38;2;{r};{g};{b}m{icon}\x1b[0m");
+            }
+        }
+
+        icon.into()
     }
+}
+
+/// Parse a `#rrggbb` hex color into RGB components. Returns `None` for any
+/// other shape (shorthand `#fff`, missing `#`, non-hex digits).
+fn hex_to_rgb(color: &str) -> Option<(u8, u8, u8)> {
+    let hex = color.strip_prefix('#')?;
+    if hex.len() != 6 || !hex.is_ascii() {
+        return None;
+    }
+    let r = u8::from_str_radix(hex.get(0..2)?, 16).ok()?;
+    let g = u8::from_str_radix(hex.get(2..4)?, 16).ok()?;
+    let b = u8::from_str_radix(hex.get(4..6)?, 16).ok()?;
+    Some((r, g, b))
 }
 
 pub struct FullRenderer;
@@ -280,14 +306,24 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_renderer() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_simple_renderer_colors_the_icon() -> Result<(), Box<dyn std::error::Error>> {
         let result = create_test_result();
         let config = DisplayConfig::default();
         let renderer = SimpleRenderer;
 
+        // create_test_result: React framework, icon ⚛, color #61DAFB
         let output = renderer.render(&result, &config);
-        assert_eq!(output, "⚛");
+        assert_eq!(output, "\x1b[38;2;97;218;251m⚛\x1b[0m");
         Ok(())
+    }
+
+    #[test]
+    fn test_hex_to_rgb() {
+        assert_eq!(hex_to_rgb("#61dafb"), Some((97, 218, 251)));
+        assert_eq!(hex_to_rgb("#F7DF1E"), Some((247, 223, 30)));
+        assert_eq!(hex_to_rgb("61dafb"), None);
+        assert_eq!(hex_to_rgb("#xyzxyz"), None);
+        assert_eq!(hex_to_rgb("#fff"), None);
     }
 
     #[test]

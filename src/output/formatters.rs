@@ -96,7 +96,8 @@ mod tests {
         let formatter = OutputFormatter::new(display_config);
 
         let output = formatter.format(&result, OutputFormat::Simple);
-        assert_eq!(output, "⚛️");
+        // Icon wrapped in ANSI truecolor from the framework color (#61DAFB)
+        assert_eq!(output, "\x1b[38;2;97;218;251m⚛️\x1b[0m");
         Ok(())
     }
 
