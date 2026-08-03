@@ -1,7 +1,7 @@
 use super::common::{calculate_dependency_confidence, sort_framework_matches};
 use super::ecosystems::*;
 use crate::detection::caches::ParsedFileCache;
-use crate::types::{DetectionType, FrameworkDetector, FrameworkMatch};
+use crate::types::{DetectionType, Ecosystem, Framework, FrameworkMatch};
 use crate::Result;
 use std::path::Path;
 
@@ -10,7 +10,8 @@ pub struct DependencyMatcher;
 impl DependencyMatcher {
     pub fn detect_frameworks<P: AsRef<Path>>(
         path: P,
-        frameworks: &[FrameworkDetector],
+        frameworks: &[Framework],
+        active_ecosystems: &[Ecosystem],
         parsed_cache: &ParsedFileCache,
     ) -> Result<Vec<FrameworkMatch>> {
         let path_buf = path.as_ref().to_path_buf();
@@ -18,7 +19,7 @@ impl DependencyMatcher {
         let matches: Vec<FrameworkMatch> = frameworks
             .iter()
             .filter_map(|framework| {
-                Self::try_detect_ecosystem_framework(&path_buf, framework, parsed_cache)
+                Self::try_detect_framework(&path_buf, framework, active_ecosystems, parsed_cache)
                     .ok()
                     .flatten()
             })
@@ -29,101 +30,100 @@ impl DependencyMatcher {
         Ok(sorted_matches)
     }
 
-    fn try_detect_ecosystem_framework<P: AsRef<Path>>(
+    /// Run the matcher for each of the framework's ecosystems that is also
+    /// active for the detected indicator, until one produces a hit.
+    fn try_detect_framework<P: AsRef<Path>>(
         path: P,
-        framework: &FrameworkDetector,
+        framework: &Framework,
+        active_ecosystems: &[Ecosystem],
         parsed_cache: &ParsedFileCache,
     ) -> Result<Option<FrameworkMatch>> {
-        let (found_deps, evidence) = match &framework.detection {
-            DetectionType::NodeEcosystem { dependencies } => {
-                check_node_ecosystem(&path, dependencies, parsed_cache)?
-            }
-            DetectionType::PythonEcosystem { dependencies } => {
-                check_python_ecosystem(&path, dependencies, parsed_cache)?
-            }
-            DetectionType::RustEcosystem { dependencies } => {
-                check_rust_ecosystem(&path, dependencies, parsed_cache)?
-            }
-            DetectionType::GoEcosystem { modules } => {
-                check_go_ecosystem(&path, modules, parsed_cache)?
-            }
-            DetectionType::PHPEcosystem { packages } => {
-                check_php_ecosystem(&path, packages, parsed_cache)?
-            }
-            DetectionType::RubyEcosystem { gems } => {
-                check_ruby_ecosystem(&path, gems, parsed_cache)?
-            }
-            DetectionType::JavaEcosystem { dependencies } => {
-                check_java_ecosystem(&path, dependencies, parsed_cache)?
-            }
-            DetectionType::DotNetEcosystem { packages } => {
-                check_dotnet_ecosystem(&path, packages, parsed_cache)?
-            }
-            DetectionType::ScalaEcosystem { dependencies } => {
-                check_scala_ecosystem(&path, dependencies, parsed_cache)?
-            }
-            DetectionType::DartEcosystem { dependencies } => {
-                check_dart_ecosystem(&path, dependencies, parsed_cache)?
-            }
-            DetectionType::LuaEcosystem { packages } => {
-                check_lua_ecosystem(&path, packages, parsed_cache)?
-            }
-            DetectionType::KotlinEcosystem { dependencies } => {
-                check_kotlin_ecosystem(&path, dependencies, parsed_cache)?
-            }
-            DetectionType::SwiftEcosystem { dependencies } => {
-                check_swift_ecosystem(&path, dependencies, parsed_cache)?
-            }
-            DetectionType::ElixirEcosystem { dependencies } => {
-                check_elixir_ecosystem(&path, dependencies, parsed_cache)?
-            }
-            _ => return Ok(None),
+        let DetectionType::Dependencies { dependencies } = &framework.detection else {
+            return Ok(None);
         };
 
-        if found_deps.is_empty() {
-            return Ok(None);
+        for ecosystem in &framework.ecosystems {
+            if !active_ecosystems.contains(ecosystem) {
+                continue;
+            }
+
+            let (found_deps, evidence) =
+                check_ecosystem(*ecosystem, &path, dependencies, parsed_cache)?;
+
+            if !found_deps.is_empty() {
+                let confidence = calculate_dependency_confidence(dependencies, &found_deps);
+                return Ok(Some(FrameworkMatch::new(
+                    framework.clone(),
+                    confidence,
+                    evidence,
+                )));
+            }
         }
 
-        let target_deps = Self::get_target_dependencies(&framework.detection);
-        let confidence = calculate_dependency_confidence(&target_deps, &found_deps);
-        Ok(Some(FrameworkMatch::new(
-            framework.clone(),
-            confidence,
-            evidence,
-        )))
+        Ok(None)
     }
+}
 
-    fn get_target_dependencies(detection: &DetectionType) -> Vec<String> {
-        match detection {
-            DetectionType::NodeEcosystem { dependencies }
-            | DetectionType::PythonEcosystem { dependencies }
-            | DetectionType::RustEcosystem { dependencies }
-            | DetectionType::JavaEcosystem { dependencies }
-            | DetectionType::ScalaEcosystem { dependencies }
-            | DetectionType::DartEcosystem { dependencies }
-            | DetectionType::KotlinEcosystem { dependencies }
-            | DetectionType::SwiftEcosystem { dependencies }
-            | DetectionType::ElixirEcosystem { dependencies } => dependencies.clone(),
-            DetectionType::GoEcosystem { modules } => modules.clone(),
-            DetectionType::PHPEcosystem { packages }
-            | DetectionType::DotNetEcosystem { packages }
-            | DetectionType::LuaEcosystem { packages } => packages.clone(),
-            DetectionType::RubyEcosystem { gems } => gems.clone(),
-            _ => Vec::new(),
+/// Dispatch a dependency check to the matcher for the given ecosystem.
+pub fn check_ecosystem<P: AsRef<Path>>(
+    ecosystem: Ecosystem,
+    path: P,
+    dependencies: &[String],
+    parsed_cache: &ParsedFileCache,
+) -> Result<(Vec<String>, Vec<String>)> {
+    match ecosystem {
+        Ecosystem::Npm => check_node_ecosystem(&path, dependencies, parsed_cache),
+        Ecosystem::Pypi => check_python_ecosystem(&path, dependencies, parsed_cache),
+        Ecosystem::Cargo => check_rust_ecosystem(&path, dependencies, parsed_cache),
+        Ecosystem::Go => check_go_ecosystem(&path, dependencies, parsed_cache),
+        Ecosystem::Packagist => check_php_ecosystem(&path, dependencies, parsed_cache),
+        Ecosystem::Rubygems => check_ruby_ecosystem(&path, dependencies, parsed_cache),
+        // Both JVM ecosystems share manifests (pom.xml, build.gradle[.kts]);
+        // the java matcher reads all of them
+        Ecosystem::Maven | Ecosystem::Gradle => {
+            check_java_ecosystem(&path, dependencies, parsed_cache)
         }
+        Ecosystem::Nuget => check_dotnet_ecosystem(&path, dependencies, parsed_cache),
+        Ecosystem::Sbt => check_scala_ecosystem(&path, dependencies, parsed_cache),
+        Ecosystem::Pub => check_dart_ecosystem(&path, dependencies, parsed_cache),
+        Ecosystem::Hex => check_elixir_ecosystem(&path, dependencies, parsed_cache),
+        Ecosystem::Luarocks => check_lua_ecosystem(&path, dependencies, parsed_cache),
+        Ecosystem::Swiftpm => check_swift_ecosystem(&path, dependencies, parsed_cache),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::DetectionType;
+    use crate::types::{DetectionType, Ecosystem};
     use std::fs;
     use tempfile::TempDir;
 
-    fn create_test_framework(name: &str, detection: DetectionType) -> FrameworkDetector {
-        FrameworkDetector {
+    const ALL_ECOSYSTEMS: [Ecosystem; 14] = [
+        Ecosystem::Npm,
+        Ecosystem::Pypi,
+        Ecosystem::Cargo,
+        Ecosystem::Go,
+        Ecosystem::Packagist,
+        Ecosystem::Rubygems,
+        Ecosystem::Maven,
+        Ecosystem::Gradle,
+        Ecosystem::Nuget,
+        Ecosystem::Sbt,
+        Ecosystem::Pub,
+        Ecosystem::Hex,
+        Ecosystem::Luarocks,
+        Ecosystem::Swiftpm,
+    ];
+
+    fn create_test_framework(
+        name: &str,
+        ecosystems: Vec<Ecosystem>,
+        detection: DetectionType,
+    ) -> Framework {
+        Framework {
             name: name.to_string(),
+            ecosystems: ecosystems.clone(),
             detection,
             icon: None,
             color: None,
@@ -151,12 +151,18 @@ serde = "1.0"
 
         let framework = create_test_framework(
             "Tokio",
-            DetectionType::RustEcosystem {
+            vec![Ecosystem::Cargo],
+            DetectionType::Dependencies {
                 dependencies: vec!["tokio".to_string()],
             },
         );
 
-        let matches = DependencyMatcher::detect_frameworks(temp_dir.path(), &[framework], &cache)?;
+        let matches = DependencyMatcher::detect_frameworks(
+            temp_dir.path(),
+            &[framework],
+            &ALL_ECOSYSTEMS,
+            &cache,
+        )?;
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].framework.name, "Tokio");
@@ -181,12 +187,18 @@ serde = "1.0"
 
         let framework = create_test_framework(
             "React",
-            DetectionType::NodeEcosystem {
+            vec![Ecosystem::Npm],
+            DetectionType::Dependencies {
                 dependencies: vec!["react".to_string()],
             },
         );
 
-        let matches = DependencyMatcher::detect_frameworks(temp_dir.path(), &[framework], &cache)?;
+        let matches = DependencyMatcher::detect_frameworks(
+            temp_dir.path(),
+            &[framework],
+            &ALL_ECOSYSTEMS,
+            &cache,
+        )?;
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].framework.name, "React");
@@ -211,19 +223,26 @@ serde = "1.0"
         let frameworks = vec![
             create_test_framework(
                 "React",
-                DetectionType::NodeEcosystem {
+                vec![Ecosystem::Npm],
+                DetectionType::Dependencies {
                     dependencies: vec!["react".to_string()],
                 },
             ),
             create_test_framework(
                 "Vue",
-                DetectionType::NodeEcosystem {
+                vec![Ecosystem::Npm],
+                DetectionType::Dependencies {
                     dependencies: vec!["vue".to_string()],
                 },
             ),
         ];
 
-        let matches = DependencyMatcher::detect_frameworks(temp_dir.path(), &frameworks, &cache)?;
+        let matches = DependencyMatcher::detect_frameworks(
+            temp_dir.path(),
+            &frameworks,
+            &ALL_ECOSYSTEMS,
+            &cache,
+        )?;
 
         assert_eq!(matches.len(), 2);
         let names: Vec<&str> = matches.iter().map(|m| m.framework.name.as_str()).collect();
@@ -262,12 +281,18 @@ serde = "1.0"
 
         let framework = create_test_framework(
             "React",
-            DetectionType::NodeEcosystem {
+            vec![Ecosystem::Npm],
+            DetectionType::Dependencies {
                 dependencies: vec!["react".to_string()],
             },
         );
 
-        let matches = DependencyMatcher::detect_frameworks(temp_dir.path(), &[framework], &cache)?;
+        let matches = DependencyMatcher::detect_frameworks(
+            temp_dir.path(),
+            &[framework],
+            &ALL_ECOSYSTEMS,
+            &cache,
+        )?;
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].framework.name, "React");
@@ -298,12 +323,18 @@ react@^18.2.0:
 
         let framework = create_test_framework(
             "React",
-            DetectionType::NodeEcosystem {
+            vec![Ecosystem::Npm],
+            DetectionType::Dependencies {
                 dependencies: vec!["react".to_string()],
             },
         );
 
-        let matches = DependencyMatcher::detect_frameworks(temp_dir.path(), &[framework], &cache)?;
+        let matches = DependencyMatcher::detect_frameworks(
+            temp_dir.path(),
+            &[framework],
+            &ALL_ECOSYSTEMS,
+            &cache,
+        )?;
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].framework.name, "React");
@@ -337,12 +368,18 @@ packages:
 
         let framework = create_test_framework(
             "React",
-            DetectionType::NodeEcosystem {
+            vec![Ecosystem::Npm],
+            DetectionType::Dependencies {
                 dependencies: vec!["react".to_string()],
             },
         );
 
-        let matches = DependencyMatcher::detect_frameworks(temp_dir.path(), &[framework], &cache)?;
+        let matches = DependencyMatcher::detect_frameworks(
+            temp_dir.path(),
+            &[framework],
+            &ALL_ECOSYSTEMS,
+            &cache,
+        )?;
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].framework.name, "React");
@@ -399,12 +436,18 @@ packages:
 
         let framework = create_test_framework(
             "Laravel",
-            DetectionType::PHPEcosystem {
-                packages: vec!["laravel/framework".to_string()],
+            vec![Ecosystem::Packagist],
+            DetectionType::Dependencies {
+                dependencies: vec!["laravel/framework".to_string()],
             },
         );
 
-        let matches = DependencyMatcher::detect_frameworks(temp_dir.path(), &[framework], &cache)?;
+        let matches = DependencyMatcher::detect_frameworks(
+            temp_dir.path(),
+            &[framework],
+            &ALL_ECOSYSTEMS,
+            &cache,
+        )?;
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].framework.name, "Laravel");
@@ -462,12 +505,18 @@ BUNDLED WITH
 
         let framework = create_test_framework(
             "Rails",
-            DetectionType::RubyEcosystem {
-                gems: vec!["rails".to_string()],
+            vec![Ecosystem::Rubygems],
+            DetectionType::Dependencies {
+                dependencies: vec!["rails".to_string()],
             },
         );
 
-        let matches = DependencyMatcher::detect_frameworks(temp_dir.path(), &[framework], &cache)?;
+        let matches = DependencyMatcher::detect_frameworks(
+            temp_dir.path(),
+            &[framework],
+            &ALL_ECOSYSTEMS,
+            &cache,
+        )?;
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].framework.name, "Rails");
@@ -519,12 +568,18 @@ content-hash = "f7c7852a5ac5a3da5a8d5b35cc6168f31b605971441798dac845f17ca8028039
 
         let framework = create_test_framework(
             "Django",
-            DetectionType::PythonEcosystem {
+            vec![Ecosystem::Pypi],
+            DetectionType::Dependencies {
                 dependencies: vec!["django".to_string()],
             },
         );
 
-        let matches = DependencyMatcher::detect_frameworks(temp_dir.path(), &[framework], &cache)?;
+        let matches = DependencyMatcher::detect_frameworks(
+            temp_dir.path(),
+            &[framework],
+            &ALL_ECOSYSTEMS,
+            &cache,
+        )?;
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].framework.name, "Django");
@@ -586,12 +641,18 @@ dependencies = [
 
         let framework = create_test_framework(
             "Axum",
-            DetectionType::RustEcosystem {
+            vec![Ecosystem::Cargo],
+            DetectionType::Dependencies {
                 dependencies: vec!["axum".to_string()],
             },
         );
 
-        let matches = DependencyMatcher::detect_frameworks(temp_dir.path(), &[framework], &cache)?;
+        let matches = DependencyMatcher::detect_frameworks(
+            temp_dir.path(),
+            &[framework],
+            &ALL_ECOSYSTEMS,
+            &cache,
+        )?;
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].framework.name, "Axum");
@@ -629,7 +690,8 @@ dependencies = [
 
         let framework = create_test_framework(
             "Spring Boot",
-            DetectionType::JavaEcosystem {
+            vec![Ecosystem::Maven],
+            DetectionType::Dependencies {
                 dependencies: vec![
                     "spring-boot-starter".to_string(),
                     "spring-boot-starter-web".to_string(),
@@ -637,7 +699,12 @@ dependencies = [
             },
         );
 
-        let matches = DependencyMatcher::detect_frameworks(temp_dir.path(), &[framework], &cache)?;
+        let matches = DependencyMatcher::detect_frameworks(
+            temp_dir.path(),
+            &[framework],
+            &ALL_ECOSYSTEMS,
+            &cache,
+        )?;
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].framework.name, "Spring Boot");
@@ -669,7 +736,8 @@ dependencies {
 
         let framework = create_test_framework(
             "Spring Boot",
-            DetectionType::JavaEcosystem {
+            vec![Ecosystem::Gradle],
+            DetectionType::Dependencies {
                 dependencies: vec![
                     "spring-boot-starter".to_string(),
                     "spring-boot-starter-web".to_string(),
@@ -677,7 +745,12 @@ dependencies {
             },
         );
 
-        let matches = DependencyMatcher::detect_frameworks(temp_dir.path(), &[framework], &cache)?;
+        let matches = DependencyMatcher::detect_frameworks(
+            temp_dir.path(),
+            &[framework],
+            &ALL_ECOSYSTEMS,
+            &cache,
+        )?;
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].framework.name, "Spring Boot");
@@ -707,15 +780,21 @@ dependencies {
 
         let framework = create_test_framework(
             "ASP.NET Core",
-            DetectionType::DotNetEcosystem {
-                packages: vec![
+            vec![Ecosystem::Nuget],
+            DetectionType::Dependencies {
+                dependencies: vec![
                     "Microsoft.AspNetCore".to_string(),
                     "Microsoft.EntityFrameworkCore".to_string(),
                 ],
             },
         );
 
-        let matches = DependencyMatcher::detect_frameworks(temp_dir.path(), &[framework], &cache)?;
+        let matches = DependencyMatcher::detect_frameworks(
+            temp_dir.path(),
+            &[framework],
+            &ALL_ECOSYSTEMS,
+            &cache,
+        )?;
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].framework.name, "ASP.NET Core");

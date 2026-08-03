@@ -18,7 +18,7 @@ impl Render for FullRenderer {
     fn render(&self, result: &DetectionResult, config: &DisplayConfig) -> String {
         let mut components = Vec::new();
 
-        if let Some(language) = &result.language {
+        if let Some(language) = &result.indicator {
             components.push(format!("{}|{}", language.icon, language.color));
         }
 
@@ -45,7 +45,7 @@ impl Render for JsonRenderer {
 
         #[derive(Debug, Serialize, Deserialize)]
         struct JsonOutput {
-            language: Option<String>,
+            indicator: Option<String>,
             frameworks: Vec<String>,
             icon: Option<String>,
             color: Option<String>,
@@ -73,7 +73,7 @@ impl Render for JsonRenderer {
         };
 
         let json_output = JsonOutput {
-            language: result.language.as_ref().map(|l| l.name.clone()),
+            indicator: result.indicator.as_ref().map(|l| l.name.clone()),
             frameworks: frameworks.into_iter().map(String::from).collect(),
             icon: result.display_icon().map(String::from),
             color: result.display_color().map(String::from),
@@ -87,7 +87,7 @@ impl Render for JsonRenderer {
                 eprintln!("Warning: JSON serialization failed: {}", e);
 
                 let fallback = JsonOutput {
-                    language: result.language.as_ref().map(|l| l.name.clone()),
+                    indicator: result.indicator.as_ref().map(|l| l.name.clone()),
                     frameworks: vec![],
                     icon: None,
                     color: None,
@@ -137,12 +137,12 @@ impl Render for CompactRenderer {
 
         if let Some(framework) = result.best_framework() {
             parts.push(self.compact_name(&framework.framework.name));
-        } else if let Some(language) = &result.language {
+        } else if let Some(language) = &result.indicator {
             parts.push(self.compact_name(&language.name));
         }
 
         if result.best_framework().is_some() {
-            if let Some(language) = &result.language {
+            if let Some(language) = &result.indicator {
                 let lang_abbrev = self.compact_name(&language.name);
                 if lang_abbrev.len() <= 3 {
                     parts.push(lang_abbrev);
@@ -160,9 +160,9 @@ impl Render for DebugRenderer {
     fn render(&self, result: &DetectionResult, _config: &DisplayConfig) -> String {
         let mut debug_info = Vec::new();
 
-        if let Some(language) = &result.language {
+        if let Some(language) = &result.indicator {
             debug_info.push(format!(
-                "Language: {} (priority: {})",
+                "Project: {} (priority: {})",
                 language.name, language.priority
             ));
         }
@@ -184,9 +184,9 @@ impl Render for DebugRenderer {
 
         debug_info.push("\n=== DETECTION EVIDENCE ===".to_string());
 
-        if !result.evidence.language_evidence.is_empty() {
-            debug_info.push("Language Evidence:".to_string());
-            for evidence in &result.evidence.language_evidence {
+        if !result.evidence.indicator_evidence.is_empty() {
+            debug_info.push("Indicator Evidence:".to_string());
+            for evidence in &result.evidence.indicator_evidence {
                 debug_info.push(format!(
                     "  • {} -> {} (weight: {:.2}, pattern: {})",
                     evidence.file_path,
@@ -246,11 +246,11 @@ impl Render for DebugRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{DetectionType, FrameworkDetector, FrameworkMatch, ProjectIndicator};
+    use crate::types::{DetectionType, Framework, FrameworkMatch, Indicator};
     use std::sync::Arc;
 
     fn create_test_result() -> DetectionResult {
-        let language = Arc::new(ProjectIndicator::new(
+        let language = Arc::new(Indicator::new(
             "TypeScript".to_string(),
             vec!["*.ts".to_string()],
             "#3178c6".to_string(),
@@ -260,9 +260,10 @@ mod tests {
         ));
 
         let framework = FrameworkMatch {
-            framework: FrameworkDetector {
+            framework: Framework {
                 name: "React".to_string(),
-                detection: DetectionType::NodeEcosystem {
+                ecosystems: vec![],
+                detection: DetectionType::Dependencies {
                     dependencies: vec!["react".to_string()],
                 },
                 icon: Some("⚛".to_string()),
@@ -320,7 +321,7 @@ mod tests {
         let renderer = DebugRenderer;
 
         let output = renderer.render(&result, &config);
-        assert!(output.contains("Language: TypeScript"));
+        assert!(output.contains("Project: TypeScript"));
         assert!(output.contains("React"));
         assert!(output.contains("confidence"));
         Ok(())

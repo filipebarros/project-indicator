@@ -3,9 +3,7 @@
 //! This module provides shared test helpers for creating test fixtures like
 //! detection results, temporary directories, caches, and other common test objects.
 
-use crate::types::{
-    DetectionResult, DetectionType, FrameworkDetector, FrameworkMatch, ProjectIndicator,
-};
+use crate::types::{DetectionResult, DetectionType, Framework, FrameworkMatch, Indicator};
 use std::{fs, sync::Arc};
 use tempfile::TempDir;
 
@@ -21,7 +19,7 @@ use tempfile::TempDir;
 /// - Framework: React
 /// - Default icon and color values
 pub fn create_test_result() -> DetectionResult {
-    let language = ProjectIndicator::new(
+    let language = Indicator::new(
         "TypeScript".to_string(),
         vec!["tsconfig.json".to_string(), "*.ts".to_string()],
         "#3178C6".to_string(),
@@ -30,9 +28,10 @@ pub fn create_test_result() -> DetectionResult {
         vec![],
     );
 
-    let framework = FrameworkDetector {
+    let framework = Framework {
         name: "React".to_string(),
-        detection: DetectionType::NodeEcosystem {
+        ecosystems: vec![],
+        detection: DetectionType::Dependencies {
             dependencies: vec!["react".to_string()],
         },
         icon: Some("⚛️".to_string()),
@@ -60,7 +59,7 @@ pub fn create_test_result() -> DetectionResult {
 ///
 /// A `DetectionResult` with the specified language and confidence, but no frameworks.
 pub fn create_test_result_language_only(language_name: &str, confidence: f32) -> DetectionResult {
-    let language = ProjectIndicator::new(
+    let language = Indicator::new(
         language_name.to_string(),
         vec!["*.rs".to_string()],
         "#DEA584".to_string(),
@@ -134,7 +133,7 @@ pub fn create_test_directory() -> Result<TempDir, Box<dyn std::error::Error>> {
     Ok(temp_dir)
 }
 
-/// Creates a test `ProjectIndicator` with the specified name and file patterns.
+/// Creates a test `Indicator` with the specified name and file patterns.
 ///
 /// Uses default color (#FF0000) and icon (🔥) values.
 ///
@@ -145,9 +144,9 @@ pub fn create_test_directory() -> Result<TempDir, Box<dyn std::error::Error>> {
 ///
 /// # Returns
 ///
-/// A `ProjectIndicator` with the specified configuration.
-pub fn create_test_language(name: &str, patterns: Vec<&str>) -> ProjectIndicator {
-    ProjectIndicator::new(
+/// A `Indicator` with the specified configuration.
+pub fn create_test_indicator(name: &str, patterns: Vec<&str>) -> Indicator {
+    Indicator::new(
         name.to_string(),
         patterns.iter().map(|s| s.to_string()).collect(),
         "#FF0000".to_string(),
@@ -157,7 +156,7 @@ pub fn create_test_language(name: &str, patterns: Vec<&str>) -> ProjectIndicator
     )
 }
 
-/// Creates a test `FrameworkDetector` with the specified name and detection type.
+/// Creates a test `Framework` with the specified name and detection type.
 ///
 /// Uses default priority (1) and no icon/color.
 ///
@@ -168,10 +167,11 @@ pub fn create_test_language(name: &str, patterns: Vec<&str>) -> ProjectIndicator
 ///
 /// # Returns
 ///
-/// A `FrameworkDetector` with the specified configuration.
-pub fn create_test_framework(name: &str, detection: DetectionType) -> FrameworkDetector {
-    FrameworkDetector {
+/// A `Framework` with the specified configuration.
+pub fn create_test_framework(name: &str, detection: DetectionType) -> Framework {
+    Framework {
         name: name.to_string(),
+        ecosystems: vec![],
         detection,
         icon: None,
         color: None,
@@ -189,7 +189,7 @@ mod tests {
     fn test_create_test_result() {
         let result = create_test_result();
 
-        if let Some(ref language) = result.language {
+        if let Some(ref language) = result.indicator {
             assert_eq!(language.name, "TypeScript");
         } else {
             panic!("Language should be present");
@@ -203,7 +203,7 @@ mod tests {
     fn test_create_test_result_language_only() {
         let result = create_test_result_language_only("Rust", 0.8);
 
-        if let Some(ref language) = result.language {
+        if let Some(ref language) = result.indicator {
             assert_eq!(language.name, "Rust");
         } else {
             panic!("Language should be present");
@@ -236,8 +236,8 @@ mod tests {
     }
 
     #[test]
-    fn test_create_test_language() {
-        let lang = create_test_language("Python", vec!["*.py", "requirements.txt"]);
+    fn test_create_test_indicator() {
+        let lang = create_test_indicator("Python", vec!["*.py", "requirements.txt"]);
 
         assert_eq!(lang.name, "Python");
         assert_eq!(lang.files.len(), 2);
@@ -248,7 +248,7 @@ mod tests {
     fn test_create_test_framework() {
         let framework = create_test_framework(
             "Django",
-            DetectionType::PythonEcosystem {
+            DetectionType::Dependencies {
                 dependencies: vec!["django".to_string()],
             },
         );

@@ -1,6 +1,6 @@
 # Shell Integration
 
-Prompt hooks for fish, zsh, and bash. Each hook is ~15 lines: it calls
+Prompt hooks for fish, zsh, bash, and PowerShell. Each hook is ~15 lines: it calls
 `project-indicator` and wraps the output in prompt colors. That's all it
 needs to do — **caching lives in the binary**, which keeps a persistent,
 mtime-invalidated result cache under `$XDG_CACHE_HOME/project-indicator/`
@@ -23,6 +23,8 @@ Or manually:
   (appends to `RPROMPT`).
 - **bash** — `source /path/to/project-indicator.bash` in `~/.bashrc`
   (appends to `PS1`).
+- **PowerShell** — dot-source `project-indicator.ps1` from your `$PROFILE`
+  (wraps your existing `prompt` function).
 
 ## Starship
 

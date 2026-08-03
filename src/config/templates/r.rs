@@ -1,8 +1,8 @@
 use super::shared::{nerd_icon, root_indicator};
-use crate::types::{IndicatorContext, ProjectIndicator};
+use crate::types::{Indicator, IndicatorContext};
 
-pub fn create_r_language() -> ProjectIndicator {
-    ProjectIndicator::with_root_indicators(
+pub fn create_r_indicator() -> Indicator {
+    Indicator::with_root_indicators(
         "R".to_string(),
         vec![
             "*.r".to_string(),

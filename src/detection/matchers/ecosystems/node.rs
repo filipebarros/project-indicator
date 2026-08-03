@@ -53,5 +53,67 @@ pub fn check_node_ecosystem<P: AsRef<Path>>(
         }
     }
 
+    // Deno projects declare npm dependencies in deno.json(c) imports
+    // (e.g. "react": "npm:react@18.2.0")
+    if found_deps.is_empty() {
+        for deno_manifest in ["deno.json", "deno.jsonc"] {
+            let deno_path = path.as_ref().join(deno_manifest);
+            if let Some(json_value) = parsed_cache.get_json_value(&deno_path)? {
+                let deno_deps = check_deno_import_dependencies(&json_value, dependencies);
+                if !deno_deps.is_empty() {
+                    found_deps.extend(deno_deps);
+                    evidence.push(deno_manifest.to_owned());
+                    break;
+                }
+            }
+        }
+    }
+
     Ok((found_deps, evidence))
+}
+
+/// Match dependency names against `npm:` specifiers in a deno.json `imports`
+/// map. Values look like `npm:react@18.2.0` or `npm:react`.
+fn check_deno_import_dependencies(
+    json_value: &serde_json::Value,
+    dependencies: &[String],
+) -> Vec<String> {
+    let Some(imports) = json_value.get("imports").and_then(|v| v.as_object()) else {
+        return Vec::new();
+    };
+
+    dependencies
+        .iter()
+        .filter(|dep| {
+            imports.values().filter_map(|v| v.as_str()).any(|value| {
+                value
+                    .strip_prefix("npm:")
+                    .is_some_and(|rest| rest == **dep || rest.starts_with(&format!("{}@", dep)))
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deno_imports_match_npm_specifiers() {
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{"imports": {"react": "npm:react@18.2.0", "preact-alias": "npm:preact@10.0.0"}}"#,
+        )
+        .unwrap_or_default();
+
+        let deps = vec!["react".to_string(), "vue".to_string()];
+        assert_eq!(
+            check_deno_import_dependencies(&json, &deps),
+            vec!["react".to_string()]
+        );
+
+        // `preact@…` must not match dep `react` (prefix anchoring)
+        let deps = vec!["act".to_string()];
+        assert!(check_deno_import_dependencies(&json, &deps).is_empty());
+    }
 }

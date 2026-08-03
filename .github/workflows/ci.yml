@@ -102,6 +102,80 @@ jobs:
     - name: Run security audit
       run: cargo audit
 
+  performance:
+    name: Performance Gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-stable-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Install hyperfine
+      uses: taiki-e/install-action@v2.85.5
+      with:
+        tool: hyperfine
+
+    - name: Build current binary
+      run: cargo build --release
+
+    - name: Download latest release binary (baseline)
+      id: baseline
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        mkdir -p /tmp/baseline
+        if gh release download --pattern 'project-indicator-linux-x86_64.tar.gz' --dir /tmp/baseline; then
+          tar xzf /tmp/baseline/project-indicator-linux-x86_64.tar.gz -C /tmp/baseline
+          chmod +x /tmp/baseline/project-indicator
+          echo "available=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "No previous release asset found — skipping performance comparison"
+          echo "available=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Compare against baseline (fail if >20% slower)
+      if: steps.baseline.outputs.available == 'true'
+      run: |
+        # Fixture project: detection with framework dependency matching
+        mkdir -p /tmp/perf-fixture
+        printf '{"name":"perf","dependencies":{"react":"^18.2.0"}}' > /tmp/perf-fixture/package.json
+        printf '{}' > /tmp/perf-fixture/tsconfig.json
+
+        # Isolated env so both binaries use the built-in config; --no-cache so
+        # we measure detection work, not the persistent cache (old releases
+        # may not support the flag — fall back to plain invocation)
+        export HOME=/tmp/perf-home XDG_CACHE_HOME=/tmp/perf-home/cache XDG_CONFIG_HOME=/tmp/perf-home/config
+        mkdir -p /tmp/perf-home
+
+        baseline_cmd="/tmp/baseline/project-indicator /tmp/perf-fixture"
+        if /tmp/baseline/project-indicator /tmp/perf-fixture --no-cache >/dev/null 2>&1; then
+          baseline_cmd="$baseline_cmd --no-cache"
+        fi
+
+        hyperfine --warmup 20 --runs 200 --export-json /tmp/perf.json \
+          -n baseline "$baseline_cmd" \
+          -n current "./target/release/project-indicator /tmp/perf-fixture --no-cache"
+
+        ratio=$(jq '(.results[] | select(.command == "current") | .mean) / (.results[] | select(.command == "baseline") | .mean)' /tmp/perf.json)
+        echo "current/baseline mean ratio: $ratio"
+        awk -v r="$ratio" 'BEGIN { if (r > 1.20) { print "❌ Current binary is >20% slower than the latest release"; exit 1 } else { print "✓ Within 20% of the latest release" } }'
+
   cross-platform-test:
     name: Cross Platform Tests
     strategy:

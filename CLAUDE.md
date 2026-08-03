@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**project-indicator** is a high-performance Rust CLI tool for detecting project types and frameworks. It's designed to be integrated into shell prompts, achieving ~3µs detection times through aggressive caching and optimization.
+**project-indicator** is a high-performance Rust CLI tool for detecting project types and frameworks. It's designed to be integrated into shell prompts; warm invocations are served from a persistent cache in well under a millisecond of binary time.
 
 **Core Goal**: Identify programming language and frameworks in a directory through file pattern matching, dependency analysis, and confidence scoring—fast enough for real-time shell integration.
 
@@ -120,8 +120,8 @@ The detection flow follows this path:
    - Uses `PatternProcessor` for efficient pattern matching
    - Adaptive performance (different strategies for small/large projects)
 
-4. **LanguageResolver** - Conflict resolution
-   - Handles multi-language projects (e.g., TypeScript + Rust)
+4. **IndicatorResolver** - Conflict resolution
+   - Handles multi-indicator projects (e.g., TypeScript + Rust)
    - Uses priority and file count for resolution
 
 5. **ConfidenceScorer** - Score calculation
@@ -131,8 +131,9 @@ The detection flow follows this path:
    - Root indicator bonus
 
 6. **FrameworkDetector** - Framework identification
+   - Candidates scoped by ecosystem intersection with the winning indicator
    - Ecosystem-specific matchers (`src/detection/matchers/ecosystems/`)
-   - Dependency analysis from package.json, Cargo.toml, etc.
+   - Dependency analysis from package.json, Cargo.toml, deno.json, etc.
 
 7. **OutputFormatter** (`src/output/`) - Result rendering
    - Multiple formats: simple, full, json, compact, debug, rich
@@ -177,17 +178,20 @@ The remaining caches live and die within a single detection run:
 
 ### Configuration System
 
-**Template-based**: 19 language-specific templates (`src/config/templates/`)
+**Template-based**: 22 indicator templates (`src/config/templates/`) plus a
+single ecosystem-keyed framework catalog (`src/config/templates/frameworks.rs`)
 
-- Each language module (e.g., `rust.rs`, `python.rs`) defines patterns and frameworks
-- Templates combine languages (e.g., `web-dev` = JS + TS + frameworks)
+- Each indicator module (e.g., `rust.rs`, `deno.rs`) defines file patterns,
+  root indicators, and the ecosystems it participates in
+- Frameworks are defined ONCE in the catalog, tagged with their ecosystems;
+  an indicator surfaces every framework whose ecosystems intersect its own
 - Users can customize via `~/.config/project-indicator/config.toml`
+  (schema v3: `[[indicators]]` + `[[frameworks]]`)
 
 **Key Configuration Types**:
 
 - `DetectionConfig`: Scan depth, thresholds, root indicators
 - `DisplayConfig`: Output formatting preferences
-- `CacheConfig`: TTL, max entries, eviction settings
 
 ### Type System
 
@@ -196,7 +200,7 @@ All types in `src/types/` organized by domain:
 - `config.rs`: Configuration structures
 - `detection.rs`: Detection results and evidence
 - `framework.rs`: Framework detection types
-- `indicators.rs`: Language and root indicators
+- `indicators.rs`: Indicator and root indicator definitions
 - `matched_file.rs`: File matching results
 
 ## Critical Implementation Rules
@@ -240,35 +244,51 @@ This ensures cache hits across the entire pipeline.
 - Edge case coverage (symlinks, large projects, empty directories)
 - All new features require tests
 
-## Adding New Language Support
+## Adding New Indicator or Framework Support
 
-1. Create template file: `src/config/templates/<language>.rs`
-2. Define language patterns and frameworks:
+**Indicators** (project types — languages, runtimes, toolchains):
+
+1. Create template file: `src/config/templates/<name>.rs`:
 
 ```rust
-pub fn create_language_language(builder: &mut ConfigBuilder) -> ProjectIndicator {
-    builder.add_language(
-        "Language",
-        vec!["*.ext", "manifest.json"],
-        "#COLOR",
-        "ICON",
-        PRIORITY,
-        vec![builder.create_framework(
-            "Framework",
-            DetectionType::FileExists {
-                files: vec!["framework.config"],
-            },
-            "ICON",
-            "#COLOR",
-            PRIORITY,
-        )],
+pub fn create_mylang_indicator() -> Indicator {
+    Indicator::with_root_indicators(
+        "MyLang".to_string(),
+        vec!["*.ml".to_string(), "mylang.toml".to_string()],
+        "#COLOR".to_string(),
+        nerd_icon("xxxx"),
+        PRIORITY, // lower wins; infra toolchains use 12+ so app code outranks them
+        vec![Ecosystem::Npm], // ecosystems this project type participates in
+        vec![root_indicator("mylang.toml", 0.95, IndicatorContext::LanguageRoot)],
     )
 }
 ```
 
-3. Register in `src/config/templates/mod.rs`
-4. Add ecosystem matcher if needed: `src/detection/matchers/ecosystems/<language>.rs`
-5. Update tests and documentation
+2. Register in `src/config/templates/mod.rs` (module, import, full template list).
+
+**Frameworks** (defined once, ecosystem-keyed):
+
+1. Add to the catalog — either `src/config/templates/frameworks.rs` directly or a
+   per-language `*_frameworks()` fn that the catalog extends:
+
+```rust
+simple_framework(
+    "MyFramework",
+    vec![Ecosystem::Npm], // scoping: surfaced by indicators sharing an ecosystem
+    DetectionType::Dependencies {
+        dependencies: vec!["my-framework".to_string()],
+    },
+    None,
+    Some("#COLOR"),
+    PRIORITY,
+)
+```
+
+2. New package ecosystem? Add an `Ecosystem` variant, a matcher in
+   `src/detection/matchers/ecosystems/`, and a `check_ecosystem` dispatch arm.
+3. Add a fixture under `tests/fixtures/<name>/` and a row in
+   `tests/fixture_detection_tests.rs` (enforced — the suite fails on fixtures
+   without expectations).
 
 ## Adding New Output Format
 

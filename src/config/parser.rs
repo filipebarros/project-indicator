@@ -54,8 +54,20 @@ impl ConfigParser {
         for path in &paths {
             if path.exists() {
                 log::debug!("Found config file at: {}", path.display());
-                return Self::load_from_file(path)
-                    .with_context(|| format!("Failed to load config from {}", path.display()));
+                // Soft fallback: a config that fails to parse (old schema,
+                // typos) must never break a shell prompt. `config validate`
+                // still surfaces the error loudly via load_from_file.
+                match Self::load_from_file(path) {
+                    Ok(config) => return Ok(config),
+                    Err(e) => {
+                        log::warn!(
+                            "Ignoring unparsable config at {} ({}); using built-in template",
+                            path.display(),
+                            e
+                        );
+                        return Self::load_fallback_config();
+                    }
+                }
             }
         }
 
@@ -73,9 +85,9 @@ impl ConfigParser {
         let config: Config = toml::from_str(content)
             .with_context(|| "Failed to parse configuration file as V2 format")?;
 
-        if config.meta.version != "2.0" && !config.meta.version.starts_with("2.") {
+        if !config.meta.version.starts_with("3.") {
             log::warn!(
-                "Config version {} may not be fully compatible",
+                "Config version {} predates the v3 schema and may not be fully compatible",
                 config.meta.version
             );
         }
@@ -101,51 +113,57 @@ impl ConfigParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ProjectIndicator;
+    use crate::types::Indicator;
 
     #[test]
-    fn test_parse_v2_config() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_parse_v3_config() -> Result<(), Box<dyn std::error::Error>> {
         let toml_content = r##"
 [meta]
-version = "2.0"
+version = "3.0"
 
 [display]
 show_frameworks = true
 max_frameworks = 2
 framework_separator = "+"
 
-[[languages]]
+[[indicators]]
 name = "TypeScript"
 files = ["package.json", "tsconfig.json"]
 color = "#3178C6"
 icon = "TS"
 priority = 1
+ecosystems = ["npm"]
 
-  [[languages.frameworks]]
-  name = "React"
-  icon = "React"
-  priority = 1
+[[frameworks]]
+name = "React"
+ecosystems = ["npm"]
+icon = "React"
+priority = 1
 
-  [languages.frameworks.detection]
-  type = "NodeEcosystem"
-  dependencies = ["react"]
+[frameworks.detection]
+type = "Dependencies"
+dependencies = ["react"]
 "##;
 
         let config = ConfigParser::parse_toml_content(toml_content)?;
 
-        assert_eq!(config.meta.version, "2.0");
+        assert_eq!(config.meta.version, "3.0");
         assert!(config.display.show_frameworks);
-        assert_eq!(config.languages.len(), 1);
-        assert_eq!(config.languages[0].name, "TypeScript");
-        assert_eq!(config.languages[0].frameworks.len(), 1);
-        assert_eq!(config.languages[0].frameworks[0].name, "React");
+        assert_eq!(config.indicators.len(), 1);
+        assert_eq!(config.indicators[0].name, "TypeScript");
+        assert_eq!(
+            config.indicators[0].ecosystems,
+            vec![crate::types::Ecosystem::Npm]
+        );
+        assert_eq!(config.frameworks.len(), 1);
+        assert_eq!(config.frameworks[0].name, "React");
         Ok(())
     }
 
     #[test]
     fn test_config_methods() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::new(vec![
-            ProjectIndicator::new(
+            Indicator::new(
                 "High Priority".to_string(),
                 vec!["high.file".to_string()],
                 "#FF0000".to_string(),
@@ -153,7 +171,7 @@ priority = 1
                 1,
                 Vec::new(),
             ),
-            ProjectIndicator::new(
+            Indicator::new(
                 "Low Priority".to_string(),
                 vec!["low.file".to_string()],
                 "#0000FF".to_string(),
@@ -163,9 +181,9 @@ priority = 1
             ),
         ]);
 
-        assert_eq!(config.languages.len(), 2);
-        assert_eq!(config.languages[0].name, "High Priority");
-        assert_eq!(config.languages[1].name, "Low Priority");
+        assert_eq!(config.indicators.len(), 2);
+        assert_eq!(config.indicators[0].name, "High Priority");
+        assert_eq!(config.indicators[1].name, "Low Priority");
         Ok(())
     }
 
@@ -197,16 +215,16 @@ priority = 1
     #[test]
     fn test_fallback_config() -> Result<(), Box<dyn std::error::Error>> {
         let config = ConfigParser::load_fallback_config()?;
-        assert!(!config.languages.is_empty());
+        assert!(!config.indicators.is_empty());
 
-        let language_names: Vec<&String> = config.languages.iter().map(|l| &l.name).collect();
+        let language_names: Vec<&String> = config.indicators.iter().map(|l| &l.name).collect();
         assert!(language_names.contains(&&"Rust".to_string()));
         assert!(language_names.contains(&&"TypeScript".to_string()));
         assert!(language_names.contains(&&"Python".to_string()));
 
         // The fallback must include framework detection out of the box
         assert!(
-            config.languages.iter().any(|l| !l.frameworks.is_empty()),
+            !config.frameworks.is_empty(),
             "fallback config should define frameworks"
         );
         Ok(())

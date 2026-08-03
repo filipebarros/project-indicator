@@ -1,11 +1,8 @@
-use super::shared::{
-    create_angular_framework, create_astro_framework, create_nestjs_framework,
-    create_nextjs_framework, create_react_framework, nerd_icon, node_lockfiles, root_indicator,
-};
+use super::shared::{nerd_icon, node_lockfiles, root_indicator};
 use crate::constants::{CTS_EXTENSION, MTS_EXTENSION, TSCONFIG_JSON, TSX_EXTENSION, TS_EXTENSION};
-use crate::types::{IndicatorContext, ProjectIndicator};
+use crate::types::{Ecosystem, Indicator, IndicatorContext};
 
-pub fn create_typescript_language() -> ProjectIndicator {
+pub fn create_typescript_indicator() -> Indicator {
     let mut files = vec![
         TS_EXTENSION.to_string(),
         TSX_EXTENSION.to_string(),
@@ -29,19 +26,13 @@ pub fn create_typescript_language() -> ProjectIndicator {
     }
     indicators.extend(node_indicators);
 
-    ProjectIndicator::with_root_indicators(
+    Indicator::with_root_indicators(
         "TypeScript".to_string(),
         files,
         "#3178c6".to_string(),
         nerd_icon("e8ca"),
         6,
-        vec![
-            create_react_framework(),
-            create_angular_framework(),
-            create_nextjs_framework(),
-            create_astro_framework(),
-            create_nestjs_framework(),
-        ],
+        vec![Ecosystem::Npm],
         indicators,
     )
 }

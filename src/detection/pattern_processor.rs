@@ -1,5 +1,5 @@
 use crate::detection::pattern_matching::PatternMatcher;
-use crate::types::{MatchedFile, ProjectIndicator};
+use crate::types::{Indicator, MatchedFile};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -17,7 +17,7 @@ impl PatternProcessor {
     pub fn new(
         pattern_matcher: Arc<PatternMatcher>,
         patterns: Arc<Vec<String>>,
-        languages: Vec<Arc<ProjectIndicator>>,
+        languages: Vec<Arc<Indicator>>,
     ) -> Self {
         let mut extension_filter = HashSet::new();
         let mut exact_patterns = HashSet::new();
@@ -96,44 +96,6 @@ impl PatternProcessor {
             }
         }
         None
-    }
-
-    pub fn get_pattern_importance(
-        &self,
-        pattern: &str,
-        languages: &[Arc<ProjectIndicator>],
-    ) -> f32 {
-        for language in languages {
-            for root_indicator in &language.root_indicators {
-                if self
-                    .pattern_matcher
-                    .matches_pattern(pattern, &root_indicator.pattern)
-                {
-                    return root_indicator.weight;
-                }
-            }
-            for framework in &language.frameworks {
-                for root_indicator in &framework.root_indicators {
-                    if self
-                        .pattern_matcher
-                        .matches_pattern(pattern, &root_indicator.pattern)
-                    {
-                        return root_indicator.weight;
-                    }
-                }
-            }
-        }
-
-        for language in languages {
-            for file_pattern in &language.files {
-                if self.pattern_matcher.matches_pattern(pattern, file_pattern) {
-                    let base_importance = 1.0 - (language.priority as f32 - 1.0) * 0.05;
-                    return base_importance.max(0.5);
-                }
-            }
-        }
-
-        0.7
     }
 
     pub fn get_patterns(&self) -> &[String] {

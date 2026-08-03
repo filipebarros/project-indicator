@@ -5,7 +5,7 @@
 
 use project_indicator::{
     config::Config,
-    types::{DetectionType, FrameworkDetector, ProjectIndicator},
+    types::{DetectionType, Ecosystem, Framework, Indicator},
 };
 use std::fs;
 use tempfile::TempDir;
@@ -59,47 +59,62 @@ pub fn create_test_project(files: &[(&str, &str)]) -> Result<TempDir, Box<dyn st
 ///
 /// A `Config` with pre-configured language and framework detectors suitable for testing.
 pub fn create_test_config() -> Config {
-    let typescript = ProjectIndicator::new(
+    let typescript = Indicator::new(
         "TypeScript".to_string(),
         vec!["tsconfig.json".to_string(), "*.ts".to_string()],
         "#3178C6".to_string(),
         "󰛦".to_string(),
         1,
-        vec![
-            FrameworkDetector {
-                name: "React".to_string(),
-                detection: DetectionType::NodeEcosystem {
-                    dependencies: vec!["react".to_string()],
-                },
-                icon: Some("⚛️".to_string()),
-                color: Some("#61DAFB".to_string()),
-                priority: 1,
-                files: vec![],
-                root_indicators: vec![],
-            },
-            FrameworkDetector {
-                name: "Next.js".to_string(),
-                detection: DetectionType::NodeEcosystem {
-                    dependencies: vec!["next".to_string()],
-                },
-                icon: Some("▲".to_string()),
-                color: Some("#000000".to_string()),
-                priority: 0,
-                files: vec![],
-                root_indicators: vec![],
-            },
-        ],
+        vec![Ecosystem::Npm],
     );
 
-    let rust = ProjectIndicator::new(
+    let rust = Indicator::new(
         "Rust".to_string(),
         vec!["Cargo.toml".to_string(), "*.rs".to_string()],
         "#DEA584".to_string(),
         "".to_string(),
         1,
-        vec![FrameworkDetector {
+        vec![Ecosystem::Cargo],
+    );
+
+    let python = Indicator::new(
+        "Python".to_string(),
+        vec!["*.py".to_string(), "requirements.txt".to_string()],
+        "#3776AB".to_string(),
+        "".to_string(),
+        2,
+        vec![Ecosystem::Pypi],
+    );
+
+    let frameworks = vec![
+        Framework {
+            name: "React".to_string(),
+            ecosystems: vec![Ecosystem::Npm],
+            detection: DetectionType::Dependencies {
+                dependencies: vec!["react".to_string()],
+            },
+            icon: Some("⚛️".to_string()),
+            color: Some("#61DAFB".to_string()),
+            priority: 1,
+            files: vec![],
+            root_indicators: vec![],
+        },
+        Framework {
+            name: "Next.js".to_string(),
+            ecosystems: vec![Ecosystem::Npm],
+            detection: DetectionType::Dependencies {
+                dependencies: vec!["next".to_string()],
+            },
+            icon: Some("▲".to_string()),
+            color: Some("#000000".to_string()),
+            priority: 0,
+            files: vec![],
+            root_indicators: vec![],
+        },
+        Framework {
             name: "Rocket".to_string(),
-            detection: DetectionType::RustEcosystem {
+            ecosystems: vec![Ecosystem::Cargo],
+            detection: DetectionType::Dependencies {
                 dependencies: vec!["rocket".to_string()],
             },
             icon: Some("🚀".to_string()),
@@ -107,18 +122,11 @@ pub fn create_test_config() -> Config {
             priority: 1,
             files: vec![],
             root_indicators: vec![],
-        }],
-    );
-
-    let python = ProjectIndicator::new(
-        "Python".to_string(),
-        vec!["*.py".to_string(), "requirements.txt".to_string()],
-        "#3776AB".to_string(),
-        "".to_string(),
-        2,
-        vec![FrameworkDetector {
+        },
+        Framework {
             name: "Django".to_string(),
-            detection: DetectionType::PythonEcosystem {
+            ecosystems: vec![Ecosystem::Pypi],
+            detection: DetectionType::Dependencies {
                 dependencies: vec!["django".to_string()],
             },
             icon: Some("📝".to_string()),
@@ -126,10 +134,14 @@ pub fn create_test_config() -> Config {
             priority: 1,
             files: vec![],
             root_indicators: vec![],
-        }],
-    );
+        },
+    ];
 
-    Config::new(vec![typescript, rust, python])
+    Config {
+        frameworks,
+        indicators: vec![typescript, rust, python],
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]
@@ -155,22 +167,16 @@ mod tests {
     fn test_create_test_config() {
         let config = create_test_config();
 
-        assert_eq!(config.languages.len(), 3);
-        assert_eq!(config.languages[0].name, "TypeScript");
-        assert_eq!(config.languages[1].name, "Rust");
-        assert_eq!(config.languages[2].name, "Python");
+        assert_eq!(config.indicators.len(), 3);
+        assert_eq!(config.indicators[0].name, "TypeScript");
+        assert_eq!(config.indicators[1].name, "Rust");
+        assert_eq!(config.indicators[2].name, "Python");
 
-        // Verify TypeScript frameworks
-        assert_eq!(config.languages[0].frameworks.len(), 2);
-        assert_eq!(config.languages[0].frameworks[0].name, "React");
-        assert_eq!(config.languages[0].frameworks[1].name, "Next.js");
-
-        // Verify Rust frameworks
-        assert_eq!(config.languages[1].frameworks.len(), 1);
-        assert_eq!(config.languages[1].frameworks[0].name, "Rocket");
-
-        // Verify Python frameworks
-        assert_eq!(config.languages[2].frameworks.len(), 1);
-        assert_eq!(config.languages[2].frameworks[0].name, "Django");
+        // Verify the framework catalog
+        assert_eq!(config.frameworks.len(), 4);
+        let names: Vec<&str> = config.frameworks.iter().map(|f| f.name.as_str()).collect();
+        assert!(names.contains(&"React"));
+        assert!(names.contains(&"Rocket"));
+        assert!(names.contains(&"Django"));
     }
 }

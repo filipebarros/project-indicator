@@ -1,4 +1,4 @@
-use crate::types::{IndicatorContext, ProjectIndicator, RootIndicator};
+use crate::types::{Indicator, IndicatorContext, RootIndicator};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -72,7 +72,8 @@ impl ConflictResolver {
 
     pub fn resolve_indicators(
         &mut self,
-        languages: &[ProjectIndicator],
+        languages: &[Indicator],
+        frameworks: &[crate::types::Framework],
         vcs_indicators: &[RootIndicator],
     ) -> Vec<RootIndicator> {
         let mut pattern_sources: HashMap<String, Vec<ConflictSource>> =
@@ -102,19 +103,19 @@ impl ConflictResolver {
                         context: indicator.context.clone(),
                     });
             }
+        }
 
-            for framework in &language.frameworks {
-                for indicator in &framework.root_indicators {
-                    pattern_sources
-                        .entry(indicator.pattern.clone())
-                        .or_default()
-                        .push(ConflictSource {
-                            source_type: SourceType::Framework,
-                            source_name: format!("{}/{}", language.name, framework.name),
-                            weight: indicator.weight,
-                            context: indicator.context.clone(),
-                        });
-                }
+        for framework in frameworks {
+            for indicator in &framework.root_indicators {
+                pattern_sources
+                    .entry(indicator.pattern.clone())
+                    .or_default()
+                    .push(ConflictSource {
+                        source_type: SourceType::Framework,
+                        source_name: framework.name.clone(),
+                        weight: indicator.weight,
+                        context: indicator.context.clone(),
+                    });
             }
         }
 
@@ -337,18 +338,18 @@ mod tests {
         }
     }
 
-    use crate::detection::matchers::test_helpers::helpers::create_test_language_with_indicators;
+    use crate::detection::matchers::test_helpers::helpers::create_test_indicator_with_indicators;
 
     #[test]
     fn test_no_conflicts_single_source() -> Result<(), Box<dyn std::error::Error>> {
         let mut resolver = ConflictResolver::with_defaults();
-        let languages = vec![create_test_language_with_indicators(
+        let languages = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.9)],
         )];
         let vcs = vec![create_test_indicator(".git", 1.0)];
 
-        let result = resolver.resolve_indicators(&languages, &vcs);
+        let result = resolver.resolve_indicators(&languages, &[], &vcs);
 
         assert_eq!(result.len(), 2);
         assert!(resolver.detected_conflicts.is_empty());
@@ -359,12 +360,12 @@ mod tests {
     fn test_conflict_detection() -> Result<(), Box<dyn std::error::Error>> {
         let mut resolver = ConflictResolver::with_defaults();
         let languages = vec![
-            create_test_language_with_indicators("JavaScript", vec![("package.json", 0.7)]),
-            create_test_language_with_indicators("TypeScript", vec![("package.json", 0.95)]),
+            create_test_indicator_with_indicators("JavaScript", vec![("package.json", 0.7)]),
+            create_test_indicator_with_indicators("TypeScript", vec![("package.json", 0.95)]),
         ];
         let vcs = vec![];
 
-        let result = resolver.resolve_indicators(&languages, &vcs);
+        let result = resolver.resolve_indicators(&languages, &[], &vcs);
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].pattern, "package.json");
@@ -376,13 +377,13 @@ mod tests {
     #[test]
     fn test_vcs_preference() -> Result<(), Box<dyn std::error::Error>> {
         let mut resolver = ConflictResolver::with_defaults();
-        let languages = vec![create_test_language_with_indicators(
+        let languages = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![(".git", 0.5)],
         )];
         let vcs = vec![create_test_indicator(".git", 1.0)];
 
-        let result = resolver.resolve_indicators(&languages, &vcs);
+        let result = resolver.resolve_indicators(&languages, &[], &vcs);
 
         let git_indicator = result
             .iter()
@@ -398,11 +399,11 @@ mod tests {
         let mut resolver = ConflictResolver::new(config);
 
         let languages = vec![
-            create_test_language_with_indicators("JavaScript", vec![("package.json", 0.8)]),
-            create_test_language_with_indicators("TypeScript", vec![("package.json", 0.9)]),
+            create_test_indicator_with_indicators("JavaScript", vec![("package.json", 0.8)]),
+            create_test_indicator_with_indicators("TypeScript", vec![("package.json", 0.9)]),
         ];
 
-        let result = resolver.resolve_indicators(&languages, &[]);
+        let result = resolver.resolve_indicators(&languages, &[], &[]);
         let package_indicator = result
             .iter()
             .find(|i| i.pattern == "package.json")
@@ -446,11 +447,11 @@ mod tests {
     fn test_confidence_penalty_calculation() -> Result<(), Box<dyn std::error::Error>> {
         let mut resolver = ConflictResolver::with_defaults();
         let languages = vec![
-            create_test_language_with_indicators("JavaScript", vec![("package.json", 0.6)]),
-            create_test_language_with_indicators("TypeScript", vec![("package.json", 0.9)]),
+            create_test_indicator_with_indicators("JavaScript", vec![("package.json", 0.6)]),
+            create_test_indicator_with_indicators("TypeScript", vec![("package.json", 0.9)]),
         ];
 
-        resolver.resolve_indicators(&languages, &[]);
+        resolver.resolve_indicators(&languages, &[], &[]);
 
         assert!(!resolver.detected_conflicts.is_empty());
         let conflict = &resolver.detected_conflicts[0];

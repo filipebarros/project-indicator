@@ -11,9 +11,10 @@ use std::sync::Arc;
 
 #[test]
 fn test_config_serialization() -> Result<(), Box<dyn std::error::Error>> {
-    let framework = FrameworkDetector {
+    let framework = Framework {
         name: "React".to_string(),
-        detection: DetectionType::NodeEcosystem {
+        ecosystems: vec![],
+        detection: DetectionType::Dependencies {
             dependencies: vec!["react".to_string()],
         },
         icon: Some("⚛️".to_string()),
@@ -23,21 +24,21 @@ fn test_config_serialization() -> Result<(), Box<dyn std::error::Error>> {
         root_indicators: vec![],
     };
 
-    let language = ProjectIndicator::new(
+    let language = Indicator::new(
         "TypeScript".to_string(),
         vec!["package.json".to_string(), "tsconfig.json".to_string()],
         "#3178C6".to_string(),
         "󰛦".to_string(),
         1,
-        vec![framework],
+        vec![Ecosystem::Npm],
     );
 
     let config = Config {
         meta: ConfigMeta::default(),
         display: DisplayConfig::default(),
         detection: DetectionConfig::default(),
-        tracking: TrackingConfig::default(),
-        languages: vec![language],
+        frameworks: vec![framework],
+        indicators: vec![language],
     };
 
     let toml_str = toml::to_string(&config)?;
@@ -45,33 +46,33 @@ fn test_config_serialization() -> Result<(), Box<dyn std::error::Error>> {
     assert!(toml_str.contains("React"));
 
     let deserialized: Config = toml::from_str(&toml_str)?;
-    assert_eq!(deserialized.languages.len(), 1);
-    assert_eq!(deserialized.languages[0].name, "TypeScript");
-    assert_eq!(deserialized.languages[0].frameworks.len(), 1);
-    assert_eq!(deserialized.languages[0].frameworks[0].name, "React");
+    assert_eq!(deserialized.indicators.len(), 1);
+    assert_eq!(deserialized.indicators[0].name, "TypeScript");
+    assert_eq!(deserialized.frameworks.len(), 1);
+    assert_eq!(deserialized.frameworks[0].name, "React");
     Ok(())
 }
 
 #[test]
 fn test_detection_types_serialization() -> Result<(), Box<dyn std::error::Error>> {
     let detection_types = vec![
-        DetectionType::NodeEcosystem {
+        DetectionType::Dependencies {
             dependencies: vec!["react".to_string(), "vue".to_string()],
         },
-        DetectionType::RustEcosystem {
+        DetectionType::Dependencies {
             dependencies: vec!["serde".to_string()],
         },
-        DetectionType::GoEcosystem {
-            modules: vec!["github.com/gin-gonic/gin".to_string()],
+        DetectionType::Dependencies {
+            dependencies: vec!["github.com/gin-gonic/gin".to_string()],
         },
-        DetectionType::PythonEcosystem {
+        DetectionType::Dependencies {
             dependencies: vec!["Django".to_string()],
         },
-        DetectionType::RubyEcosystem {
-            gems: vec!["rails".to_string()],
+        DetectionType::Dependencies {
+            dependencies: vec!["rails".to_string()],
         },
-        DetectionType::PHPEcosystem {
-            packages: vec!["laravel/framework".to_string()],
+        DetectionType::Dependencies {
+            dependencies: vec!["laravel/framework".to_string()],
         },
         DetectionType::FileExists {
             files: vec!["next.config.js".to_string()],
@@ -91,59 +92,11 @@ fn test_detection_types_serialization() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[test]
-fn test_complex_project_indicator() -> Result<(), Box<dyn std::error::Error>> {
-    let react_framework = FrameworkDetector {
-        name: "React".to_string(),
-        detection: DetectionType::NodeEcosystem {
-            dependencies: vec!["react".to_string()],
-        },
-        icon: Some("⚛️".to_string()),
-        color: Some("#61DAFB".to_string()),
-        priority: 1,
-        files: vec![],
-        root_indicators: vec![],
-    };
-
-    let nextjs_framework = FrameworkDetector {
-        name: "Next.js".to_string(),
-        detection: DetectionType::NodeEcosystem {
-            dependencies: vec!["next".to_string()],
-        },
-        icon: Some("▲".to_string()),
-        color: Some("#000000".to_string()),
-        priority: 1,
-        files: vec!["next.config.js".to_string()],
-        root_indicators: vec![],
-    };
-
-    let typescript_lang = ProjectIndicator::new(
-        "TypeScript".to_string(),
-        vec!["package.json".to_string(), "tsconfig.json".to_string()],
-        "#3178C6".to_string(),
-        "󰛦".to_string(),
-        1,
-        vec![react_framework, nextjs_framework],
-    );
-
-    let sorted_frameworks = typescript_lang.frameworks_by_priority();
-    assert_eq!(sorted_frameworks.len(), 2);
-    assert_eq!(sorted_frameworks[0].name, "React");
-    assert_eq!(sorted_frameworks[1].name, "Next.js");
-
-    let project_files = vec![
-        "package.json".to_string(),
-        "tsconfig.json".to_string(),
-        "src/components/App.tsx".to_string(),
-    ];
-    assert!(typescript_lang.matches_files(&project_files));
-    Ok(())
-}
-
-#[test]
 fn test_detection_result_display() -> Result<(), Box<dyn std::error::Error>> {
-    let framework = FrameworkDetector {
+    let framework = Framework {
         name: "React".to_string(),
-        detection: DetectionType::NodeEcosystem {
+        ecosystems: vec![],
+        detection: DetectionType::Dependencies {
             dependencies: vec!["react".to_string()],
         },
         icon: Some("⚛️".to_string()),
@@ -153,7 +106,7 @@ fn test_detection_result_display() -> Result<(), Box<dyn std::error::Error>> {
         root_indicators: vec![],
     };
 
-    let language = ProjectIndicator::new(
+    let language = Indicator::new(
         "TypeScript".to_string(),
         vec!["package.json".to_string()],
         "#3178C6".to_string(),
@@ -179,9 +132,10 @@ fn test_detection_result_display() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_output_formatting() -> Result<(), Box<dyn std::error::Error>> {
-    let framework = FrameworkDetector {
+    let framework = Framework {
         name: "React".to_string(),
-        detection: DetectionType::NodeEcosystem {
+        ecosystems: vec![],
+        detection: DetectionType::Dependencies {
             dependencies: vec!["react".to_string()],
         },
         icon: Some("⚛️".to_string()),
@@ -210,7 +164,7 @@ fn test_output_formatting() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_detection_engine_creation() -> Result<(), Box<dyn std::error::Error>> {
-    let language = ProjectIndicator::new(
+    let language = Indicator::new(
         "Rust".to_string(),
         vec!["Cargo.toml".to_string()],
         "#DEA584".to_string(),
@@ -219,7 +173,7 @@ fn test_detection_engine_creation() -> Result<(), Box<dyn std::error::Error>> {
         vec![],
     );
 
-    let engine = DetectionEngineBuilder::new(vec![language]).build();
+    let engine = DetectionEngineBuilder::new(vec![language], vec![]).build();
 
     let temp_dir = create_test_project(&[("Cargo.toml", "[package]\nname = \"test\"")])?;
     let result = engine.detect(temp_dir.path())?;
@@ -227,7 +181,7 @@ fn test_detection_engine_creation() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!result.is_empty());
     assert_eq!(
         result
-            .language
+            .indicator
             .as_ref()
             .ok_or("Failed to get language reference")?
             .name,
@@ -238,73 +192,20 @@ fn test_detection_engine_creation() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_multiple_framework_priorities() -> Result<(), Box<dyn std::error::Error>> {
-    let low_priority_framework = FrameworkDetector {
-        name: "LowPriority".to_string(),
-        detection: DetectionType::FileExists { files: vec![] },
-        icon: None,
-        color: None,
-        priority: 5,
-        files: vec![],
-        root_indicators: vec![],
-    };
-
-    let high_priority_framework = FrameworkDetector {
-        name: "HighPriority".to_string(),
-        detection: DetectionType::FileExists { files: vec![] },
-        icon: None,
-        color: None,
-        priority: 1,
-        files: vec![],
-        root_indicators: vec![],
-    };
-
-    let medium_priority_framework = FrameworkDetector {
-        name: "MediumPriority".to_string(),
-        detection: DetectionType::FileExists { files: vec![] },
-        icon: None,
-        color: None,
-        priority: 3,
-        files: vec![],
-        root_indicators: vec![],
-    };
-
-    let language = ProjectIndicator::new(
-        "Test".to_string(),
-        vec![],
-        "#000000".to_string(),
-        "".to_string(),
-        1,
-        vec![
-            low_priority_framework,
-            high_priority_framework,
-            medium_priority_framework,
-        ],
-    );
-
-    let sorted = language.frameworks_by_priority();
-    assert_eq!(sorted.len(), 3);
-    assert_eq!(sorted[0].name, "HighPriority");
-    assert_eq!(sorted[1].name, "MediumPriority");
-    assert_eq!(sorted[2].name, "LowPriority");
-    Ok(())
-}
-
-#[test]
 fn test_config_defaults() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::default();
 
-    assert_eq!(config.meta.version, "2.0");
+    assert_eq!(config.meta.version, "3.0");
     assert!(config.display.show_frameworks);
     assert_eq!(config.display.max_frameworks, 2);
     assert_eq!(config.display.framework_separator, "+");
-    assert!(config.languages.is_empty());
+    assert!(config.indicators.is_empty());
     Ok(())
 }
 
 #[test]
 fn test_wildcard_patterns() -> Result<(), Box<dyn std::error::Error>> {
-    let cpp_lang = ProjectIndicator::new(
+    let cpp_lang = Indicator::new(
         "C++".to_string(),
         vec![
             "*.cpp".to_string(),
@@ -348,12 +249,12 @@ fn test_builtin_full_template_detects_frameworks_out_of_box(
         ("src/index.tsx", "export default null;"),
     ])?;
 
-    let engine = DetectionEngineBuilder::new(config.languages.clone())
+    let engine = DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
         .with_config(config.detection.clone())
         .build();
     let result = engine.detect(temp_dir.path())?;
 
-    let language = result.language.as_ref().ok_or("expected a language")?;
+    let language = result.indicator.as_ref().ok_or("expected a language")?;
     assert_eq!(language.name, "TypeScript");
     assert!(
         result
@@ -367,5 +268,36 @@ fn test_builtin_full_template_detects_frameworks_out_of_box(
             .map(|f| &f.framework.name)
             .collect::<Vec<_>>()
     );
+    Ok(())
+}
+
+#[test]
+fn test_framework_catalog_priority_sorting() -> Result<(), Box<dyn std::error::Error>> {
+    let mut frameworks = [
+        Framework {
+            name: "Library".to_string(),
+            ecosystems: vec![Ecosystem::Npm],
+            detection: DetectionType::FileExists { files: vec![] },
+            icon: None,
+            color: None,
+            priority: 3,
+            files: vec![],
+            root_indicators: vec![],
+        },
+        Framework {
+            name: "MetaFramework".to_string(),
+            ecosystems: vec![Ecosystem::Npm],
+            detection: DetectionType::FileExists { files: vec![] },
+            icon: None,
+            color: None,
+            priority: 1,
+            files: vec![],
+            root_indicators: vec![],
+        },
+    ];
+
+    frameworks.sort_by_key(|f| f.priority);
+    assert_eq!(frameworks[0].name, "MetaFramework");
+    assert_eq!(frameworks[1].name, "Library");
     Ok(())
 }

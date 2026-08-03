@@ -3,10 +3,8 @@ use project_indicator::{
     config::Config,
     detection::{DetectionEngine, DetectionEngineBuilder},
     output::{OutputFormat, OutputFormatter},
-    tracking::ResultTracker,
     Result,
 };
-use std::sync::Arc;
 use std::time::Instant;
 
 fn setup_benchmark(cli: &Cli) -> Result<(std::path::PathBuf, Config, DetectionEngine)> {
@@ -14,13 +12,8 @@ fn setup_benchmark(cli: &Cli) -> Result<(std::path::PathBuf, Config, DetectionEn
 
     let config = Config::load_default()?;
 
-    // Explicitly disable tracking for benchmarks to avoid skewing performance results
-    // Tracking adds overhead (file I/O, serialization) that would make benchmarks inaccurate
-    let tracker = Arc::new(ResultTracker::new()?);
-
-    let engine = DetectionEngineBuilder::new(config.languages.clone())
+    let engine = DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
         .with_config(config.detection.clone())
-        .with_result_tracker(tracker)
         .build();
 
     Ok((path, config, engine))
@@ -33,7 +26,7 @@ pub fn handle_benchmark_command(cli: &Cli) -> Result<()> {
     let (path, config, engine) = setup_benchmark(cli)?;
 
     println!("Benchmarking path: {}", path.display());
-    println!("Languages configured: {}", config.languages.len());
+    println!("Languages configured: {}", config.indicators.len());
     println!();
 
     println!("1. Single Detection (Cold)");
@@ -43,7 +36,7 @@ pub fn handle_benchmark_command(cli: &Cli) -> Result<()> {
     println!("   Time: {:?}", cold_duration);
     println!(
         "   Result: {} language, {} frameworks",
-        if result.language.is_some() { 1 } else { 0 },
+        if result.indicator.is_some() { 1 } else { 0 },
         result.frameworks.len()
     );
     println!();

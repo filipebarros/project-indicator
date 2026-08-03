@@ -226,7 +226,7 @@ fn collect_evidence(dir: &Path, result: &DetectionResult) -> BTreeSet<PathBuf> {
 
     let items = result
         .evidence
-        .language_evidence
+        .indicator_evidence
         .iter()
         .chain(&result.evidence.framework_evidence)
         .chain(&result.evidence.root_discovery)
@@ -253,14 +253,14 @@ fn collect_evidence(dir: &Path, result: &DetectionResult) -> BTreeSet<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ProjectIndicator;
+    use crate::types::Indicator;
     use std::sync::Arc;
     use std::thread::sleep;
     use std::time::Duration;
     use tempfile::TempDir;
 
     fn test_result(evidence_file: &str) -> DetectionResult {
-        let lang = ProjectIndicator::new(
+        let lang = Indicator::new(
             "Rust".to_string(),
             vec!["Cargo.toml".to_string()],
             "#dea584".to_string(),
@@ -271,7 +271,7 @@ mod tests {
         let mut result = DetectionResult::new(Some(Arc::new(lang)), vec![], 0.9);
         result
             .evidence
-            .language_evidence
+            .indicator_evidence
             .push(crate::types::EvidenceItem::new(
                 crate::types::EvidenceType::ManifestFile,
                 evidence_file.to_string(),

@@ -1,7 +1,7 @@
 use super::{Config, ConfigError};
 #[cfg(test)]
 use crate::types::DetectionConfig;
-use crate::types::{DetectionType, FrameworkDetector, ProjectIndicator};
+use crate::types::{DetectionType, Framework, Indicator};
 use anyhow::Result;
 use std::collections::HashSet;
 fn validation_error(message: impl Into<String>) -> anyhow::Error {
@@ -16,13 +16,14 @@ fn simple_error(message: impl Into<String>) -> anyhow::Error {
 pub fn validate_config(config: &Config) -> Result<()> {
     validate_version(&config.meta.version)?;
     validate_display_config(config)?;
-    validate_languages(&config.languages)?;
-    validate_unique_language_names(&config.languages)?;
+    validate_languages(&config.indicators)?;
+    validate_frameworks(&config.frameworks)?;
+    validate_unique_language_names(&config.indicators)?;
 
     Ok(())
 }
 fn validate_version(version: &str) -> Result<()> {
-    if !version.starts_with("2.") {
+    if !version.starts_with("3.") {
         return Err(ConfigError::UnsupportedVersion {
             version: version.to_string(),
         }
@@ -41,7 +42,7 @@ fn validate_display_config(config: &Config) -> Result<()> {
 
     Ok(())
 }
-fn validate_languages(languages: &[ProjectIndicator]) -> Result<()> {
+fn validate_languages(languages: &[Indicator]) -> Result<()> {
     if languages.is_empty() {
         return Err(ConfigError::ValidationError {
             message: "Configuration must contain at least one language".to_string(),
@@ -57,7 +58,7 @@ fn validate_languages(languages: &[ProjectIndicator]) -> Result<()> {
 
     Ok(())
 }
-fn validate_language(language: &ProjectIndicator) -> Result<()> {
+fn validate_language(language: &Indicator) -> Result<()> {
     if language.name.trim().is_empty() {
         return Err(simple_error("name cannot be empty"));
     }
@@ -87,11 +88,9 @@ fn validate_language(language: &ProjectIndicator) -> Result<()> {
         return Err(simple_error("priority must be greater than 0"));
     }
 
-    validate_frameworks(&language.frameworks)?;
-
     Ok(())
 }
-fn validate_frameworks(frameworks: &[FrameworkDetector]) -> Result<()> {
+fn validate_frameworks(frameworks: &[Framework]) -> Result<()> {
     use std::collections::HashMap;
     let mut name_detection_pairs = HashMap::new();
 
@@ -113,7 +112,7 @@ fn validate_frameworks(frameworks: &[FrameworkDetector]) -> Result<()> {
 
     Ok(())
 }
-fn validate_framework(framework: &FrameworkDetector) -> Result<()> {
+fn validate_framework(framework: &Framework) -> Result<()> {
     if framework.name.trim().is_empty() {
         return Err(simple_error("framework name cannot be empty"));
     }
@@ -137,53 +136,14 @@ fn validate_framework(framework: &FrameworkDetector) -> Result<()> {
 }
 fn validate_detection_type(detection: &DetectionType) -> Result<()> {
     match detection {
-        DetectionType::NodeEcosystem { dependencies } => {
-            validate_non_empty_vec(dependencies, "NodeEcosystem dependencies")?;
-        }
-        DetectionType::RustEcosystem { dependencies } => {
-            validate_non_empty_vec(dependencies, "RustEcosystem dependencies")?;
-        }
-        DetectionType::GoEcosystem { modules } => {
-            validate_non_empty_vec(modules, "GoEcosystem modules")?;
-        }
-        DetectionType::PythonEcosystem { dependencies } => {
-            validate_non_empty_vec(dependencies, "PythonEcosystem dependencies")?;
-        }
-        DetectionType::RubyEcosystem { gems } => {
-            validate_non_empty_vec(gems, "RubyEcosystem gems")?;
-        }
-        DetectionType::PHPEcosystem { packages } => {
-            validate_non_empty_vec(packages, "PHPEcosystem packages")?;
-        }
-        DetectionType::JavaEcosystem { dependencies } => {
-            validate_non_empty_vec(dependencies, "JavaEcosystem dependencies")?;
-        }
-        DetectionType::DotNetEcosystem { packages } => {
-            validate_non_empty_vec(packages, "DotNetEcosystem packages")?;
-        }
-        DetectionType::ScalaEcosystem { dependencies } => {
-            validate_non_empty_vec(dependencies, "ScalaEcosystem dependencies")?;
-        }
-        DetectionType::DartEcosystem { dependencies } => {
-            validate_non_empty_vec(dependencies, "DartEcosystem dependencies")?;
-        }
-        DetectionType::LuaEcosystem { packages } => {
-            validate_non_empty_vec(packages, "LuaEcosystem packages")?;
-        }
-        DetectionType::KotlinEcosystem { dependencies } => {
-            validate_non_empty_vec(dependencies, "KotlinEcosystem dependencies")?;
-        }
-        DetectionType::SwiftEcosystem { dependencies } => {
-            validate_non_empty_vec(dependencies, "SwiftEcosystem dependencies")?;
-        }
-        DetectionType::ElixirEcosystem { dependencies } => {
-            validate_non_empty_vec(dependencies, "ElixirEcosystem dependencies")?;
+        DetectionType::Dependencies { dependencies } => {
+            validate_non_empty_vec(dependencies, "Dependencies")?;
         }
         DetectionType::FileExists { files } => {
             validate_non_empty_vec(files, "FileExists files")?;
         }
         DetectionType::ConfigFile { file, keys } => {
-            if file.trim().is_empty() {
+            if file.is_empty() {
                 return Err(simple_error("ConfigFile file path cannot be empty"));
             }
             validate_non_empty_vec(keys, "ConfigFile keys")?;
@@ -208,7 +168,7 @@ fn validate_non_empty_vec(vec: &[String], context: &str) -> Result<()> {
 
     Ok(())
 }
-fn validate_unique_language_names(languages: &[ProjectIndicator]) -> Result<()> {
+fn validate_unique_language_names(languages: &[Indicator]) -> Result<()> {
     let mut names = HashSet::new();
 
     for language in languages {
@@ -241,8 +201,8 @@ mod tests {
     use super::*;
     use crate::types::{ConfigMeta, DisplayConfig};
 
-    fn create_valid_language() -> ProjectIndicator {
-        ProjectIndicator::new(
+    fn create_valid_indicator() -> Indicator {
+        Indicator::new(
             "Test Language".to_string(),
             vec!["test.file".to_string()],
             "#FF0000".to_string(),
@@ -252,10 +212,11 @@ mod tests {
         )
     }
 
-    fn create_valid_framework() -> FrameworkDetector {
-        FrameworkDetector {
+    fn create_valid_framework() -> Framework {
+        Framework {
             name: "Test Framework".to_string(),
-            detection: DetectionType::NodeEcosystem {
+            ecosystems: vec![],
+            detection: DetectionType::Dependencies {
                 dependencies: vec!["test-dep".to_string()],
             },
             icon: Some("⚡".to_string()),
@@ -270,12 +231,12 @@ mod tests {
     fn test_validate_valid_config() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config {
             meta: ConfigMeta {
-                version: "2.0".to_string(),
+                version: "3.0".to_string(),
             },
             display: DisplayConfig::default(),
             detection: DetectionConfig::default(),
-            tracking: crate::types::TrackingConfig::default(),
-            languages: vec![create_valid_language()],
+            frameworks: vec![],
+            indicators: vec![create_valid_indicator()],
         };
 
         assert!(validate_config(&config).is_ok());
@@ -290,8 +251,8 @@ mod tests {
             },
             display: DisplayConfig::default(),
             detection: DetectionConfig::default(),
-            tracking: crate::types::TrackingConfig::default(),
-            languages: vec![create_valid_language()],
+            frameworks: vec![],
+            indicators: vec![create_valid_indicator()],
         };
 
         assert!(validate_config(&config).is_err());
@@ -304,8 +265,8 @@ mod tests {
             meta: ConfigMeta::default(),
             display: DisplayConfig::default(),
             detection: DetectionConfig::default(),
-            tracking: crate::types::TrackingConfig::default(),
-            languages: vec![],
+            frameworks: vec![],
+            indicators: vec![],
         };
 
         assert!(validate_config(&config).is_err());
@@ -318,8 +279,8 @@ mod tests {
             meta: ConfigMeta::default(),
             display: DisplayConfig::default(),
             detection: DetectionConfig::default(),
-            tracking: crate::types::TrackingConfig::default(),
-            languages: vec![create_valid_language(), create_valid_language()],
+            frameworks: vec![],
+            indicators: vec![create_valid_indicator(), create_valid_indicator()],
         };
 
         assert!(validate_config(&config).is_err());
@@ -341,7 +302,7 @@ mod tests {
 
     #[test]
     fn test_validate_language_with_invalid_color() -> Result<(), Box<dyn std::error::Error>> {
-        let mut language = create_valid_language();
+        let mut language = create_valid_indicator();
         language.color = "invalid-color".to_string();
 
         assert!(validate_language(&language).is_err());
@@ -350,7 +311,7 @@ mod tests {
 
     #[test]
     fn test_validate_language_with_empty_files() -> Result<(), Box<dyn std::error::Error>> {
-        let mut language = create_valid_language();
+        let mut language = create_valid_indicator();
         language.files = vec![];
 
         assert!(validate_language(&language).is_err());
@@ -366,9 +327,10 @@ mod tests {
 
     #[test]
     fn test_validate_framework_with_invalid_detection() -> Result<(), Box<dyn std::error::Error>> {
-        let framework = FrameworkDetector {
+        let framework = Framework {
             name: "Test".to_string(),
-            detection: DetectionType::NodeEcosystem {
+            ecosystems: vec![],
+            detection: DetectionType::Dependencies {
                 dependencies: vec![],
             },
             icon: None,
@@ -385,7 +347,8 @@ mod tests {
     #[test]
     fn test_validate_display_config() -> Result<(), Box<dyn std::error::Error>> {
         let mut config = Config {
-            languages: vec![create_valid_language()],
+            frameworks: vec![],
+            indicators: vec![create_valid_indicator()],
             ..Default::default()
         };
 
@@ -403,23 +366,23 @@ mod tests {
     #[test]
     fn test_validate_detection_types() -> Result<(), Box<dyn std::error::Error>> {
         let detection_types = vec![
-            DetectionType::NodeEcosystem {
+            DetectionType::Dependencies {
                 dependencies: vec!["react".to_string()],
             },
-            DetectionType::RustEcosystem {
+            DetectionType::Dependencies {
                 dependencies: vec!["serde".to_string()],
             },
-            DetectionType::GoEcosystem {
-                modules: vec!["github.com/gin-gonic/gin".to_string()],
+            DetectionType::Dependencies {
+                dependencies: vec!["github.com/gin-gonic/gin".to_string()],
             },
-            DetectionType::PythonEcosystem {
+            DetectionType::Dependencies {
                 dependencies: vec!["Django".to_string()],
             },
-            DetectionType::RubyEcosystem {
-                gems: vec!["rails".to_string()],
+            DetectionType::Dependencies {
+                dependencies: vec!["rails".to_string()],
             },
-            DetectionType::PHPEcosystem {
-                packages: vec!["laravel/framework".to_string()],
+            DetectionType::Dependencies {
+                dependencies: vec!["laravel/framework".to_string()],
             },
             DetectionType::FileExists {
                 files: vec!["next.config.js".to_string()],

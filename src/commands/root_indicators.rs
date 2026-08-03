@@ -28,8 +28,11 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
             });
 
             let vcs_indicators = vcs_root_indicators();
-            let enhanced_indicators =
-                resolver.resolve_indicators(&config.languages, &vcs_indicators);
+            let enhanced_indicators = resolver.resolve_indicators(
+                &config.indicators,
+                &config.frameworks,
+                &vcs_indicators,
+            );
 
             if resolver.detected_conflicts.is_empty() {
                 println!("✅ No conflicts detected in root indicators.");
@@ -76,8 +79,10 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
             if *compare_legacy {
                 println!("Simple Max-Weight Comparison:");
                 println!("============================");
-                let simple_indicators =
-                    generate_root_indicators_simple_max_weight(&config.languages);
+                let simple_indicators = generate_root_indicators_simple_max_weight(
+                    &config.indicators,
+                    &config.frameworks,
+                );
 
                 println!("Context-Aware vs Simple Max-Weight differences:");
                 for enhanced in &enhanced_indicators {
@@ -99,7 +104,7 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
             Ok(())
         }
         RootIndicatorAction::List {
-            language,
+            indicator,
             framework,
             conflicts_only,
         } => {
@@ -108,7 +113,7 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
 
             let mut resolver = ConflictResolver::with_defaults();
             let vcs_indicators = vcs_root_indicators();
-            resolver.resolve_indicators(&config.languages, &vcs_indicators);
+            resolver.resolve_indicators(&config.indicators, &config.frameworks, &vcs_indicators);
 
             let conflicting_patterns: std::collections::HashSet<String> = resolver
                 .detected_conflicts
@@ -116,8 +121,8 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
                 .map(|c| c.pattern.clone())
                 .collect();
 
-            for lang in &config.languages {
-                if let Some(filter_lang) = language {
+            for lang in &config.indicators {
+                if let Some(filter_lang) = indicator {
                     if !lang.name.eq_ignore_ascii_case(filter_lang) {
                         continue;
                     }
@@ -135,27 +140,27 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
                         indicator.pattern, indicator.weight, conflict_mark
                     );
                 }
+            }
 
-                for fw in &lang.frameworks {
-                    if let Some(filter_fw) = framework {
-                        if !fw.name.eq_ignore_ascii_case(filter_fw) {
+            for fw in &config.frameworks {
+                if let Some(filter_fw) = framework {
+                    if !fw.name.eq_ignore_ascii_case(filter_fw) {
+                        continue;
+                    }
+                }
+
+                if !fw.root_indicators.is_empty() {
+                    println!("\n🔧 Framework: {}", fw.name);
+                    for indicator in &fw.root_indicators {
+                        let is_conflicting = conflicting_patterns.contains(&indicator.pattern);
+                        if *conflicts_only && !is_conflicting {
                             continue;
                         }
-                    }
-
-                    if !fw.root_indicators.is_empty() {
-                        println!("  🔧 Framework: {}", fw.name);
-                        for indicator in &fw.root_indicators {
-                            let is_conflicting = conflicting_patterns.contains(&indicator.pattern);
-                            if *conflicts_only && !is_conflicting {
-                                continue;
-                            }
-                            let conflict_mark = if is_conflicting { " ⚠️" } else { "" };
-                            println!(
-                                "    📍 {} (weight: {:.3}){}",
-                                indicator.pattern, indicator.weight, conflict_mark
-                            );
-                        }
+                        let conflict_mark = if is_conflicting { " ⚠️" } else { "" };
+                        println!(
+                            "  📍 {} (weight: {:.3}){}",
+                            indicator.pattern, indicator.weight, conflict_mark
+                        );
                     }
                 }
             }
@@ -183,7 +188,7 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
 
             let mut resolver = ConflictResolver::with_defaults();
             let vcs_indicators = vcs_root_indicators();
-            resolver.resolve_indicators(&config.languages, &vcs_indicators);
+            resolver.resolve_indicators(&config.indicators, &config.frameworks, &vcs_indicators);
 
             if !resolver.detected_conflicts.is_empty() {
                 issues_found += resolver.detected_conflicts.len();
@@ -206,7 +211,7 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
                     vec!["package.json", "Cargo.toml", "go.mod", "pyproject.toml"];
                 let mut found_patterns = std::collections::HashSet::new();
 
-                for lang in &config.languages {
+                for lang in &config.indicators {
                     for indicator in &lang.root_indicators {
                         found_patterns.insert(indicator.pattern.as_str());
                     }
@@ -219,7 +224,7 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
                     }
                 }
 
-                for lang in &config.languages {
+                for lang in &config.indicators {
                     for indicator in &lang.root_indicators {
                         if indicator.weight < 0.1 {
                             println!(
@@ -262,7 +267,7 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
 
             let config = Config::load_default()?;
 
-            let engine = DetectionEngineBuilder::new(config.languages).build();
+            let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks).build();
             let stats = engine.get_root_indicator_stats();
 
             println!("📊 Overview:");

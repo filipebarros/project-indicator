@@ -10,12 +10,12 @@ mod indicators;
 mod matched_file;
 
 // Re-export all public types
-pub use config::{ConfigMeta, DetectionConfig, DetectionMode, DisplayConfig, TrackingConfig};
+pub use config::{ConfigMeta, DetectionConfig, DetectionMode, DisplayConfig};
 pub use detection::{
     ConfidenceFactor, DetectionEvidence, DetectionResult, EvidenceItem, EvidenceType,
 };
-pub use framework::{DetectionType, FrameworkDetector, FrameworkMatch};
-pub use indicators::{IndicatorContext, ProjectIndicator, RootIndicator};
+pub use framework::{DetectionType, Ecosystem, Framework, FrameworkMatch};
+pub use indicators::{Indicator, IndicatorContext, RootIndicator};
 pub use matched_file::{DirectoryType, MatchedFile};
 
 #[cfg(test)]
@@ -24,7 +24,7 @@ mod tests {
 
     #[test]
     fn test_project_indicator_creation() -> Result<(), Box<dyn std::error::Error>> {
-        let indicator = ProjectIndicator::new(
+        let indicator = Indicator::new(
             "TypeScript".to_string(),
             vec!["package.json".to_string(), "tsconfig.json".to_string()],
             "#3178C6".to_string(),
@@ -41,7 +41,7 @@ mod tests {
 
     #[test]
     fn test_file_matching() -> Result<(), Box<dyn std::error::Error>> {
-        let indicator = ProjectIndicator::new(
+        let indicator = Indicator::new(
             "TypeScript".to_string(),
             vec!["package.json".to_string(), "*.ts".to_string()],
             "#3178C6".to_string(),
@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn test_wildcard_matching() -> Result<(), Box<dyn std::error::Error>> {
-        let indicator = ProjectIndicator::new(
+        let indicator = Indicator::new(
             "C++".to_string(),
             vec!["*.cpp".to_string(), "*.h".to_string()],
             "#00599C".to_string(),
@@ -93,9 +93,10 @@ mod tests {
 
     #[test]
     fn test_detection_result_with_framework() -> Result<(), Box<dyn std::error::Error>> {
-        let framework = FrameworkDetector {
+        let framework = Framework {
             name: "React".to_string(),
-            detection: DetectionType::NodeEcosystem {
+            ecosystems: vec![],
+            detection: DetectionType::Dependencies {
                 dependencies: vec!["react".to_string()],
             },
             icon: Some("⚛️".to_string()),
@@ -118,8 +119,9 @@ mod tests {
 
     #[test]
     fn test_framework_priority_sorting() -> Result<(), Box<dyn std::error::Error>> {
-        let framework1 = FrameworkDetector {
+        let framework1 = Framework {
             name: "Framework1".to_string(),
+            ecosystems: vec![],
             detection: DetectionType::FileExists { files: vec![] },
             icon: None,
             color: None,
@@ -128,8 +130,9 @@ mod tests {
             root_indicators: vec![],
         };
 
-        let framework2 = FrameworkDetector {
+        let framework2 = Framework {
             name: "Framework2".to_string(),
+            ecosystems: vec![],
             detection: DetectionType::FileExists { files: vec![] },
             icon: None,
             color: None,
@@ -138,24 +141,16 @@ mod tests {
             root_indicators: vec![],
         };
 
-        let indicator = ProjectIndicator::new(
-            "Test".to_string(),
-            vec![],
-            "#000000".to_string(),
-            "".to_string(),
-            1,
-            vec![framework1, framework2],
-        );
-
-        let sorted = indicator.frameworks_by_priority();
-        assert_eq!(sorted[0].name, "Framework2");
-        assert_eq!(sorted[1].name, "Framework1");
+        let mut frameworks = [framework1, framework2];
+        frameworks.sort_by_key(|f| f.priority);
+        assert_eq!(frameworks[0].name, "Framework2");
+        assert_eq!(frameworks[1].name, "Framework1");
         Ok(())
     }
 
     #[test]
     fn test_serde_serialization() -> Result<(), Box<dyn std::error::Error>> {
-        let detection_type = DetectionType::NodeEcosystem {
+        let detection_type = DetectionType::Dependencies {
             dependencies: vec!["react".to_string(), "typescript".to_string()],
         };
 

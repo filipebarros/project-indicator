@@ -96,8 +96,5 @@ pub const QT_PRI_EXTENSION: &str = "*.pri";
 
 pub const EARLY_TERMINATION: &str = "early_termination";
 pub const EARLY_TERMINATION_MSG: &str = "Root indicator found - early termination";
-pub const FRAMEWORK_DETECTION_SKIPPED: &str = "framework_detection_skipped";
-pub const FRAMEWORK_DETECTION_SKIPPED_MSG: &str =
-    "Framework detection skipped due to low confidence";
 pub const FRAMEWORK_DETECTION: &str = "framework_detection";
 pub const FRAMEWORK_DETECTION_PATTERN: &str = "FRAMEWORK_DETECTION";

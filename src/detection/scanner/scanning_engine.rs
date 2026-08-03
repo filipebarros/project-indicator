@@ -5,7 +5,7 @@ use super::{FileSystemTraverser, TimeoutManager};
 use crate::detection::pattern_matching::PatternMatcher;
 use crate::detection::pattern_processor::PatternProcessor;
 use crate::performance::FileSystemCache;
-use crate::types::{MatchedFile, ProjectIndicator};
+use crate::types::{Indicator, MatchedFile};
 use crate::Result;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -101,7 +101,7 @@ impl ScanningEngine {
     pub fn with_shared_pattern_matcher(
         pattern_matcher: Arc<PatternMatcher>,
         patterns: Arc<Vec<String>>,
-        languages: Vec<Arc<ProjectIndicator>>,
+        languages: Vec<Arc<Indicator>>,
         max_depth: usize,
     ) -> Self {
         let pattern_processor = PatternProcessor::new(pattern_matcher, patterns, languages);
@@ -220,8 +220,14 @@ impl ScanningEngine {
         timeout_mgr: &TimeoutManager,
         entry: &ignore::DirEntry,
     ) -> Option<bool> {
-        // Check file type first before any string operations
-        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+        // Check file type first before any string operations. Symlinks are
+        // resolved to their targets so a symlinked manifest counts as a file
+        // (matching the root fast path, which stats through symlinks);
+        // broken links resolve to nothing and are skipped.
+        let is_file = entry
+            .file_type()
+            .is_some_and(|ft| ft.is_file() || (ft.is_symlink() && entry.path().is_file()));
+        if !is_file {
             return None;
         }
 
@@ -475,7 +481,7 @@ mod tests {
     use super::*;
     use crate::detection::pattern_matching::PatternMatcher;
     use crate::test_utils::create_test_rust_project;
-    use crate::types::{IndicatorContext, ProjectIndicator, RootIndicator};
+    use crate::types::{Indicator, IndicatorContext, RootIndicator};
     use std::fs;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -487,7 +493,7 @@ mod tests {
             "*.js".to_string(),
         ]);
 
-        let rust_lang = ProjectIndicator::with_root_indicators(
+        let rust_lang = Indicator::with_root_indicators(
             "Rust".to_string(),
             vec!["*.rs".to_string(), "Cargo.toml".to_string()],
             "#dea584".to_string(),
@@ -580,7 +586,7 @@ mod tests {
     #[test]
     fn test_engine_with_cache() -> Result<()> {
         let patterns = Arc::new(vec!["*.rs".to_string(), "Cargo.toml".to_string()]);
-        let rust_lang = ProjectIndicator::with_root_indicators(
+        let rust_lang = Indicator::with_root_indicators(
             "Rust".to_string(),
             vec!["*.rs".to_string(), "Cargo.toml".to_string()],
             "#dea584".to_string(),
@@ -607,7 +613,7 @@ mod tests {
     #[test]
     fn test_engine_with_shared_pattern_matcher() -> Result<()> {
         let patterns = Arc::new(vec!["*.rs".to_string(), "Cargo.toml".to_string()]);
-        let rust_lang = ProjectIndicator::with_root_indicators(
+        let rust_lang = Indicator::with_root_indicators(
             "Rust".to_string(),
             vec!["*.rs".to_string(), "Cargo.toml".to_string()],
             "#dea584".to_string(),
@@ -662,7 +668,7 @@ mod tests {
         let patterns = Arc::new(vec!["special.config".to_string(), "*.xyz".to_string()]);
         // Priority > 2 keeps this language out of the high-priority fast path,
         // so detection must survive the extreme-size bailout
-        let lang = ProjectIndicator::with_root_indicators(
+        let lang = Indicator::with_root_indicators(
             "Special".to_string(),
             vec!["special.config".to_string(), "*.xyz".to_string()],
             "#000000".to_string(),
@@ -696,7 +702,7 @@ mod tests {
     #[test]
     fn test_scan_with_timeout_timeout_exceeded() -> Result<()> {
         let patterns = Arc::new(vec!["*.rs".to_string()]);
-        let rust_lang = ProjectIndicator::with_root_indicators(
+        let rust_lang = Indicator::with_root_indicators(
             "Rust".to_string(),
             vec!["*.rs".to_string()],
             "#dea584".to_string(),
@@ -886,7 +892,7 @@ mod tests {
     #[test]
     fn test_scan_with_timeout_timeout_exceeded_scenario() -> Result<()> {
         let patterns = Arc::new(vec!["*.rs".to_string()]);
-        let rust_lang = ProjectIndicator::with_root_indicators(
+        let rust_lang = Indicator::with_root_indicators(
             "Rust".to_string(),
             vec!["*.rs".to_string()],
             "#dea584".to_string(),
