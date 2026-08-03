@@ -17,7 +17,7 @@ Project Indicator is a high-performance replacement for shell-based project dete
 
 ## Features
 
-- 🔍 **Multi-language Detection**: Supports 22 languages and toolchains (Rust, JavaScript/TypeScript, Python, Go, Deno, Terraform, Nix, and more)
+- 🔍 **Multi-language Detection**: Supports 23 languages and toolchains (Rust, JavaScript/TypeScript, Python, Go, Deno, Bun, Terraform, Nix, and more)
 - 🏗️ **Framework Recognition**: Detects 37 popular frameworks like React, Svelte, Axum, Django, Gin, Spring Boot, Laravel, Rails
 - ⚡ **Blazing Performance**: 3-5ms typical detection
 - 🎨 **Multiple Output Formats**: Simple, Full, JSON, Compact, Debug, and Rich formats

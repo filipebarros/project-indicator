@@ -21,6 +21,7 @@ use tempfile::TempDir;
 
 /// (fixture dir, expected language, expected frameworks)
 const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
+    ("bun-react", "Bun", &["React"]),
     ("cpp", "C++", &[]),
     ("csharp-aspnet", "C#", &["ASP.NET Core"]),
     ("dart-flutter", "Dart", &["Flutter"]),
