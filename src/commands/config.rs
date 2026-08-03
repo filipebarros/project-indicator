@@ -73,7 +73,7 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                     Ok(()) => {
                         println!("✅ Configuration is valid");
                         println!("📍 Config file: {}", config_path.display());
-                        println!("📊 Languages configured: {}", config.indicators.len());
+                        println!("📊 Indicators configured: {}", config.indicators.len());
                         println!("🏗️  Total frameworks: {}", config.frameworks.len());
                         Ok(())
                     }
@@ -145,7 +145,7 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                 match Config::load_default() {
                     Ok(config) => {
                         println!("📦 Active Configuration:");
-                        println!("   Languages: {}", config.indicators.len());
+                        println!("   Indicators: {}", config.indicators.len());
                         println!("   Total frameworks: {}", config.frameworks.len());
                         println!("   Detection mode: {:?}", config.detection.detection_mode);
                         println!();
@@ -232,7 +232,7 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             println!("✅ Configuration created successfully!");
             println!("📍 Location: {}", config_path.display());
             println!("📋 Template: {}", template_name);
-            println!("🔧 Languages: {}", config.indicators.len());
+            println!("🔧 Indicators: {}", config.indicators.len());
 
             if let Err(e) = validate_config(&config) {
                 println!("⚠️  Warning: Generated config has validation issues: {}", e);

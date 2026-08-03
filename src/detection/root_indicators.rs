@@ -18,29 +18,29 @@ pub struct FoundRootIndicator {
 }
 
 pub struct RootIndicatorEngine {
-    languages: Vec<Arc<Indicator>>,
+    indicators: Vec<Arc<Indicator>>,
     frameworks: Arc<Vec<Framework>>,
     config: DetectionConfig,
     cached_home_dir: Option<PathBuf>,
 }
 
 impl RootIndicatorEngine {
-    pub fn new(languages: Vec<Indicator>) -> Self {
-        Self::with_config(languages, DetectionConfig::default())
+    pub fn new(indicators: Vec<Indicator>) -> Self {
+        Self::with_config(indicators, DetectionConfig::default())
     }
 
-    pub fn with_config(languages: Vec<Indicator>, config: DetectionConfig) -> Self {
-        let languages: Vec<Arc<Indicator>> = languages.into_iter().map(Arc::new).collect();
-        Self::from_parts(languages, Arc::new(Vec::new()), config)
+    pub fn with_config(indicators: Vec<Indicator>, config: DetectionConfig) -> Self {
+        let indicators: Vec<Arc<Indicator>> = indicators.into_iter().map(Arc::new).collect();
+        Self::from_parts(indicators, Arc::new(Vec::new()), config)
     }
 
     pub fn from_parts(
-        languages: Vec<Arc<Indicator>>,
+        indicators: Vec<Arc<Indicator>>,
         frameworks: Arc<Vec<Framework>>,
         config: DetectionConfig,
     ) -> Self {
         Self {
-            languages,
+            indicators,
             frameworks,
             config,
             cached_home_dir: dirs::home_dir(),
@@ -63,7 +63,7 @@ impl RootIndicatorEngine {
                         self.check_secondary_ecosystems(path, file_cache, &mut result)?;
 
                         log::debug!(
-                            "Early termination (fast mode): Found definitive language indicator '{}' with confidence {:.3} (threshold: {:.3})",
+                            "Early termination (fast mode): Found definitive indicator '{}' with confidence {:.3} (threshold: {:.3})",
                             result.indicator.as_ref().map(|l| l.name.as_str()).unwrap_or("Unknown"),
                             result.confidence,
                             indicator_threshold
@@ -71,7 +71,7 @@ impl RootIndicatorEngine {
                         return Ok(Some(result));
                     } else {
                         log::debug!(
-                            "Language root indicator found but confidence {:.3} below threshold {:.3}, continuing search",
+                            "Root indicator found but confidence {:.3} below threshold {:.3}, continuing search",
                             result.confidence,
                             indicator_threshold
                         );
@@ -208,7 +208,7 @@ impl RootIndicatorEngine {
     }
 
     /// Check for any root indicator at specific path
-    /// This checks both language and VCS markers
+    /// This checks both indicator and VCS markers
     fn check_root_indicators_at_path(
         &self,
         path: &Path,
@@ -223,19 +223,19 @@ impl RootIndicatorEngine {
             log::trace!("Found .git directory at {}", path.display());
         }
 
-        // Optimization: Check high-priority languages first for early exit
-        let mut languages_by_priority: Vec<_> = self.languages.iter().collect();
-        languages_by_priority.sort_by_key(|lang| lang.priority);
+        // Optimization: Check high-priority indicators first for early exit
+        let mut indicators_by_priority: Vec<_> = self.indicators.iter().collect();
+        indicators_by_priority.sort_by_key(|indicator| indicator.priority);
 
-        // Check language root indicators
-        for language in languages_by_priority {
-            for root_indicator in &language.root_indicators {
+        // Check indicator root indicators
+        for indicator in indicators_by_priority {
+            for root_indicator in &indicator.root_indicators {
                 let indicator_path = path.join(&root_indicator.pattern);
                 if file_cache.exists(&indicator_path) {
                     let certainty = self.calculate_indicator_certainty(
                         &indicator_path,
-                        &root_indicator.pattern,
-                        language,
+                        root_indicator,
+                        indicator,
                     )?;
 
                     // Use lower threshold for root discovery (0.2) to catch more indicators
@@ -243,17 +243,17 @@ impl RootIndicatorEngine {
                         let specificity = self.get_pattern_specificity(&root_indicator.pattern);
                         let early_term = self.should_early_terminate(&root_indicator.pattern);
 
-                        let indicator = FoundRootIndicator {
+                        let found_root_indicator = FoundRootIndicator {
                             pattern: root_indicator.pattern.clone(),
                             certainty,
-                            indicator: language.clone(),
+                            indicator: indicator.clone(),
                             framework: None,
                             early_termination: early_term,
                             specificity,
                         };
 
                         // Optimization: If we found a very strong indicator (certainty > 0.9 and high specificity),
-                        // return immediately without checking other languages
+                        // return immediately without checking other indicators
                         if certainty > 0.9 && specificity >= 8 {
                             log::trace!(
                                 "Found strong root indicator '{}' (certainty: {:.2}, specificity: {}), early exit",
@@ -261,10 +261,10 @@ impl RootIndicatorEngine {
                                 certainty,
                                 specificity
                             );
-                            return Ok(Some(indicator));
+                            return Ok(Some(found_root_indicator));
                         }
 
-                        found_indicators.push(indicator);
+                        found_indicators.push(found_root_indicator);
                     }
                 }
             }
@@ -272,14 +272,11 @@ impl RootIndicatorEngine {
 
         // If require_vcs_root is enabled, only accept roots with .git
         if self.config.require_vcs_root && has_git && found_indicators.is_empty() {
-            log::trace!(
-                "Found .git but no language indicators at {}",
-                path.display()
-            );
+            log::trace!("Found .git but no indicators at {}", path.display());
             return Ok(None);
         }
 
-        Ok(self.resolve_language_conflicts(&found_indicators).cloned())
+        Ok(self.resolve_indicator_conflicts(&found_indicators).cloned())
     }
 
     fn check_secondary_ecosystems(
@@ -314,21 +311,21 @@ impl RootIndicatorEngine {
     ) -> Result<Option<DetectionResult>> {
         let mut found_indicators = Vec::new();
 
-        for language in &self.languages {
-            for root_indicator in &language.root_indicators {
+        for indicator in &self.indicators {
+            for root_indicator in &indicator.root_indicators {
                 let indicator_path = path.join(&root_indicator.pattern);
                 if file_cache.exists(&indicator_path) {
                     let certainty = self.calculate_indicator_certainty(
                         &indicator_path,
-                        &root_indicator.pattern,
-                        language,
+                        root_indicator,
+                        indicator,
                     )?;
 
                     if certainty > 0.0 {
                         found_indicators.push(FoundRootIndicator {
                             pattern: root_indicator.pattern.clone(),
                             certainty,
-                            indicator: language.clone(),
+                            indicator: indicator.clone(),
                             framework: None,
                             early_termination: self.should_early_terminate(&root_indicator.pattern),
                             specificity: self.get_pattern_specificity(&root_indicator.pattern),
@@ -343,8 +340,8 @@ impl RootIndicatorEngine {
         }
 
         let best_indicator = self
-            .resolve_language_conflicts(&found_indicators)
-            .ok_or_else(|| anyhow::anyhow!("Failed to resolve language conflicts"))?;
+            .resolve_indicator_conflicts(&found_indicators)
+            .ok_or_else(|| anyhow::anyhow!("Failed to resolve indicator conflicts"))?;
 
         Ok(Some(DetectionResult::new(
             Some(best_indicator.indicator.clone()),
@@ -359,10 +356,10 @@ impl RootIndicatorEngine {
         file_cache: &Arc<FileSystemCache>,
     ) -> Result<Option<DetectionResult>> {
         let mut found_frameworks = Vec::new();
-        let mut base_language = None;
+        let mut base_indicator = None;
 
-        if let Some(lang_result) = self.check_indicator_root_indicators(path, file_cache)? {
-            base_language = lang_result.indicator;
+        if let Some(indicator_result) = self.check_indicator_root_indicators(path, file_cache)? {
+            base_indicator = indicator_result.indicator;
         }
 
         {
@@ -372,7 +369,7 @@ impl RootIndicatorEngine {
                     if file_cache.exists(&indicator_path) {
                         let certainty = self.calculate_framework_certainty(
                             &indicator_path,
-                            &root_indicator.pattern,
+                            root_indicator,
                             framework,
                         )?;
 
@@ -383,8 +380,8 @@ impl RootIndicatorEngine {
                                 evidence: vec![root_indicator.pattern.clone()],
                             });
 
-                            // Frameworks no longer have a parent language;
-                            // base_language comes from indicator matching alone
+                            // Frameworks no longer have a parent indicator;
+                            // base_indicator comes from indicator matching alone
                         }
                     }
                 }
@@ -404,7 +401,7 @@ impl RootIndicatorEngine {
         let overall_confidence = found_frameworks[0].confidence;
 
         Ok(Some(DetectionResult::new(
-            base_language,
+            base_indicator,
             found_frameworks,
             overall_confidence,
         )))
@@ -413,10 +410,10 @@ impl RootIndicatorEngine {
     fn calculate_indicator_certainty(
         &self,
         file_path: &Path,
-        pattern: &str,
-        language: &Arc<Indicator>,
+        root_indicator: &crate::types::RootIndicator,
+        indicator: &Arc<Indicator>,
     ) -> Result<f32> {
-        match pattern {
+        match root_indicator.pattern.as_str() {
             CARGO_TOML => {
                 if self.is_valid_cargo_toml(file_path)? {
                     Ok(0.95)
@@ -434,13 +431,13 @@ impl RootIndicatorEngine {
             }
             TSCONFIG_JSON => Ok(0.90),
             PACKAGE_JSON => {
-                if language.name == "TypeScript" {
+                if indicator.name == "TypeScript" {
                     if self.has_typescript_dependencies(file_path)? {
                         Ok(0.85)
                     } else {
                         Ok(0.1)
                     }
-                } else if language.name == "JavaScript" {
+                } else if indicator.name == "JavaScript" {
                     if self.has_typescript_dependencies(file_path)? {
                         Ok(0.1)
                     } else {
@@ -450,17 +447,21 @@ impl RootIndicatorEngine {
                     Ok(0.0)
                 }
             }
-            _ => Ok(0.2),
+            // Data-driven fallback: the indicator's declared weight scaled
+            // by its context class base priority (RuntimeRoot, ToolchainRoot, …),
+            // so patterns without a hardcoded validator (deno.json, flake.nix,
+            // main.tf, …) still participate in root discovery
+            _ => Ok(root_indicator.weight * root_indicator.context.base_priority()),
         }
     }
 
     fn calculate_framework_certainty(
         &self,
         file_path: &Path,
-        pattern: &str,
+        root_indicator: &crate::types::RootIndicator,
         framework: &crate::types::Framework,
     ) -> Result<f32> {
-        match pattern {
+        match root_indicator.pattern.as_str() {
             NEXT_CONFIG_JS | NEXT_CONFIG_TS => Ok(0.95),
             VITE_CONFIG_JS | VITE_CONFIG_TS => Ok(0.90),
             NUXT_CONFIG_JS | NUXT_CONFIG_TS => Ok(0.95),
@@ -481,11 +482,11 @@ impl RootIndicatorEngine {
                     Ok(0.1)
                 }
             }
-            _ => Ok(0.2),
+            _ => Ok(root_indicator.weight * root_indicator.context.base_priority()),
         }
     }
 
-    fn resolve_language_conflicts<'a>(
+    fn resolve_indicator_conflicts<'a>(
         &self,
         indicators: &'a [FoundRootIndicator],
     ) -> Option<&'a FoundRootIndicator> {
@@ -579,11 +580,11 @@ impl RootIndicatorEngine {
     }
 
     pub fn get_stats(&self) -> RootIndicatorStats {
-        let total_languages = self.languages.len();
-        let total_language_indicators: usize = self
-            .languages
+        let total_indicators = self.indicators.len();
+        let total_indicator_root_indicators: usize = self
+            .indicators
             .iter()
-            .map(|lang| lang.root_indicators.len())
+            .map(|indicator| indicator.root_indicators.len())
             .sum();
         let total_framework_indicators: usize = self
             .frameworks
@@ -592,8 +593,8 @@ impl RootIndicatorEngine {
             .sum();
 
         RootIndicatorStats {
-            total_languages,
-            total_language_indicators,
+            total_indicators,
+            total_indicator_root_indicators,
             total_framework_indicators,
             early_termination_patterns: self.count_early_termination_patterns(),
         }
@@ -601,16 +602,16 @@ impl RootIndicatorEngine {
 
     fn count_early_termination_patterns(&self) -> usize {
         let mut count = 0;
-        for language in &self.languages {
-            for indicator in &language.root_indicators {
-                if self.should_early_terminate(&indicator.pattern) {
+        for indicator in &self.indicators {
+            for root_indicator in &indicator.root_indicators {
+                if self.should_early_terminate(&root_indicator.pattern) {
                     count += 1;
                 }
             }
         }
         for framework in self.frameworks.iter() {
-            for indicator in &framework.root_indicators {
-                if self.should_early_terminate(&indicator.pattern) {
+            for root_indicator in &framework.root_indicators {
+                if self.should_early_terminate(&root_indicator.pattern) {
                     count += 1;
                 }
             }
@@ -621,8 +622,8 @@ impl RootIndicatorEngine {
 
 #[derive(Debug, Clone)]
 pub struct RootIndicatorStats {
-    pub total_languages: usize,
-    pub total_language_indicators: usize,
+    pub total_indicators: usize,
+    pub total_indicator_root_indicators: usize,
     pub total_framework_indicators: usize,
     pub early_termination_patterns: usize,
 }
@@ -641,7 +642,7 @@ mod tests {
 
     #[test]
     fn test_early_termination_rust() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
@@ -649,7 +650,7 @@ mod tests {
             detection_mode: DetectionMode::Fast,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(languages, config);
+        let engine = RootIndicatorEngine::with_config(indicators, config);
 
         let temp_dir = TempDir::new()?;
         let cargo_content = r#"
@@ -670,7 +671,7 @@ edition = "2021"
             result
                 .indicator
                 .as_ref()
-                .ok_or("Failed to get language reference")?
+                .ok_or("Failed to get indicator reference")?
                 .name,
             "Rust"
         );
@@ -680,7 +681,7 @@ edition = "2021"
 
     #[test]
     fn test_typescript_vs_javascript_resolution() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![
+        let indicators = vec![
             create_test_indicator_with_indicators("JavaScript", vec![("package.json", 0.70)]),
             create_test_indicator_with_indicators("TypeScript", vec![("package.json", 0.85)]),
         ];
@@ -688,7 +689,7 @@ edition = "2021"
             detection_mode: DetectionMode::Fast,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(languages, config);
+        let engine = RootIndicatorEngine::with_config(indicators, config);
 
         let temp_dir = TempDir::new()?;
 
@@ -716,7 +717,7 @@ edition = "2021"
             result
                 .indicator
                 .as_ref()
-                .ok_or("Failed to get language reference")?
+                .ok_or("Failed to get indicator reference")?
                 .name,
             "TypeScript"
         );
@@ -725,11 +726,11 @@ edition = "2021"
 
     #[test]
     fn test_no_early_termination_when_uncertain() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Python",
             vec![("pyproject.toml", 0.90)],
         )];
-        let engine = RootIndicatorEngine::new(languages);
+        let engine = RootIndicatorEngine::new(indicators);
 
         let temp_dir = TempDir::new()?;
         let invalid_content = r#"
@@ -774,22 +775,22 @@ not-python = true
 
     #[test]
     fn test_performance_stats() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![
+        let indicators = vec![
             create_test_indicator_with_indicators("Rust", vec![("Cargo.toml", 0.95)]),
             create_test_indicator_with_indicators("TypeScript", vec![("tsconfig.json", 0.90)]),
         ];
-        let engine = RootIndicatorEngine::new(languages);
+        let engine = RootIndicatorEngine::new(indicators);
 
         let stats = engine.get_stats();
-        assert_eq!(stats.total_languages, 2);
-        assert_eq!(stats.total_language_indicators, 2);
+        assert_eq!(stats.total_indicators, 2);
+        assert_eq!(stats.total_indicator_root_indicators, 2);
         assert!(stats.early_termination_patterns >= 2);
         Ok(())
     }
 
     #[test]
     fn test_engine_creation_with_config() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
@@ -804,28 +805,27 @@ not-python = true
             small_project_threshold: 50,
             extreme_size_threshold: 500,
         };
-        let engine = RootIndicatorEngine::with_config(languages, config);
+        let engine = RootIndicatorEngine::with_config(indicators, config);
         assert_eq!(engine.config.confidence_threshold, 0.8);
         Ok(())
     }
 
     #[test]
-    fn test_engine_creation_from_arc_languages() -> Result<(), Box<dyn std::error::Error>> {
-        let languages: Vec<Arc<Indicator>> = vec![Arc::new(create_test_indicator_with_indicators(
-            "Rust",
-            vec![("Cargo.toml", 0.95)],
-        ))];
+    fn test_engine_creation_from_arc_indicators() -> Result<(), Box<dyn std::error::Error>> {
+        let indicators: Vec<Arc<Indicator>> = vec![Arc::new(
+            create_test_indicator_with_indicators("Rust", vec![("Cargo.toml", 0.95)]),
+        )];
         let config = DetectionConfig::default();
         let engine =
-            RootIndicatorEngine::from_parts(languages, std::sync::Arc::new(Vec::new()), config);
-        assert_eq!(engine.languages.len(), 1);
+            RootIndicatorEngine::from_parts(indicators, std::sync::Arc::new(Vec::new()), config);
+        assert_eq!(engine.indicators.len(), 1);
         Ok(())
     }
 
     #[test]
     fn test_detect_with_early_termination_thorough_mode() -> Result<(), Box<dyn std::error::Error>>
     {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
@@ -833,7 +833,7 @@ not-python = true
             detection_mode: DetectionMode::Thorough,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(languages, config);
+        let engine = RootIndicatorEngine::with_config(indicators, config);
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -852,7 +852,7 @@ not-python = true
     #[test]
     fn test_detect_with_early_termination_fast_mode_low_confidence(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.3)],
         )];
@@ -861,7 +861,7 @@ not-python = true
             confidence_threshold: 0.8,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(languages, config);
+        let engine = RootIndicatorEngine::with_config(indicators, config);
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -895,14 +895,14 @@ not-python = true
                 context: crate::types::IndicatorContext::FrameworkRoot,
             }],
         }];
-        let languages = vec![rust_lang];
+        let indicators = vec![rust_lang];
         let config = DetectionConfig {
             detection_mode: DetectionMode::Fast,
             confidence_threshold: 0.8,
             ..Default::default()
         };
         let engine = RootIndicatorEngine::from_parts(
-            languages.into_iter().map(std::sync::Arc::new).collect(),
+            indicators.into_iter().map(std::sync::Arc::new).collect(),
             std::sync::Arc::new(catalog),
             config,
         );
@@ -923,11 +923,11 @@ not-python = true
 
     #[test]
     fn test_find_project_root_success() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
-        let engine = RootIndicatorEngine::new(languages);
+        let engine = RootIndicatorEngine::new(indicators);
 
         let temp_dir = TempDir::new()?;
         let subdir = temp_dir.path().join("subdir");
@@ -949,11 +949,11 @@ not-python = true
 
     #[test]
     fn test_find_project_root_not_found() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
-        let engine = RootIndicatorEngine::new(languages);
+        let engine = RootIndicatorEngine::new(indicators);
 
         let temp_dir = TempDir::new()?;
         let subdir = temp_dir.path().join("subdir");
@@ -969,7 +969,7 @@ not-python = true
 
     #[test]
     fn test_find_project_root_max_traversal() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
@@ -977,7 +977,7 @@ not-python = true
             max_upward_traversal: 1,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(languages, config);
+        let engine = RootIndicatorEngine::with_config(indicators, config);
 
         let temp_dir = TempDir::new()?;
         let subdir = temp_dir.path().join("deep").join("nested").join("path");
@@ -997,7 +997,7 @@ not-python = true
 
     #[test]
     fn test_find_project_root_vcs_root_required() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
@@ -1005,7 +1005,7 @@ not-python = true
             require_vcs_root: true,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(languages, config);
+        let engine = RootIndicatorEngine::with_config(indicators, config);
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -1026,7 +1026,7 @@ not-python = true
 
     #[test]
     fn test_find_project_root_vcs_root_present() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
@@ -1034,7 +1034,7 @@ not-python = true
             require_vcs_root: true,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(languages, config);
+        let engine = RootIndicatorEngine::with_config(indicators, config);
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -1053,11 +1053,11 @@ not-python = true
 
     #[test]
     fn test_check_indicator_root_indicators() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
-        let engine = RootIndicatorEngine::new(languages);
+        let engine = RootIndicatorEngine::new(indicators);
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -1071,10 +1071,10 @@ not-python = true
         assert!(result.is_some());
         let result = result.ok_or("Expected Some but got None")?;
         assert!(result.indicator.is_some());
-        let language = result
+        let indicator = result
             .indicator
-            .ok_or("Expected Some language but got None")?;
-        assert_eq!(language.name, "Rust");
+            .ok_or("Expected Some indicator but got None")?;
+        assert_eq!(indicator.name, "Rust");
         Ok(())
     }
 
@@ -1095,9 +1095,9 @@ not-python = true
                 context: crate::types::IndicatorContext::FrameworkRoot,
             }],
         }];
-        let languages = vec![rust_lang];
+        let indicators = vec![rust_lang];
         let engine = RootIndicatorEngine::from_parts(
-            languages.into_iter().map(std::sync::Arc::new).collect(),
+            indicators.into_iter().map(std::sync::Arc::new).collect(),
             std::sync::Arc::new(catalog),
             DetectionConfig::default(),
         );
@@ -1120,11 +1120,11 @@ not-python = true
 
     #[test]
     fn test_check_secondary_ecosystems() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
-        let engine = RootIndicatorEngine::new(languages);
+        let engine = RootIndicatorEngine::new(indicators);
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -1147,11 +1147,11 @@ not-python = true
 
     #[test]
     fn test_is_boundary_directory_public() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
-        let engine = RootIndicatorEngine::new(languages);
+        let engine = RootIndicatorEngine::new(indicators);
 
         // Test home directory
         if let Some(home) = dirs::home_dir() {
@@ -1190,16 +1190,16 @@ not-python = true
             }],
         }];
 
-        let languages = vec![rust_lang];
+        let indicators = vec![rust_lang];
         let engine = RootIndicatorEngine::from_parts(
-            languages.into_iter().map(std::sync::Arc::new).collect(),
+            indicators.into_iter().map(std::sync::Arc::new).collect(),
             std::sync::Arc::new(catalog),
             DetectionConfig::default(),
         );
 
         let stats = engine.get_stats();
-        assert_eq!(stats.total_languages, 1);
-        assert_eq!(stats.total_language_indicators, 1);
+        assert_eq!(stats.total_indicators, 1);
+        assert_eq!(stats.total_indicator_root_indicators, 1);
         assert_eq!(stats.total_framework_indicators, 1);
         assert!(stats.early_termination_patterns >= 1);
         Ok(())
@@ -1207,11 +1207,11 @@ not-python = true
 
     #[test]
     fn test_early_termination_patterns_count() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
-        let engine = RootIndicatorEngine::new(languages);
+        let engine = RootIndicatorEngine::new(indicators);
 
         let count = engine.count_early_termination_patterns();
         assert!(count >= 1);
@@ -1220,11 +1220,11 @@ not-python = true
 
     #[test]
     fn test_specificity_resolution_comprehensive() -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![
+        let indicators = vec![
             create_test_indicator_with_indicators("Rust", vec![("Cargo.toml", 0.95)]),
             create_test_indicator_with_indicators("TypeScript", vec![("tsconfig.json", 0.90)]),
         ];
-        let engine = RootIndicatorEngine::new(languages);
+        let engine = RootIndicatorEngine::new(indicators);
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -1240,17 +1240,17 @@ not-python = true
         let result = result.ok_or("Expected Some but got None")?;
         assert!(result.indicator.is_some());
         // Should prefer Rust due to higher weight (0.95 vs 0.90)
-        let language = result
+        let indicator = result
             .indicator
-            .ok_or("Expected Some language but got None")?;
-        assert_eq!(language.name, "Rust");
+            .ok_or("Expected Some indicator but got None")?;
+        assert_eq!(indicator.name, "Rust");
         Ok(())
     }
 
     #[test]
     fn test_no_early_termination_when_uncertain_comprehensive(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let languages = vec![create_test_indicator_with_indicators(
+        let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.3)],
         )];
@@ -1259,7 +1259,7 @@ not-python = true
             confidence_threshold: 0.8,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(languages, config);
+        let engine = RootIndicatorEngine::with_config(indicators, config);
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -1272,6 +1272,32 @@ not-python = true
 
         // Should not terminate early due to low confidence
         assert!(result.is_none());
+        Ok(())
+    }
+
+    /// Patterns without a hardcoded validator must still drive root
+    /// discovery via their declared weight × context base priority
+    /// (previously the fallback returned 0.2, below the discovery gate).
+    #[test]
+    fn test_data_driven_certainty_fallback() -> Result<(), Box<dyn std::error::Error>> {
+        let indicator = create_test_indicator_with_indicators("Deno", vec![("deno.json", 0.95)]);
+        let languages = vec![indicator];
+        let config = DetectionConfig {
+            detection_mode: DetectionMode::Fast,
+            confidence_threshold: 0.3,
+            ..Default::default()
+        };
+        let engine = RootIndicatorEngine::with_config(languages, config);
+
+        let temp_dir = TempDir::new()?;
+        fs::write(temp_dir.path().join("deno.json"), "{}")?;
+
+        let file_cache = Arc::new(FileSystemCache::new());
+        let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
+
+        let result = result.ok_or("expected early termination on deno.json")?;
+        let found = result.indicator.ok_or("expected an indicator")?;
+        assert_eq!(found.name, "Deno");
         Ok(())
     }
 }

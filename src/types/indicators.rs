@@ -67,8 +67,10 @@
 //!
 //! - **VersionControl** (1.0) - `.git`, `.hg` - Highest priority
 //! - **LanguageRoot** (0.9) - `Cargo.toml`, `package.json` - Strong indicators
+//! - **RuntimeRoot** (0.85) - `deno.json` - Runtime-specific root files
 //! - **FrameworkRoot** (0.8) - Framework-specific config files
 //! - **BuildSystem** (0.7) - `Makefile`, `CMakeLists.txt`
+//! - **ToolchainRoot** (0.65) - `flake.nix`, `main.tf` - Infra/toolchain files
 //! - **Configuration** (0.6) - Generic config files
 //!
 //! ```rust
@@ -124,6 +126,8 @@ pub enum IndicatorContext {
     VersionControl,
     #[default]
     LanguageRoot,
+    RuntimeRoot,
+    ToolchainRoot,
     FrameworkRoot,
     BuildSystem,
     Configuration,
@@ -134,8 +138,10 @@ impl IndicatorContext {
         match self {
             IndicatorContext::VersionControl => 1.0,
             IndicatorContext::LanguageRoot => 0.9,
+            IndicatorContext::RuntimeRoot => 0.85,
             IndicatorContext::FrameworkRoot => 0.8,
             IndicatorContext::BuildSystem => 0.7,
+            IndicatorContext::ToolchainRoot => 0.65,
             IndicatorContext::Configuration => 0.6,
         }
     }

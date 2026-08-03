@@ -26,7 +26,7 @@ pub fn handle_benchmark_command(cli: &Cli) -> Result<()> {
     let (path, config, engine) = setup_benchmark(cli)?;
 
     println!("Benchmarking path: {}", path.display());
-    println!("Languages configured: {}", config.indicators.len());
+    println!("Indicators configured: {}", config.indicators.len());
     println!();
 
     println!("1. Single Detection (Cold)");
@@ -35,7 +35,7 @@ pub fn handle_benchmark_command(cli: &Cli) -> Result<()> {
     let cold_duration = start.elapsed();
     println!("   Time: {:?}", cold_duration);
     println!(
-        "   Result: {} language, {} frameworks",
+        "   Result: {} indicator, {} frameworks",
         if result.indicator.is_some() { 1 } else { 0 },
         result.frameworks.len()
     );

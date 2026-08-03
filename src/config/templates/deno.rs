@@ -16,9 +16,9 @@ pub fn create_deno_indicator() -> Indicator {
         5,
         vec![Ecosystem::Npm],
         vec![
-            root_indicator("deno.json", 0.95, IndicatorContext::LanguageRoot),
-            root_indicator("deno.jsonc", 0.95, IndicatorContext::LanguageRoot),
-            root_indicator("deno.lock", 0.8, IndicatorContext::LanguageRoot),
+            root_indicator("deno.json", 0.95, IndicatorContext::RuntimeRoot),
+            root_indicator("deno.jsonc", 0.95, IndicatorContext::RuntimeRoot),
+            root_indicator("deno.lock", 0.8, IndicatorContext::RuntimeRoot),
         ],
     )
 }

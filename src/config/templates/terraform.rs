@@ -16,8 +16,8 @@ pub fn create_terraform_indicator() -> Indicator {
         12,
         vec![],
         vec![
-            root_indicator(".terraform.lock.hcl", 0.9, IndicatorContext::LanguageRoot),
-            root_indicator("main.tf", 0.85, IndicatorContext::LanguageRoot),
+            root_indicator(".terraform.lock.hcl", 0.9, IndicatorContext::ToolchainRoot),
+            root_indicator("main.tf", 0.85, IndicatorContext::ToolchainRoot),
         ],
     )
 }

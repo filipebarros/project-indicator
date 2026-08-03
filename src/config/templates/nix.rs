@@ -12,10 +12,10 @@ pub fn create_nix_indicator() -> Indicator {
         13,
         vec![],
         vec![
-            root_indicator("flake.nix", 0.95, IndicatorContext::LanguageRoot),
-            root_indicator("flake.lock", 0.85, IndicatorContext::LanguageRoot),
-            root_indicator("default.nix", 0.8, IndicatorContext::LanguageRoot),
-            root_indicator("shell.nix", 0.8, IndicatorContext::LanguageRoot),
+            root_indicator("flake.nix", 0.95, IndicatorContext::ToolchainRoot),
+            root_indicator("flake.lock", 0.85, IndicatorContext::ToolchainRoot),
+            root_indicator("default.nix", 0.8, IndicatorContext::ToolchainRoot),
+            root_indicator("shell.nix", 0.8, IndicatorContext::ToolchainRoot),
         ],
     )
 }

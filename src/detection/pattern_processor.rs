@@ -17,7 +17,7 @@ impl PatternProcessor {
     pub fn new(
         pattern_matcher: Arc<PatternMatcher>,
         patterns: Arc<Vec<String>>,
-        languages: Vec<Arc<Indicator>>,
+        indicators: Vec<Arc<Indicator>>,
     ) -> Self {
         let mut extension_filter = HashSet::new();
         let mut exact_patterns = HashSet::new();
@@ -33,9 +33,9 @@ impl PatternProcessor {
             }
         }
 
-        for language in &languages {
-            if language.priority <= 2 {
-                for file_pattern in &language.files {
+        for indicator in &indicators {
+            if indicator.priority <= 2 {
+                for file_pattern in &indicator.files {
                     if !file_pattern.contains('*') && !file_pattern.contains('?') {
                         high_priority_files.insert(file_pattern.clone());
                     }
