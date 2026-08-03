@@ -376,21 +376,75 @@ impl DetectionResult {
             )
         })
     }
+    /// Icon and color are resolved as a PAIR from the same source: if the
+    /// best framework supplies the icon, its color is used; when the icon
+    /// falls back to the indicator, the color falls back with it. This keeps
+    /// an indicator's glyph from rendering in a framework's brand color
+    /// (e.g. the JavaScript logo in Svelte orange).
+    fn display_source(&self) -> (Option<&str>, Option<&str>) {
+        if let Some(best) = self.best_framework() {
+            if let Some(icon) = best.framework.icon.as_deref() {
+                let color = best
+                    .framework
+                    .color
+                    .as_deref()
+                    .or_else(|| self.indicator.as_ref().map(|l| l.color.as_str()));
+                return (Some(icon), color);
+            }
+        }
+        (
+            self.indicator.as_ref().map(|l| l.icon.as_str()),
+            self.indicator.as_ref().map(|l| l.color.as_str()),
+        )
+    }
     pub fn display_icon(&self) -> Option<&str> {
-        self.best_framework()
-            .and_then(|f| f.framework.icon.as_deref())
-            .or_else(|| self.indicator.as_ref().map(|l| l.icon.as_str()))
+        self.display_source().0
     }
     pub fn display_color(&self) -> Option<&str> {
-        self.best_framework()
-            .and_then(|f| f.framework.color.as_deref())
-            .or_else(|| self.indicator.as_ref().map(|l| l.color.as_str()))
+        self.display_source().1
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_icon_and_color_come_from_the_same_source() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::types::{DetectionType, Framework, FrameworkMatch};
+
+        let indicator = crate::types::Indicator::new(
+            "JavaScript".to_string(),
+            vec!["*.js".to_string()],
+            "#f7df1e".to_string(),
+            "JS".to_string(),
+            6,
+            vec![],
+        );
+
+        // Framework with a color but NO icon (like Svelte/Vite/SolidJS)
+        let framework = Framework {
+            name: "Svelte".to_string(),
+            ecosystems: vec![],
+            detection: DetectionType::FileExists { files: vec![] },
+            icon: None,
+            color: Some("#ff3e00".to_string()),
+            priority: 1,
+            files: vec![],
+            root_indicators: vec![],
+        };
+        let result = DetectionResult::new(
+            Some(std::sync::Arc::new(indicator)),
+            vec![FrameworkMatch::new(framework, 0.9, vec![])],
+            0.9,
+        );
+
+        // The icon falls back to the indicator's glyph, so the color must
+        // fall back with it — a JS logo must not render in Svelte orange
+        assert_eq!(result.display_icon(), Some("JS"));
+        assert_eq!(result.display_color(), Some("#f7df1e"));
+        Ok(())
+    }
 
     #[test]
     fn test_detection_result_serde_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
