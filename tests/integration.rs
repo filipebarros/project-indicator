@@ -57,7 +57,8 @@ fn test_typescript_react_detection() -> Result<(), Box<dyn std::error::Error>> {
     let formatter = OutputFormatter::new(display_config);
 
     let simple = formatter.format(&result, OutputFormat::Simple);
-    assert_eq!(simple, "⚛️");
+    assert!(simple.contains("⚛️"));
+    assert!(simple.starts_with("\x1b[38;2;"), "icon should be colored");
 
     let json_output = formatter.format(&result, OutputFormat::Json);
     let json: Value = serde_json::from_str(&json_output)?;
@@ -110,7 +111,8 @@ serde = { version = "1.0", features = ["derive"] }
     let formatter = OutputFormatter::new(display_config);
 
     let simple = formatter.format(&result, OutputFormat::Simple);
-    assert_eq!(simple, "🚀");
+    assert!(simple.contains("🚀"));
+    assert!(simple.starts_with("\x1b[38;2;"), "icon should be colored");
 
     let full = formatter.format(&result, OutputFormat::Full);
     assert!(full.contains("🚀"));
@@ -203,7 +205,8 @@ fn test_nextjs_priority_over_react() -> Result<(), Box<dyn std::error::Error>> {
     let formatter = OutputFormatter::new(display_config);
 
     let simple = formatter.format(&result, OutputFormat::Simple);
-    assert_eq!(simple, "▲");
+    assert!(simple.contains("▲"));
+    assert!(simple.starts_with("\x1b[38;2;"), "icon should be colored");
     Ok(())
 }
 

@@ -150,7 +150,7 @@ fn test_output_formatting() -> Result<(), Box<dyn std::error::Error>> {
     let result = DetectionResult::new(None, vec![framework_match], 0.9);
 
     let simple = format_result(&result, OutputFormat::Simple);
-    assert_eq!(simple, "⚛️");
+    assert_eq!(simple, "\x1b[38;2;97;218;251m⚛️\x1b[0m");
 
     let full = format_result(&result, OutputFormat::Full);
     assert_eq!(full, "⚛️|#61DAFB");
