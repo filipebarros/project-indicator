@@ -29,7 +29,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install cargo-edit
-      uses: taiki-e/install-action@v2.87.0
+      uses: taiki-e/install-action@v2.87.4
       with:
         tool: cargo-edit
 
