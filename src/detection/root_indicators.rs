@@ -25,15 +25,6 @@ pub struct RootIndicatorEngine {
 }
 
 impl RootIndicatorEngine {
-    pub fn new(indicators: Vec<Indicator>) -> Self {
-        Self::with_config(indicators, DetectionConfig::default())
-    }
-
-    pub fn with_config(indicators: Vec<Indicator>, config: DetectionConfig) -> Self {
-        let indicators: Vec<Arc<Indicator>> = indicators.into_iter().map(Arc::new).collect();
-        Self::from_parts(indicators, Arc::new(Vec::new()), config)
-    }
-
     pub fn from_parts(
         indicators: Vec<Arc<Indicator>>,
         frameworks: Arc<Vec<Framework>>,
@@ -58,10 +49,8 @@ impl RootIndicatorEngine {
                 let indicator_threshold = (self.config.confidence_threshold * 1.2).min(1.0);
                 let framework_threshold = self.config.confidence_threshold;
 
-                if let Some(mut result) = self.check_indicator_root_indicators(path, file_cache)? {
+                if let Some(result) = self.check_indicator_root_indicators(path, file_cache)? {
                     if result.confidence >= indicator_threshold {
-                        self.check_secondary_ecosystems(path, file_cache, &mut result)?;
-
                         log::debug!(
                             "Early termination (fast mode): Found definitive indicator '{}' with confidence {:.3} (threshold: {:.3})",
                             result.indicator.as_ref().map(|l| l.name.as_str()).unwrap_or("Unknown"),
@@ -78,10 +67,8 @@ impl RootIndicatorEngine {
                     }
                 }
 
-                if let Some(mut result) = self.check_framework_root_indicators(path, file_cache)? {
+                if let Some(result) = self.check_framework_root_indicators(path, file_cache)? {
                     if result.confidence >= framework_threshold {
-                        self.check_secondary_ecosystems(path, file_cache, &mut result)?;
-
                         log::debug!(
                             "Early termination (fast mode): Found definitive framework indicator with confidence {:.3} (threshold: {:.3})",
                             result.confidence,
@@ -277,31 +264,6 @@ impl RootIndicatorEngine {
         }
 
         Ok(self.resolve_indicator_conflicts(&found_indicators).cloned())
-    }
-
-    fn check_secondary_ecosystems(
-        &self,
-        path: &Path,
-        file_cache: &Arc<FileSystemCache>,
-        _result: &mut DetectionResult,
-    ) -> Result<()> {
-        let secondary_checks = [
-            (PACKAGE_JSON, "JavaScript/TypeScript"),
-            (CARGO_TOML, "Rust"),
-            (GO_MOD, "Go"),
-            (REQUIREMENTS_TXT, "Python"),
-            (GEMFILE, "Ruby"),
-            (COMPOSER_JSON, "PHP"),
-        ];
-
-        for (file, ecosystem) in &secondary_checks {
-            let file_path = path.join(file);
-            if file_cache.exists(&file_path) {
-                log::debug!("Secondary ecosystem detected: {} ({})", ecosystem, file);
-            }
-        }
-
-        Ok(())
     }
 
     fn check_indicator_root_indicators(
@@ -650,7 +612,11 @@ mod tests {
             detection_mode: DetectionMode::Fast,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(indicators, config);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            config,
+        );
 
         let temp_dir = TempDir::new()?;
         let cargo_content = r#"
@@ -689,7 +655,11 @@ edition = "2021"
             detection_mode: DetectionMode::Fast,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(indicators, config);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            config,
+        );
 
         let temp_dir = TempDir::new()?;
 
@@ -730,7 +700,11 @@ edition = "2021"
             "Python",
             vec![("pyproject.toml", 0.90)],
         )];
-        let engine = RootIndicatorEngine::new(indicators);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            DetectionConfig::default(),
+        );
 
         let temp_dir = TempDir::new()?;
         let invalid_content = r#"
@@ -748,7 +722,11 @@ not-python = true
 
     #[test]
     fn test_specificity_resolution() -> Result<(), Box<dyn std::error::Error>> {
-        let engine = RootIndicatorEngine::new(vec![]);
+        let engine = RootIndicatorEngine::from_parts(
+            vec![],
+            Arc::new(Vec::new()),
+            DetectionConfig::default(),
+        );
 
         assert!(
             engine.get_pattern_specificity("tsconfig.json")
@@ -763,7 +741,11 @@ not-python = true
 
     #[test]
     fn test_early_termination_patterns() -> Result<(), Box<dyn std::error::Error>> {
-        let engine = RootIndicatorEngine::new(vec![]);
+        let engine = RootIndicatorEngine::from_parts(
+            vec![],
+            Arc::new(Vec::new()),
+            DetectionConfig::default(),
+        );
 
         assert!(engine.should_early_terminate("Cargo.toml"));
         assert!(engine.should_early_terminate("tsconfig.json"));
@@ -779,34 +761,16 @@ not-python = true
             create_test_indicator_with_indicators("Rust", vec![("Cargo.toml", 0.95)]),
             create_test_indicator_with_indicators("TypeScript", vec![("tsconfig.json", 0.90)]),
         ];
-        let engine = RootIndicatorEngine::new(indicators);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            DetectionConfig::default(),
+        );
 
         let stats = engine.get_stats();
         assert_eq!(stats.total_indicators, 2);
         assert_eq!(stats.total_indicator_root_indicators, 2);
         assert!(stats.early_termination_patterns >= 2);
-        Ok(())
-    }
-
-    #[test]
-    fn test_engine_creation_with_config() -> Result<(), Box<dyn std::error::Error>> {
-        let indicators = vec![create_test_indicator_with_indicators(
-            "Rust",
-            vec![("Cargo.toml", 0.95)],
-        )];
-        let config = DetectionConfig {
-            detection_mode: DetectionMode::Fast,
-            confidence_threshold: 0.8,
-            max_upward_traversal: 5,
-            require_vcs_root: false,
-            max_depth: 3,
-            root_indicators: vec![],
-            max_matches_per_pattern: 15,
-            small_project_threshold: 50,
-            extreme_size_threshold: 500,
-        };
-        let engine = RootIndicatorEngine::with_config(indicators, config);
-        assert_eq!(engine.config.confidence_threshold, 0.8);
         Ok(())
     }
 
@@ -833,7 +797,11 @@ not-python = true
             detection_mode: DetectionMode::Thorough,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(indicators, config);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            config,
+        );
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -861,7 +829,11 @@ not-python = true
             confidence_threshold: 0.8,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(indicators, config);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            config,
+        );
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -927,7 +899,11 @@ not-python = true
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
-        let engine = RootIndicatorEngine::new(indicators);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            DetectionConfig::default(),
+        );
 
         let temp_dir = TempDir::new()?;
         let subdir = temp_dir.path().join("subdir");
@@ -953,7 +929,11 @@ not-python = true
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
-        let engine = RootIndicatorEngine::new(indicators);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            DetectionConfig::default(),
+        );
 
         let temp_dir = TempDir::new()?;
         let subdir = temp_dir.path().join("subdir");
@@ -977,7 +957,11 @@ not-python = true
             max_upward_traversal: 1,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(indicators, config);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            config,
+        );
 
         let temp_dir = TempDir::new()?;
         let subdir = temp_dir.path().join("deep").join("nested").join("path");
@@ -1005,7 +989,11 @@ not-python = true
             require_vcs_root: true,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(indicators, config);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            config,
+        );
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -1034,7 +1022,11 @@ not-python = true
             require_vcs_root: true,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(indicators, config);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            config,
+        );
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -1057,7 +1049,11 @@ not-python = true
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
-        let engine = RootIndicatorEngine::new(indicators);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            DetectionConfig::default(),
+        );
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -1119,39 +1115,16 @@ not-python = true
     }
 
     #[test]
-    fn test_check_secondary_ecosystems() -> Result<(), Box<dyn std::error::Error>> {
-        let indicators = vec![create_test_indicator_with_indicators(
-            "Rust",
-            vec![("Cargo.toml", 0.95)],
-        )];
-        let engine = RootIndicatorEngine::new(indicators);
-
-        let temp_dir = TempDir::new()?;
-        fs::write(
-            temp_dir.path().join("Cargo.toml"),
-            "[package]\nname = \"test\"",
-        )?;
-
-        let file_cache = Arc::new(FileSystemCache::new());
-        let mut result = engine
-            .check_indicator_root_indicators(temp_dir.path(), &file_cache)?
-            .ok_or("Expected Some but got None")?;
-
-        // Check secondary ecosystems
-        engine.check_secondary_ecosystems(temp_dir.path(), &file_cache, &mut result)?;
-
-        // Result should still be valid
-        assert!(result.indicator.is_some());
-        Ok(())
-    }
-
-    #[test]
     fn test_is_boundary_directory_public() -> Result<(), Box<dyn std::error::Error>> {
         let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
-        let engine = RootIndicatorEngine::new(indicators);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            DetectionConfig::default(),
+        );
 
         // Test home directory
         if let Some(home) = dirs::home_dir() {
@@ -1211,7 +1184,11 @@ not-python = true
             "Rust",
             vec![("Cargo.toml", 0.95)],
         )];
-        let engine = RootIndicatorEngine::new(indicators);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            DetectionConfig::default(),
+        );
 
         let count = engine.count_early_termination_patterns();
         assert!(count >= 1);
@@ -1224,7 +1201,11 @@ not-python = true
             create_test_indicator_with_indicators("Rust", vec![("Cargo.toml", 0.95)]),
             create_test_indicator_with_indicators("TypeScript", vec![("tsconfig.json", 0.90)]),
         ];
-        let engine = RootIndicatorEngine::new(indicators);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            DetectionConfig::default(),
+        );
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -1259,7 +1240,11 @@ not-python = true
             confidence_threshold: 0.8,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(indicators, config);
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            config,
+        );
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -1287,7 +1272,11 @@ not-python = true
             confidence_threshold: 0.3,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::with_config(languages, config);
+        let engine = RootIndicatorEngine::from_parts(
+            languages.into_iter().map(Arc::new).collect(),
+            Arc::new(Vec::new()),
+            config,
+        );
 
         let temp_dir = TempDir::new()?;
         fs::write(temp_dir.path().join("deno.json"), "{}")?;

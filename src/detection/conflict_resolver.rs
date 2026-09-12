@@ -27,11 +27,9 @@ pub enum SourceType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolutionStrategy {
-    MaxWeight,
     ContextAwareAverage,
     LanguagePreference,
     VcsPreference,
-    ModeWeight,
 }
 
 pub struct ConflictResolver {
@@ -221,10 +219,6 @@ impl ConflictResolver {
         strategy: &ResolutionStrategy,
     ) -> f32 {
         match strategy {
-            ResolutionStrategy::MaxWeight => sources
-                .iter()
-                .map(|s| s.weight)
-                .fold(f32::NEG_INFINITY, f32::max),
             ResolutionStrategy::VcsPreference => sources
                 .iter()
                 .filter(|s| s.source_type == SourceType::VcsDefault)
@@ -266,23 +260,6 @@ impl ConflictResolver {
                 } else {
                     sources.iter().map(|s| s.weight).sum::<f32>() / sources.len() as f32
                 }
-            }
-            ResolutionStrategy::ModeWeight => {
-                let mut weight_counts: HashMap<i32, usize> = HashMap::new();
-                for source in sources {
-                    let rounded_weight = (source.weight * 100.0).round() as i32;
-                    *weight_counts.entry(rounded_weight).or_insert(0) += 1;
-                }
-
-                let most_common_weight = weight_counts
-                    .iter()
-                    .max_by_key(|(_, &count)| count)
-                    .map(|(&weight, _)| weight as f32 / 100.0)
-                    .unwrap_or_else(|| {
-                        sources.iter().map(|s| s.weight).sum::<f32>() / sources.len() as f32
-                    });
-
-                most_common_weight
             }
         }
     }
