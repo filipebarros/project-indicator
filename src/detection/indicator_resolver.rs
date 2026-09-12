@@ -96,7 +96,7 @@ impl IndicatorResolver {
             return candidates[0].0;
         }
 
-        let mut enhanced_candidates: Vec<(usize, f32, f32)> = Vec::with_capacity(candidates.len());
+        let mut enhanced_candidates: Vec<(usize, f32)> = Vec::with_capacity(candidates.len());
 
         for (idx, base_score) in candidates {
             let indicator = &indicators[idx];
@@ -105,14 +105,9 @@ impl IndicatorResolver {
                 matched_files,
                 indicators,
             );
-            let quality_score = self.confidence_scorer.calculate_quality_score(
-                indicator,
-                matched_files,
-                indicators,
-            );
             let enhanced_score = base_score + context_bonus;
 
-            enhanced_candidates.push((idx, enhanced_score, quality_score));
+            enhanced_candidates.push((idx, enhanced_score));
         }
 
         enhanced_candidates
@@ -131,21 +126,21 @@ impl IndicatorResolver {
     fn resolve_by_confidence_tiers(
         &self,
         indicators: &[Arc<Indicator>],
-        candidates: Vec<(usize, f32, f32)>,
+        candidates: Vec<(usize, f32)>,
     ) -> usize {
         let high_confidence: Vec<_> = candidates
             .iter()
-            .filter(|(_, score, _)| *score >= 0.8)
+            .filter(|(_, score)| *score >= 0.8)
             .cloned()
             .collect();
         let medium_confidence: Vec<_> = candidates
             .iter()
-            .filter(|(_, score, _)| *score >= 0.5 && *score < 0.8)
+            .filter(|(_, score)| *score >= 0.5 && *score < 0.8)
             .cloned()
             .collect();
         let low_confidence: Vec<_> = candidates
             .iter()
-            .filter(|(_, score, _)| *score < 0.5)
+            .filter(|(_, score)| *score < 0.5)
             .cloned()
             .collect();
 
@@ -161,7 +156,7 @@ impl IndicatorResolver {
     fn resolve_by_score(
         &self,
         indicators: &[Arc<Indicator>],
-        candidates: Vec<(usize, f32, f32)>,
+        candidates: Vec<(usize, f32)>,
     ) -> usize {
         candidates
             .iter()
@@ -175,14 +170,14 @@ impl IndicatorResolver {
                     score_cmp
                 }
             })
-            .map(|(idx, _, _)| *idx)
+            .map(|(idx, _)| *idx)
             .unwrap_or(candidates[0].0)
     }
 
     fn resolve_by_priority_with_score_override(
         &self,
         indicators: &[Arc<Indicator>],
-        candidates: Vec<(usize, f32, f32)>,
+        candidates: Vec<(usize, f32)>,
     ) -> usize {
         let mut best_candidate = &candidates[0];
 
@@ -210,12 +205,12 @@ impl IndicatorResolver {
     fn resolve_by_priority(
         &self,
         indicators: &[Arc<Indicator>],
-        candidates: Vec<(usize, f32, f32)>,
+        candidates: Vec<(usize, f32)>,
     ) -> usize {
         candidates
             .iter()
-            .min_by_key(|(idx, _, _)| indicators[*idx].priority)
-            .map(|(idx, _, _)| *idx)
+            .min_by_key(|(idx, _)| indicators[*idx].priority)
+            .map(|(idx, _)| *idx)
             .unwrap_or(candidates[0].0)
     }
 }
@@ -383,7 +378,7 @@ mod tests {
                 2,
             )),
         ];
-        let candidates = vec![(0, 0.7, 1.0), (1, 0.9, 1.0)];
+        let candidates = vec![(0, 0.7), (1, 0.9)];
 
         let result = resolver.resolve_by_score(&indicators, candidates);
         assert_eq!(result, 1, "Should select indicator with higher score");
@@ -405,7 +400,7 @@ mod tests {
                 2,
             )),
         ];
-        let candidates = vec![(0, 0.8, 1.0), (1, 0.8, 1.0)];
+        let candidates = vec![(0, 0.8), (1, 0.8)];
 
         let result = resolver.resolve_by_score(&indicators, candidates);
         assert_eq!(result, 0, "Should use priority as tiebreaker");
@@ -427,7 +422,7 @@ mod tests {
                 1,
             )),
         ];
-        let candidates = vec![(0, 0.7, 1.0), (1, 0.6, 1.0)];
+        let candidates = vec![(0, 0.7), (1, 0.6)];
 
         let result = resolver.resolve_by_priority(&indicators, candidates);
         assert_eq!(result, 1, "Should select higher priority indicator");
@@ -449,7 +444,7 @@ mod tests {
                 2,
             )),
         ];
-        let candidates = vec![(0, 0.5, 1.0), (1, 0.95, 1.0)];
+        let candidates = vec![(0, 0.5), (1, 0.95)];
 
         let result = resolver.resolve_by_priority_with_score_override(&indicators, candidates);
         assert_eq!(
@@ -474,7 +469,7 @@ mod tests {
                 2,
             )),
         ];
-        let candidates = vec![(0, 0.6, 1.0), (1, 0.8, 1.0)];
+        let candidates = vec![(0, 0.6), (1, 0.8)];
 
         let result = resolver.resolve_by_priority_with_score_override(&indicators, candidates);
         assert_eq!(result, 0, "Priority should win when score difference <0.4");
@@ -492,7 +487,7 @@ mod tests {
             )),
             Arc::new(create_test_indicator_with_priority("High", vec!["*.b"], 2)),
         ];
-        let candidates = vec![(0, 0.7, 1.0), (1, 0.9, 1.0)];
+        let candidates = vec![(0, 0.7), (1, 0.9)];
 
         let result = resolver.resolve_by_confidence_tiers(&indicators, candidates);
         assert_eq!(result, 1, "High confidence should win");
@@ -514,7 +509,7 @@ mod tests {
                 2,
             )),
         ];
-        let candidates = vec![(0, 0.6, 1.0), (1, 0.7, 1.0)];
+        let candidates = vec![(0, 0.6), (1, 0.7)];
 
         let result = resolver.resolve_by_confidence_tiers(&indicators, candidates);
         assert!(result == 0 || result == 1);

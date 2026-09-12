@@ -14,11 +14,7 @@ pub struct ConfidenceScorer {
 
 impl ConfidenceScorer {
     pub fn new() -> Self {
-        Self::with_pattern_matcher(Arc::new(PatternMatcher::new()))
-    }
-
-    pub fn with_pattern_matcher(pattern_matcher: Arc<PatternMatcher>) -> Self {
-        Self::with_catalog(pattern_matcher, Arc::new(Vec::new()))
+        Self::with_catalog(Arc::new(PatternMatcher::new()), Arc::new(Vec::new()))
     }
 
     pub fn with_catalog(
@@ -153,48 +149,6 @@ impl ConfidenceScorer {
         score
     }
 
-    pub fn quick_termination_check(
-        &self,
-        matched_files: &[MatchedFile],
-        indicators: &[Arc<Indicator>],
-    ) -> Option<bool> {
-        if matched_files.len() == 1 {
-            let file = &matched_files[0];
-            if file.depth == 0 && self.get_pattern_importance(&file.filename, indicators) >= 0.9 {
-                return Some(true);
-            }
-
-            for indicator in indicators {
-                for root_indicator in &indicator.root_indicators {
-                    if self
-                        .pattern_matcher
-                        .matches_pattern(&file.filename, &root_indicator.pattern)
-                        && root_indicator.weight >= 0.8
-                    {
-                        return Some(true);
-                    }
-                }
-            }
-        }
-
-        if matched_files.len() >= 2 {
-            let strong_root_indicators_count = matched_files
-                .iter()
-                .filter(|file| {
-                    file.depth == 0
-                        && self.get_pattern_importance(&file.filename, indicators) >= 0.9
-                        && file.weight() >= 1.0
-                })
-                .count();
-
-            if strong_root_indicators_count >= 2 {
-                return Some(true);
-            }
-        }
-
-        None
-    }
-
     pub fn calculate_context_bonus(
         &self,
         indicator: &Arc<Indicator>,
@@ -275,156 +229,6 @@ impl ConfidenceScorer {
 
         bonus
     }
-
-    pub fn calculate_quality_score(
-        &self,
-        indicator: &Arc<Indicator>,
-        matched_files: &[MatchedFile],
-        indicators: &[Arc<Indicator>],
-    ) -> f32 {
-        let mut quality_score = 0.0;
-
-        for file in matched_files {
-            if !indicator.files.iter().any(|pattern| {
-                self.pattern_matcher
-                    .matches_pattern(&file.filename, pattern)
-            }) {
-                continue;
-            }
-
-            let base_score = file.weight();
-            let pattern_importance = self.get_pattern_importance(&file.filename, indicators);
-
-            let quality_multiplier = match (file.depth, &file.directory_type) {
-                (0, _) if pattern_importance >= 0.9 => 2.0,
-                (0..=1, DirectoryType::Source) => 1.5,
-                (_, _) if pattern_importance >= 0.8 => 1.2,
-                _ => 1.0,
-            };
-
-            quality_score += base_score * pattern_importance * quality_multiplier;
-        }
-
-        quality_score
-    }
-
-    pub fn should_terminate_early(
-        &mut self,
-        matched_files: &[MatchedFile],
-        indicators: &[Arc<Indicator>],
-    ) -> bool {
-        // First, check quick termination conditions
-        if let Some(should_terminate) = self.quick_termination_check(matched_files, indicators) {
-            return should_terminate;
-        }
-
-        // Additional extended checks for edge cases
-        self.calculate_extended_termination(matched_files, indicators)
-    }
-
-    /// Extended termination logic for cases not covered by quick checks.
-    ///
-    /// This method performs more expensive operations like confidence score
-    /// calculations and is only called after quick checks fail.
-    fn calculate_extended_termination(
-        &mut self,
-        matched_files: &[MatchedFile],
-        indicators: &[Arc<Indicator>],
-    ) -> bool {
-        // Check if we have enough evidence with moderate confidence scores
-        if matched_files.len() >= 2 {
-            let has_strong_indicators = self.has_strong_indicators(matched_files, indicators);
-
-            if has_strong_indicators
-                && self.check_confidence_thresholds(
-                    matched_files,
-                    indicators,
-                    has_strong_indicators,
-                )
-            {
-                return true;
-            }
-        }
-
-        // For 5+ matched files, use lower confidence threshold
-        if matched_files.len() >= 5 {
-            for indicator in indicators {
-                let confidence =
-                    self.calculate_indicator_score(indicator, matched_files, indicators);
-                if confidence >= 0.6 {
-                    return true;
-                }
-            }
-        }
-
-        // Hard limit: always terminate after 12 matches
-        matched_files.len() >= 12
-    }
-
-    /// Checks if matched files contain strong indicators (root files with high importance).
-    fn has_strong_indicators(
-        &self,
-        matched_files: &[MatchedFile],
-        indicators: &[Arc<Indicator>],
-    ) -> bool {
-        // Check for pattern-based strong indicators
-        let has_pattern_indicators = matched_files.iter().any(|file| {
-            file.depth == 0
-                && self.get_pattern_importance(&file.filename, indicators) >= 0.9
-                && file.weight() >= 1.0
-        });
-
-        if has_pattern_indicators {
-            return true;
-        }
-
-        // Check for root indicator matches
-        for indicator in indicators {
-            for root_indicator in &indicator.root_indicators {
-                let has_matching_root_file = matched_files.iter().any(|file| {
-                    file.depth == 0
-                        && self
-                            .pattern_matcher
-                            .matches_pattern(&file.filename, &root_indicator.pattern)
-                });
-
-                if has_matching_root_file && root_indicator.weight >= 0.8 {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Checks if any indicator meets confidence thresholds for early termination.
-    fn check_confidence_thresholds(
-        &mut self,
-        matched_files: &[MatchedFile],
-        indicators: &[Arc<Indicator>],
-        has_strong_indicators: bool,
-    ) -> bool {
-        for indicator in indicators {
-            let confidence = self.calculate_indicator_score(indicator, matched_files, indicators);
-
-            // Very high confidence always terminates
-            if confidence >= 0.9 {
-                return true;
-            }
-
-            // High confidence with strong indicators
-            if confidence >= 0.7 && has_strong_indicators {
-                return true;
-            }
-
-            // Moderate confidence with very strong indicators
-            if confidence >= 0.6 && has_strong_indicators {
-                return true;
-            }
-        }
-
-        false
-    }
 }
 
 impl Default for ConfidenceScorer {
@@ -490,79 +294,6 @@ mod tests {
         let bonus = scorer.calculate_context_bonus(&rust_lang, &files, &create_test_indicators());
         assert!(bonus > 0.0, "Should have bonus for root files");
         assert!(bonus <= 0.3, "Bonus should be capped at 0.3");
-        Ok(())
-    }
-
-    #[test]
-    fn test_quality_score_calculation() -> Result<(), Box<dyn std::error::Error>> {
-        let scorer = ConfidenceScorer::new();
-        let rust_lang = Arc::new(create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"]));
-
-        let files = vec![
-            create_test_file("Cargo.toml", "Cargo.toml"),
-            create_test_file("main.rs", "src/main.rs"),
-        ];
-
-        let quality = scorer.calculate_quality_score(&rust_lang, &files, &create_test_indicators());
-        assert!(quality > 0.0, "Should have positive quality score");
-        Ok(())
-    }
-
-    #[test]
-    fn test_early_termination_single_important_file() -> Result<(), Box<dyn std::error::Error>> {
-        use crate::detection::matchers::test_helpers::helpers::create_test_indicator_with_indicators;
-
-        let mut scorer = ConfidenceScorer::new();
-        let indicators = vec![Arc::new(create_test_indicator_with_indicators(
-            "Rust",
-            vec![("Cargo.toml", 0.9)],
-        ))];
-
-        let files = vec![create_test_file("Cargo.toml", "Cargo.toml")];
-
-        let should_terminate = scorer.should_terminate_early(&files, &indicators);
-        assert!(
-            should_terminate,
-            "Should terminate early for important root file"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_early_termination_high_confidence() -> Result<(), Box<dyn std::error::Error>> {
-        use crate::detection::matchers::test_helpers::helpers::create_test_indicator_with_indicators;
-
-        let mut scorer = ConfidenceScorer::new();
-        let indicators = vec![Arc::new(create_test_indicator_with_indicators(
-            "Rust",
-            vec![("Cargo.toml", 0.9), ("*.lock", 0.9)],
-        ))];
-
-        let files = vec![
-            create_test_file("Cargo.toml", "Cargo.toml"),
-            create_test_file("Cargo.lock", "Cargo.lock"),
-        ];
-
-        let should_terminate = scorer.should_terminate_early(&files, &indicators);
-
-        assert!(
-            should_terminate,
-            "Should terminate early with high-confidence Rust files"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_early_termination_many_files() -> Result<(), Box<dyn std::error::Error>> {
-        let mut scorer = ConfidenceScorer::new();
-        let indicators = vec![Arc::new(create_test_indicator("JavaScript", vec!["*.js"]))];
-
-        let files: Vec<_> = (0..15)
-            .map(|i| create_test_file(&format!("file{}.js", i), &format!("src/file{}.js", i)))
-            .collect();
-
-        let should_terminate = scorer.should_terminate_early(&files, &indicators);
-        assert!(should_terminate, "Should terminate early for many files");
         Ok(())
     }
 
@@ -643,34 +374,6 @@ mod tests {
         assert!(
             score < 1.0,
             "Score should be less than 1.0 without root indicator"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_early_termination_with_root_indicator() -> Result<(), Box<dyn std::error::Error>> {
-        let mut scorer = ConfidenceScorer::new();
-        let rust_lang = Arc::new(Indicator::with_root_indicators(
-            "Rust".to_string(),
-            vec!["*.rs".to_string()],
-            "#FF0000".to_string(),
-            "🔥".to_string(),
-            1,
-            vec![],
-            vec![crate::types::RootIndicator {
-                pattern: "Cargo.toml".to_string(),
-                weight: 0.9,
-                context: IndicatorContext::LanguageRoot,
-            }],
-        ));
-
-        let indicators = vec![rust_lang];
-        let files = vec![create_test_file("Cargo.toml", "Cargo.toml")];
-
-        let should_terminate = scorer.should_terminate_early(&files, &indicators);
-        assert!(
-            should_terminate,
-            "Should terminate early with strong root indicator"
         );
         Ok(())
     }
