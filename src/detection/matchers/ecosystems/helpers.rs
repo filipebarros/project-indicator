@@ -84,43 +84,39 @@ pub fn check_pyproject_dependencies(toml_value: &toml::Value, dep_names: &[Strin
     found_deps
 }
 
+/// Checks a single `project.dependencies`/`optional-dependencies` array for
+/// a dependency matching `dep_name`, anchored at a name boundary (exact
+/// match or followed by a version specifier).
+fn deps_array_matches(deps: &toml::Value, dep_name: &str) -> bool {
+    let Some(deps_array) = deps.as_array() else {
+        return false;
+    };
+
+    deps_array.iter().any(|dep| {
+        dep.as_str().is_some_and(|dep_str| {
+            dep_str.starts_with(dep_name)
+                && (dep_str == dep_name
+                    || dep_str
+                        .chars()
+                        .nth(dep_name.len())
+                        .is_some_and(|c| ">=<!=~".contains(c)))
+        })
+    })
+}
+
 fn has_pyproject_dependency(toml_value: &toml::Value, dep_name: &str) -> bool {
     if let Some(project) = toml_value.get("project") {
         if let Some(deps) = project.get("dependencies") {
-            if let Some(deps_array) = deps.as_array() {
-                for dep in deps_array {
-                    if let Some(dep_str) = dep.as_str() {
-                        if dep_str.starts_with(dep_name)
-                            && (dep_str == dep_name
-                                || dep_str
-                                    .chars()
-                                    .nth(dep_name.len())
-                                    .is_some_and(|c| ">=<!=~".contains(c)))
-                        {
-                            return true;
-                        }
-                    }
-                }
+            if deps_array_matches(deps, dep_name) {
+                return true;
             }
         }
 
         if let Some(optional_deps) = project.get("optional-dependencies") {
             if let Some(optional_deps_table) = optional_deps.as_table() {
-                for (_, deps) in optional_deps_table {
-                    if let Some(deps_array) = deps.as_array() {
-                        for dep in deps_array {
-                            if let Some(dep_str) = dep.as_str() {
-                                if dep_str.starts_with(dep_name)
-                                    && (dep_str == dep_name
-                                        || dep_str
-                                            .chars()
-                                            .nth(dep_name.len())
-                                            .is_some_and(|c| ">=<!=~".contains(c)))
-                                {
-                                    return true;
-                                }
-                            }
-                        }
+                for deps in optional_deps_table.values() {
+                    if deps_array_matches(deps, dep_name) {
+                        return true;
                     }
                 }
             }

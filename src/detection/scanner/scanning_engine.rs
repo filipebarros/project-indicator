@@ -2,10 +2,9 @@
 // Coordinates pattern matching, timeout management, and file traversal
 
 use super::{FileSystemTraverser, TimeoutManager};
-use crate::detection::pattern_matching::PatternMatcher;
 use crate::detection::pattern_processor::PatternProcessor;
 use crate::performance::FileSystemCache;
-use crate::types::{Indicator, MatchedFile};
+use crate::types::MatchedFile;
 use crate::Result;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -67,17 +66,6 @@ pub struct ScanningEngine {
 }
 
 impl ScanningEngine {
-    pub fn new(pattern_processor: PatternProcessor, max_depth: usize) -> Self {
-        Self {
-            pattern_processor,
-            max_depth,
-            file_cache: None,
-            max_matches_per_pattern: DEFAULT_MAX_MATCHES_PER_PATTERN,
-            small_project_threshold: SMALL_PROJECT_THRESHOLD,
-            extreme_size_threshold: EXTREME_SIZE_THRESHOLD,
-        }
-    }
-
     /// Creates a ScanningEngine with an optional FileSystemCache for file existence checks.
     pub fn with_cache(
         pattern_processor: PatternProcessor,
@@ -92,20 +80,6 @@ impl ScanningEngine {
             small_project_threshold: SMALL_PROJECT_THRESHOLD,
             extreme_size_threshold: EXTREME_SIZE_THRESHOLD,
         }
-    }
-
-    /// Creates a ScanningEngine with a shared PatternMatcher instance.
-    ///
-    /// This is the primary constructor used by DetectionEngine.
-    /// It creates a PatternProcessor internally using the provided matcher and patterns.
-    pub fn with_shared_pattern_matcher(
-        pattern_matcher: Arc<PatternMatcher>,
-        patterns: Arc<Vec<String>>,
-        languages: Vec<Arc<Indicator>>,
-        max_depth: usize,
-    ) -> Self {
-        let pattern_processor = PatternProcessor::new(pattern_matcher, patterns, languages);
-        Self::new(pattern_processor, max_depth)
     }
 
     /// Execute full scan with priority file fast path
@@ -470,10 +444,6 @@ impl ScanningEngine {
 
         Ok(files)
     }
-
-    pub fn pattern_processor(&self) -> &PatternProcessor {
-        &self.pattern_processor
-    }
 }
 
 #[cfg(test)]
@@ -511,7 +481,7 @@ mod tests {
         let pattern_processor =
             PatternProcessor::new(pattern_matcher, patterns, vec![Arc::new(rust_lang)]);
 
-        ScanningEngine::new(pattern_processor, 3)
+        ScanningEngine::with_cache(pattern_processor, 3, None)
     }
 
     #[test]
@@ -611,34 +581,6 @@ mod tests {
     }
 
     #[test]
-    fn test_engine_with_shared_pattern_matcher() -> Result<()> {
-        let patterns = Arc::new(vec!["*.rs".to_string(), "Cargo.toml".to_string()]);
-        let rust_lang = Indicator::with_root_indicators(
-            "Rust".to_string(),
-            vec!["*.rs".to_string(), "Cargo.toml".to_string()],
-            "#dea584".to_string(),
-            "".to_string(),
-            1,
-            vec![],
-            vec![],
-        );
-
-        let pattern_matcher = Arc::new(PatternMatcher::new());
-        let engine = ScanningEngine::with_shared_pattern_matcher(
-            pattern_matcher,
-            patterns,
-            vec![Arc::new(rust_lang)],
-            3,
-        );
-
-        let temp_dir = create_test_rust_project().map_err(|e| anyhow::anyhow!("{}", e))?;
-        let matches = engine.scan(temp_dir.path())?;
-        assert!(!matches.is_empty());
-
-        Ok(())
-    }
-
-    #[test]
     fn test_scan_with_timeout() -> Result<()> {
         let engine = create_test_engine();
         let temp_dir = create_test_rust_project().map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -679,12 +621,9 @@ mod tests {
         );
 
         let pattern_matcher = Arc::new(PatternMatcher::new());
-        let engine = ScanningEngine::with_shared_pattern_matcher(
-            pattern_matcher,
-            patterns,
-            vec![Arc::new(lang)],
-            3,
-        );
+        let pattern_processor =
+            PatternProcessor::new(pattern_matcher, patterns, vec![Arc::new(lang)]);
+        let engine = ScanningEngine::with_cache(pattern_processor, 3, None);
 
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
@@ -716,7 +655,7 @@ mod tests {
         let pattern_processor =
             PatternProcessor::new(pattern_matcher, patterns, vec![Arc::new(rust_lang)]);
 
-        let engine = ScanningEngine::new(pattern_processor, 1); // Very low depth to trigger timeout
+        let engine = ScanningEngine::with_cache(pattern_processor, 1, None); // Very low depth to trigger timeout
 
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
@@ -906,7 +845,7 @@ mod tests {
         let pattern_processor =
             PatternProcessor::new(pattern_matcher, patterns, vec![Arc::new(rust_lang)]);
 
-        let engine = ScanningEngine::new(pattern_processor, 1); // Very low depth
+        let engine = ScanningEngine::with_cache(pattern_processor, 1, None); // Very low depth
 
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();

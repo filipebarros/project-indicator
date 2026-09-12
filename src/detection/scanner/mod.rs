@@ -31,7 +31,7 @@
 //! let pattern_processor = PatternProcessor::new(pattern_matcher, patterns, vec![]);
 //!
 //! // Create scanning engine with max depth of 3
-//! let engine = ScanningEngine::new(pattern_processor, 3);
+//! let engine = ScanningEngine::with_cache(pattern_processor, 3, None);
 //!
 //! // Scan a directory for matching files
 //! let path = Path::new("/path/to/project");

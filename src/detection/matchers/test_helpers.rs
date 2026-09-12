@@ -1,18 +1,6 @@
 #[cfg(test)]
 pub mod helpers {
     use crate::types::{DetectionType, Framework};
-    use std::fs;
-    use tempfile::TempDir;
-
-    pub fn create_file(
-        filename: &str,
-        content: &str,
-    ) -> Result<TempDir, Box<dyn std::error::Error>> {
-        let temp_dir = TempDir::new()?;
-        let file_path = temp_dir.path().join(filename);
-        fs::write(file_path, content)?;
-        Ok(temp_dir)
-    }
 
     fn create_framework_detector(name: &str, detection: DetectionType, priority: u8) -> Framework {
         Framework {
