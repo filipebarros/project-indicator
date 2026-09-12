@@ -154,48 +154,6 @@ proptest! {
         }
 
     }
-
-    /// Invariant: Pattern cache bookkeeping is consistent
-    #[test]
-    fn test_pattern_cache_bookkeeping_consistency(
-        operations in prop::collection::vec((filename_strategy(), pattern_strategy()), 1..100)
-    ) {
-        let matcher = PatternMatcher::new();
-        let mut total_lookups = 0usize;
-
-        for (filename, pattern) in operations {
-            let (entries_before, _) = matcher.cache_stats();
-
-            matcher.matches_pattern(&filename, &pattern);
-            total_lookups += 1;
-
-            let (entries_after, hit_rate) = matcher.cache_stats();
-
-            // Entry count should only increase or stay the same (cache hits)
-            prop_assert!(
-                entries_after >= entries_before,
-                "Entry count decreased: {} -> {}",
-                entries_before,
-                entries_after
-            );
-
-            // Hit rate should be between 0 and 100
-            prop_assert!(
-                (0.0..=100.0).contains(&hit_rate),
-                "Hit rate {} out of valid range [0, 100]",
-                hit_rate
-            );
-        }
-
-        let (final_entries, final_hit_rate) = matcher.cache_stats();
-        let (hits, misses) = matcher.hit_miss_counts();
-
-        // Every lookup was either a hit or a miss; entries equal misses
-        // because each miss memoizes exactly one new pair
-        prop_assert_eq!(hits + misses, total_lookups);
-        prop_assert_eq!(final_entries, misses);
-        prop_assert!((0.0..=100.0).contains(&final_hit_rate));
-    }
 }
 
 /// Concurrent property tests

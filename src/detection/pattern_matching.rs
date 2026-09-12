@@ -48,27 +48,6 @@ impl PatternMatcher {
         }
     }
 
-    /// Returns (entry_count, hit_rate)
-    pub fn cache_stats(&self) -> (usize, f64) {
-        let entries = self.cache.iter().map(|entry| entry.value().len()).sum();
-        let (hits, misses) = self.hit_miss_counts();
-        let total_accesses = hits + misses;
-        let hit_rate = if total_accesses > 0 {
-            (hits as f64 / total_accesses as f64) * 100.0
-        } else {
-            0.0
-        };
-        (entries, hit_rate)
-    }
-
-    /// Returns raw (hits, misses) counter values
-    pub fn hit_miss_counts(&self) -> (usize, usize) {
-        (
-            self.cache_hits.load(Ordering::Relaxed),
-            self.cache_misses.load(Ordering::Relaxed),
-        )
-    }
-
     pub fn matches_pattern(&self, file_name: &str, pattern: &str) -> bool {
         // Check cache: pattern -> filename -> result
         // Using &str for lookup avoids allocating on cache hits
@@ -230,35 +209,6 @@ mod tests {
         assert!(matcher.matches_pattern("test.rs", "*.rs"));
         assert!(matcher.matches_pattern("test", "test*"));
         assert!(matcher.matches_pattern("test", "*test"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cache_hit_and_miss_counting() -> Result<(), Box<dyn std::error::Error>> {
-        let matcher = create_matcher();
-
-        let (entries, hit_rate) = matcher.cache_stats();
-        assert_eq!(entries, 0);
-        assert_eq!(hit_rate, 0.0);
-
-        matcher.matches_pattern("test.rs", "*.rs");
-        matcher.matches_pattern("main.rs", "*.rs");
-        matcher.matches_pattern("package.json", "*.json");
-
-        let (entries, hit_rate) = matcher.cache_stats();
-        assert_eq!(entries, 3);
-        assert_eq!(hit_rate, 0.0);
-
-        // Repeat lookup hits the memo
-        matcher.matches_pattern("test.rs", "*.rs");
-
-        let (entries, hit_rate) = matcher.cache_stats();
-        let (hits, misses) = matcher.hit_miss_counts();
-        assert_eq!(entries, 3);
-        assert_eq!(hits, 1);
-        assert_eq!(misses, 3);
-        assert!(hit_rate > 0.0);
-
         Ok(())
     }
 }

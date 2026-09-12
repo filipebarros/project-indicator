@@ -123,43 +123,6 @@ impl ParsedFileCache {
 
         Ok(parsed.map(|value| (*value).clone()))
     }
-
-    pub fn clear(&self) {
-        self.contents.clear();
-        self.json_values.clear();
-        self.toml_values.clear();
-        self.hits.store(0, Ordering::Relaxed);
-        self.misses.store(0, Ordering::Relaxed);
-    }
-
-    pub fn stats(&self) -> CacheStats {
-        let hits = self.hits.load(Ordering::Relaxed);
-        let misses = self.misses.load(Ordering::Relaxed);
-        let hit_rate = if hits + misses > 0 {
-            hits as f64 / (hits + misses) as f64
-        } else {
-            0.0
-        };
-
-        CacheStats {
-            content_entries: self.contents.len(),
-            json_entries: self.json_values.len(),
-            toml_entries: self.toml_values.len(),
-            hits,
-            misses,
-            hit_rate,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct CacheStats {
-    pub content_entries: usize,
-    pub json_entries: usize,
-    pub toml_entries: usize,
-    pub hits: usize,
-    pub misses: usize,
-    pub hit_rate: f64,
 }
 
 #[cfg(test)]
@@ -183,11 +146,6 @@ mod tests {
             .get_file_content(&file_path)?
             .ok_or("expected content")?;
         assert_eq!(*second, "hello");
-
-        let stats = cache.stats();
-        assert_eq!(stats.content_entries, 1);
-        assert_eq!(stats.hits, 1);
-        assert_eq!(stats.misses, 1);
         Ok(())
     }
 
@@ -199,10 +157,6 @@ mod tests {
 
         assert!(cache.get_file_content(&file_path)?.is_none());
         assert!(cache.get_file_content(&file_path)?.is_none());
-
-        let stats = cache.stats();
-        assert_eq!(stats.hits, 1);
-        assert_eq!(stats.misses, 1);
         Ok(())
     }
 
@@ -223,8 +177,6 @@ mod tests {
         // Second lookup hits the parsed-value memo
         let value = cache.get_json_value(&file_path)?.ok_or("expected JSON")?;
         assert_eq!(value.get("version").and_then(|v| v.as_str()), Some("1.0.0"));
-
-        assert_eq!(cache.stats().json_entries, 1);
         Ok(())
     }
 
@@ -270,24 +222,6 @@ mod tests {
         assert!(cache
             .get_json_value(temp_dir.path().join("missing.json"))?
             .is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn test_clear() -> Result<(), Box<dyn std::error::Error>> {
-        let cache = ParsedFileCache::new();
-        let temp_dir = TempDir::new()?;
-        let file_path = temp_dir.path().join("test.json");
-        fs::write(&file_path, "{}")?;
-
-        cache.get_json_value(&file_path)?;
-        assert!(cache.stats().json_entries > 0);
-
-        cache.clear();
-        let stats = cache.stats();
-        assert_eq!(stats.content_entries, 0);
-        assert_eq!(stats.json_entries, 0);
-        assert_eq!(stats.toml_entries, 0);
         Ok(())
     }
 }
