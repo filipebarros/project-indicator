@@ -54,12 +54,6 @@ impl OutputFormatter {
     }
 }
 
-pub fn format_result(result: &DetectionResult, format: OutputFormat) -> String {
-    let display_config = DisplayConfig::default();
-    let formatter = OutputFormatter::new(display_config);
-    formatter.format(result, format)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

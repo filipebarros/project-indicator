@@ -265,8 +265,6 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
             println!("Root Indicator Performance Statistics");
             println!("===================================");
 
-            let config = Config::load_default()?;
-
             let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks).build();
             let stats = engine.get_root_indicator_stats();
 

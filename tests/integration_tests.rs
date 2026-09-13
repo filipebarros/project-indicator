@@ -3,7 +3,7 @@ mod common;
 use common::create_test_project;
 use project_indicator::{
     detection::DetectionEngineBuilder,
-    output::{format_result, OutputFormat},
+    output::{OutputFormat, OutputFormatter},
     types::*,
     Config,
 };
@@ -145,14 +145,15 @@ fn test_output_formatting() -> Result<(), Box<dyn std::error::Error>> {
     let framework_match = FrameworkMatch::new(framework, 0.9, vec!["package.json".to_string()]);
 
     let result = DetectionResult::new(None, vec![framework_match], 0.9);
+    let formatter = OutputFormatter::new(DisplayConfig::default());
 
-    let simple = format_result(&result, OutputFormat::Simple);
+    let simple = formatter.format(&result, OutputFormat::Simple);
     assert_eq!(simple, "\x1b[38;2;97;218;251m⚛️\x1b[0m");
 
-    let full = format_result(&result, OutputFormat::Full);
+    let full = formatter.format(&result, OutputFormat::Full);
     assert_eq!(full, "⚛️|#61DAFB");
 
-    let json = format_result(&result, OutputFormat::Json);
+    let json = formatter.format(&result, OutputFormat::Json);
     assert!(json.contains("\"frameworks\":[\"React\"]"));
     assert!(json.contains("\"icon\":\"⚛️\""));
     assert!(json.contains("\"color\":\"#61DAFB\""));

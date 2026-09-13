@@ -30,8 +30,6 @@ impl ConfigParser {
         }
 
         if let Some(home_dir) = dirs::home_dir() {
-            paths.push(home_dir.join(".config/project-indicator/config.toml"));
-            paths.push(home_dir.join(".config/project-indicator.toml"));
             paths.push(home_dir.join(".project-indicator.toml"));
         }
 

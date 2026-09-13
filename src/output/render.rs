@@ -107,25 +107,10 @@ impl Render for JsonRenderer {
             evidence: evidence.into_iter().map(String::from).collect(),
         };
 
-        match serde_json::to_string(&json_output) {
-            Ok(json_str) => json_str,
-            Err(e) => {
-                eprintln!("Warning: JSON serialization failed: {}", e);
-
-                let fallback = JsonOutput {
-                    indicator: result.indicator.as_ref().map(|l| l.name.clone()),
-                    frameworks: vec![],
-                    icon: None,
-                    color: None,
-                    confidence: result.confidence,
-                    evidence: vec!["serialization_error".to_string()],
-                };
-
-                serde_json::to_string(&fallback).unwrap_or_else(|_| {
-                    r#"{"language":null,"frameworks":[],"icon":null,"color":null,"confidence":0.0,"evidence":["critical_serialization_error"]}"#.to_string()
-                })
-            }
-        }
+        serde_json::to_string(&json_output).unwrap_or_else(|e| {
+            eprintln!("Warning: JSON serialization failed: {}", e);
+            r#"{"indicator":null,"frameworks":[],"icon":null,"color":null,"confidence":0.0,"evidence":["serialization_error"]}"#.to_string()
+        })
     }
 }
 
