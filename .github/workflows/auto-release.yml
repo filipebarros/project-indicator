@@ -4,6 +4,11 @@ on:
   push:
     branches: [ "main" ]
 
+# Serialize runs so near-simultaneous merges can't race the version-bump push
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -43,8 +48,9 @@ jobs:
     - name: Detect version bump from PR
       id: detect_bump
       run: |
-        # Get the PR number from the merge commit
-        PR_NUMBER=$(gh pr list --state merged --limit 1 --json number --jq '.[0].number')
+        # Get the PR associated with the pushed commit (gh pr list sorts by
+        # created date, not merge date, so it can return the wrong PR)
+        PR_NUMBER=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" --jq '.[0].number // empty')
         echo "PR number: $PR_NUMBER"
 
         if [ -n "$PR_NUMBER" ]; then
@@ -115,7 +121,11 @@ jobs:
         echo "Creating tag: $TAG"
 
         git tag -a "$TAG" -m "Release $TAG"
-        git push origin main --tags
+
+        # Push main first, tag second: a combined push is per-ref, so a
+        # rejected main push could still publish the tag and orphan it
+        git push origin main
+        git push origin "$TAG"
 
     - name: Create GitHub Release
       if: steps.detect_bump.outputs.bump_type != 'none'
