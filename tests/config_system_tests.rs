@@ -1,5 +1,5 @@
 use project_indicator::detection::DetectionEngineBuilder;
-use project_indicator::types::{DetectionConfig, IndicatorContext, RootIndicator};
+use project_indicator::types::DetectionConfig;
 use project_indicator::Config;
 use std::fs;
 use tempfile::TempDir;
@@ -10,41 +10,6 @@ fn test_detection_config_defaults() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(config.max_upward_traversal, 10);
     assert!(!config.require_vcs_root);
     assert_eq!(config.confidence_threshold, 0.3);
-    assert!(config.root_indicators.is_empty());
-    Ok(())
-}
-#[test]
-fn test_custom_root_indicators() -> Result<(), Box<dyn std::error::Error>> {
-    let custom_indicators = vec![
-        RootIndicator {
-            pattern: "my-project.toml".to_string(),
-            weight: 0.8,
-            context: IndicatorContext::LanguageRoot,
-        },
-        RootIndicator {
-            pattern: ".custom".to_string(),
-            weight: 0.6,
-            context: IndicatorContext::Configuration,
-        },
-    ];
-
-    let config = DetectionConfig {
-        max_upward_traversal: 5,
-        require_vcs_root: false,
-        confidence_threshold: 0.5,
-        root_indicators: custom_indicators.clone(),
-        max_depth: 3,
-        detection_mode: project_indicator::types::DetectionMode::default(),
-        max_matches_per_pattern: 15,
-        small_project_threshold: 50,
-        extreme_size_threshold: 500,
-    };
-
-    assert_eq!(config.root_indicators.len(), 2);
-    assert_eq!(config.root_indicators[0].pattern, "my-project.toml");
-    assert_eq!(config.root_indicators[0].weight, 0.8);
-    assert_eq!(config.confidence_threshold, 0.5);
-    assert_eq!(config.max_upward_traversal, 5);
     Ok(())
 }
 #[test]
@@ -53,12 +18,8 @@ fn test_detection_engine_with_custom_config() -> Result<(), Box<dyn std::error::
         max_upward_traversal: 3,
         require_vcs_root: false,
         confidence_threshold: 0.8,
-        root_indicators: vec![],
         max_depth: 3,
         detection_mode: project_indicator::types::DetectionMode::default(),
-        max_matches_per_pattern: 15,
-        small_project_threshold: 50,
-        extreme_size_threshold: 500,
     };
 
     let engine = DetectionEngineBuilder::new(vec![], vec![])
@@ -72,86 +33,19 @@ fn test_detection_engine_with_custom_config() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 #[test]
-fn test_custom_root_indicators_replace_builtin() -> Result<(), Box<dyn std::error::Error>> {
-    use std::fs;
-    use tempfile::TempDir;
-
-    let detection_config = DetectionConfig {
-        max_upward_traversal: 10,
-        require_vcs_root: false,
-        confidence_threshold: 0.3,
-        root_indicators: vec![RootIndicator {
-            pattern: "custom-project.toml".to_string(),
-            weight: 1.0,
-            context: IndicatorContext::LanguageRoot,
-        }],
-        max_depth: 3,
-        detection_mode: project_indicator::types::DetectionMode::default(),
-        max_matches_per_pattern: 15,
-        small_project_threshold: 50,
-        extreme_size_threshold: 500,
-    };
-
-    let engine = DetectionEngineBuilder::new(vec![], vec![])
-        .with_config(detection_config)
-        .build();
-
-    let temp_dir = TempDir::new()?;
-    let project_path = temp_dir.path();
-
-    fs::write(
-        project_path.join("Cargo.toml"),
-        "[package]\nname = \"test\"",
-    )?;
-    fs::write(project_path.join("package.json"), "{\"name\": \"test\"}")?;
-
-    fs::write(
-        project_path.join("custom-project.toml"),
-        "[project]\nname = \"test\"",
-    )?;
-
-    let sub_dir = project_path.join("src");
-    fs::create_dir_all(&sub_dir)?;
-
-    let result_custom = engine.detect(&sub_dir)?;
-
-    let default_config = DetectionConfig::default();
-    let default_engine = DetectionEngineBuilder::new(vec![], vec![])
-        .with_config(default_config)
-        .build();
-
-    fs::remove_file(project_path.join("custom-project.toml"))?;
-
-    let result_no_indicators = default_engine.detect(&sub_dir)?;
-
-    assert!(result_custom.is_empty());
-    assert!(result_no_indicators.is_empty());
-
-    Ok(())
-}
-#[test]
 fn test_detection_config_serialization() -> Result<(), Box<dyn std::error::Error>> {
     let original_config = DetectionConfig {
         max_upward_traversal: 8,
         require_vcs_root: true,
         confidence_threshold: 0.4,
-        root_indicators: vec![RootIndicator {
-            pattern: "project.yaml".to_string(),
-            weight: 0.7,
-            context: IndicatorContext::LanguageRoot,
-        }],
         max_depth: 3,
         detection_mode: project_indicator::types::DetectionMode::default(),
-        max_matches_per_pattern: 15,
-        small_project_threshold: 50,
-        extreme_size_threshold: 500,
     };
 
     let toml_str = toml::to_string(&original_config)?;
     assert!(toml_str.contains("max_upward_traversal = 8"));
     assert!(toml_str.contains("require_vcs_root = true"));
     assert!(toml_str.contains("confidence_threshold = 0.4"));
-    assert!(toml_str.contains("project.yaml"));
 
     let deserialized_config: DetectionConfig = toml::from_str(&toml_str)?;
     assert_eq!(
@@ -166,12 +60,6 @@ fn test_detection_config_serialization() -> Result<(), Box<dyn std::error::Error
         deserialized_config.confidence_threshold,
         original_config.confidence_threshold
     );
-    assert_eq!(deserialized_config.root_indicators.len(), 1);
-    assert_eq!(
-        deserialized_config.root_indicators[0].pattern,
-        "project.yaml"
-    );
-    assert_eq!(deserialized_config.root_indicators[0].weight, 0.7);
     Ok(())
 }
 #[test]
@@ -221,14 +109,6 @@ max_upward_traversal = 5
 require_vcs_root = true
 confidence_threshold = 0.6
 
-[[detection.root_indicators]]
-pattern = \"build.sbt\"
-weight = 0.9
-
-[[detection.root_indicators]]
-pattern = \"project.clj\"
-weight = 0.85
-
 [[indicators]]
 name = \"Test Language\"
 files = [\"test.file\"]
@@ -244,11 +124,6 @@ priority = 1
     assert_eq!(config.detection.max_upward_traversal, 5);
     assert!(config.detection.require_vcs_root);
     assert_eq!(config.detection.confidence_threshold, 0.6);
-    assert_eq!(config.detection.root_indicators.len(), 2);
-    assert_eq!(config.detection.root_indicators[0].pattern, "build.sbt");
-    assert_eq!(config.detection.root_indicators[0].weight, 0.9);
-    assert_eq!(config.detection.root_indicators[1].pattern, "project.clj");
-    assert_eq!(config.detection.root_indicators[1].weight, 0.85);
 
     assert_eq!(config.display.max_frameworks, 3);
     assert_eq!(config.display.framework_separator, " | ");

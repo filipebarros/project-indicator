@@ -7,7 +7,7 @@
 //!
 //! The configuration system is organized into several focused types:
 //!
-//! - [`DetectionConfig`] - Core detection behavior (depth, confidence, root indicators)
+//! - [`DetectionConfig`] - Core detection behavior (depth, confidence)
 //! - [`DisplayConfig`] - Output formatting and display preferences
 //! - [`ConfigMeta`] - Configuration file metadata and versioning
 //! - [`DetectionMode`] - Fast vs Thorough detection strategies
@@ -59,7 +59,6 @@
 //! assert_eq!(config, parsed);
 //! ```
 
-use crate::types::RootIndicator;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -74,35 +73,14 @@ pub struct DetectionConfig {
     pub max_upward_traversal: usize,
     pub require_vcs_root: bool,
     pub confidence_threshold: f32,
-    pub root_indicators: Vec<RootIndicator>,
     #[serde(default = "default_max_depth")]
     pub max_depth: usize,
     #[serde(default)]
     pub detection_mode: DetectionMode,
-
-    // Scanning thresholds - configurable magic numbers
-    #[serde(default = "default_max_matches")]
-    pub max_matches_per_pattern: usize,
-    #[serde(default = "default_small_project_threshold")]
-    pub small_project_threshold: usize,
-    #[serde(default = "default_extreme_size_threshold")]
-    pub extreme_size_threshold: usize,
 }
 
 fn default_max_depth() -> usize {
     1
-}
-
-fn default_max_matches() -> usize {
-    15
-}
-
-fn default_small_project_threshold() -> usize {
-    50
-}
-
-fn default_extreme_size_threshold() -> usize {
-    500
 }
 
 impl Default for DetectionConfig {
@@ -111,12 +89,8 @@ impl Default for DetectionConfig {
             max_upward_traversal: 10,
             require_vcs_root: false,
             confidence_threshold: 0.3,
-            root_indicators: vec![],
             max_depth: default_max_depth(),
             detection_mode: DetectionMode::default(),
-            max_matches_per_pattern: default_max_matches(),
-            small_project_threshold: default_small_project_threshold(),
-            extreme_size_threshold: default_extreme_size_threshold(),
         }
     }
 }

@@ -198,7 +198,6 @@ mod tests {
             icon: None,
             color: None,
             priority: 2,
-            files: vec![],
             root_indicators: vec![],
         };
 

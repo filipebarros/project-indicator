@@ -222,7 +222,6 @@ mod tests {
             icon: Some("⚡".to_string()),
             color: Some("#00FF00".to_string()),
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         }
     }
@@ -336,7 +335,6 @@ mod tests {
             icon: None,
             color: None,
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         };
 

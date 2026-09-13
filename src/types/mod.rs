@@ -102,7 +102,6 @@ mod tests {
             icon: Some("⚛️".to_string()),
             color: Some("#61DAFB".to_string()),
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         };
 
@@ -126,7 +125,6 @@ mod tests {
             icon: None,
             color: None,
             priority: 3,
-            files: vec![],
             root_indicators: vec![],
         };
 
@@ -137,7 +135,6 @@ mod tests {
             icon: None,
             color: None,
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         };
 

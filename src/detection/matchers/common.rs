@@ -79,7 +79,6 @@ mod tests {
             icon: None,
             color: None,
             priority: 5,
-            files: vec![],
             root_indicators: vec![],
         };
 
@@ -90,7 +89,6 @@ mod tests {
             icon: None,
             color: None,
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         };
 
@@ -101,7 +99,6 @@ mod tests {
             icon: None,
             color: None,
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         };
 
@@ -130,7 +127,6 @@ mod tests {
             icon: None,
             color: None,
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         };
 
@@ -141,7 +137,6 @@ mod tests {
             icon: None,
             color: None,
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         };
 

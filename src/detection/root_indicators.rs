@@ -860,7 +860,6 @@ not-python = true
             icon: None,
             color: None,
             priority: 1,
-            files: vec![],
             root_indicators: vec![crate::types::RootIndicator {
                 pattern: "Rocket.toml".to_string(),
                 weight: 0.9,
@@ -1084,7 +1083,6 @@ not-python = true
             icon: None,
             color: None,
             priority: 1,
-            files: vec![],
             root_indicators: vec![crate::types::RootIndicator {
                 pattern: "Rocket.toml".to_string(),
                 weight: 0.9,
@@ -1155,7 +1153,6 @@ not-python = true
             icon: None,
             color: None,
             priority: 1,
-            files: vec![],
             root_indicators: vec![crate::types::RootIndicator {
                 pattern: "Rocket.toml".to_string(),
                 weight: 0.9,

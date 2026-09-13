@@ -20,7 +20,6 @@ fn test_config_serialization() -> Result<(), Box<dyn std::error::Error>> {
         icon: Some("⚛️".to_string()),
         color: Some("#61DAFB".to_string()),
         priority: 1,
-        files: vec![],
         root_indicators: vec![],
     };
 
@@ -102,7 +101,6 @@ fn test_detection_result_display() -> Result<(), Box<dyn std::error::Error>> {
         icon: Some("⚛️".to_string()),
         color: Some("#61DAFB".to_string()),
         priority: 1,
-        files: vec![],
         root_indicators: vec![],
     };
 
@@ -141,7 +139,6 @@ fn test_output_formatting() -> Result<(), Box<dyn std::error::Error>> {
         icon: Some("⚛️".to_string()),
         color: Some("#61DAFB".to_string()),
         priority: 1,
-        files: vec![],
         root_indicators: vec![],
     };
 
@@ -281,7 +278,6 @@ fn test_framework_catalog_priority_sorting() -> Result<(), Box<dyn std::error::E
             icon: None,
             color: None,
             priority: 3,
-            files: vec![],
             root_indicators: vec![],
         },
         Framework {
@@ -291,7 +287,6 @@ fn test_framework_catalog_priority_sorting() -> Result<(), Box<dyn std::error::E
             icon: None,
             color: None,
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         },
     ];

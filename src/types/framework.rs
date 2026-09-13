@@ -61,7 +61,6 @@
 //!     icon: Some("⚛️".to_string()),
 //!     color: Some("#61DAFB".to_string()),
 //!     priority: 1,
-//!     files: vec![],
 //!     root_indicators: vec![],
 //! };
 //!
@@ -75,7 +74,6 @@
 //!     icon: Some("▲".to_string()),
 //!     color: Some("#000000".to_string()),
 //!     priority: 0, // Higher priority than React (lower number = higher priority)
-//!     files: vec!["next.config.js".to_string()],
 //!     root_indicators: vec![],
 //! };
 //! ```
@@ -110,7 +108,6 @@
 //!     icon: Some("🎸".to_string()),
 //!     color: Some("#092E20".to_string()),
 //!     priority: 1,
-//!     files: vec![],
 //!     root_indicators: vec![],
 //! };
 //!
@@ -178,8 +175,6 @@ pub struct Framework {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     pub priority: u8,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub files: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub root_indicators: Vec<RootIndicator>,
 }

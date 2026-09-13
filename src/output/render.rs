@@ -295,7 +295,6 @@ mod tests {
                 icon: Some("⚛".to_string()),
                 color: Some("#61dafb".to_string()),
                 priority: 1,
-                files: vec![],
                 root_indicators: vec![],
             },
             confidence: 0.95,

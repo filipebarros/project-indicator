@@ -37,7 +37,6 @@ pub fn create_test_result() -> DetectionResult {
         icon: Some("⚛️".to_string()),
         color: Some("#61DAFB".to_string()),
         priority: 1,
-        files: vec![],
         root_indicators: vec![],
     };
 
@@ -176,7 +175,6 @@ pub fn create_test_framework(name: &str, detection: DetectionType) -> Framework 
         icon: None,
         color: None,
         priority: 1,
-        files: vec![],
         root_indicators: vec![],
     }
 }

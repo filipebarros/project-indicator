@@ -28,7 +28,6 @@ pub fn framework(
         icon,
         color: color.map(String::from),
         priority,
-        files: vec![],
         root_indicators,
     }
 }
@@ -54,7 +53,6 @@ pub fn create_react_framework() -> Framework {
         icon: Some(nerd_icon("e7ba")),
         color: Some("#61dafb".to_string()),
         priority: 1,
-        files: vec![],
         root_indicators: vec![],
     }
 }
@@ -69,7 +67,6 @@ pub fn create_angular_framework() -> Framework {
         icon: Some(nerd_icon("e753")),
         color: Some("#dd0031".to_string()),
         priority: 2,
-        files: vec![],
         root_indicators: vec![RootIndicator {
             pattern: "angular.json".to_string(),
             weight: 0.9,
@@ -88,11 +85,6 @@ pub fn create_nextjs_framework() -> Framework {
         icon: Some(nerd_icon("e83e")),
         color: Some("#000000".to_string()),
         priority: 3,
-        files: vec![
-            "next.config.js".to_string(),
-            "next.config.mjs".to_string(),
-            "next.config.ts".to_string(),
-        ],
         root_indicators: vec![
             RootIndicator {
                 pattern: "next.config.js".to_string(),
@@ -118,7 +110,6 @@ pub fn create_vue_framework() -> Framework {
         icon: Some(nerd_icon("e8dc")),
         color: Some("#4fc08d".to_string()),
         priority: 2,
-        files: vec![],
         root_indicators: vec![],
     }
 }
@@ -133,7 +124,6 @@ pub fn create_nestjs_framework() -> Framework {
         icon: Some(nerd_icon("e83b")),
         color: Some("#e0234e".to_string()),
         priority: 4,
-        files: vec!["nest-cli.json".to_string()],
         root_indicators: vec![RootIndicator {
             pattern: "nest-cli.json".to_string(),
             weight: 0.9,
@@ -152,11 +142,6 @@ pub fn create_astro_framework() -> Framework {
         icon: Some(nerd_icon("e735")),
         color: Some("#ff5d01".to_string()),
         priority: 3,
-        files: vec![
-            "astro.config.mjs".to_string(),
-            "astro.config.js".to_string(),
-            "astro.config.ts".to_string(),
-        ],
         root_indicators: vec![RootIndicator {
             pattern: "astro.config.mjs".to_string(),
             weight: 0.9,
@@ -176,11 +161,6 @@ pub fn create_vite_framework() -> Framework {
         color: Some("#646cff".to_string()),
         // Build tooling: app frameworks (React, Svelte, …) win the display
         priority: 5,
-        files: vec![
-            "vite.config.js".to_string(),
-            "vite.config.ts".to_string(),
-            "vite.config.mjs".to_string(),
-        ],
         root_indicators: vec![],
     }
 }
@@ -195,7 +175,6 @@ pub fn create_svelte_framework() -> Framework {
         icon: None,
         color: Some("#ff3e00".to_string()),
         priority: 2,
-        files: vec!["svelte.config.js".to_string()],
         root_indicators: vec![RootIndicator {
             pattern: "svelte.config.js".to_string(),
             weight: 0.9,
@@ -214,7 +193,6 @@ pub fn create_solid_framework() -> Framework {
         icon: None,
         color: Some("#2c4f7c".to_string()),
         priority: 2,
-        files: vec![],
         root_indicators: vec![],
     }
 }
@@ -348,6 +326,7 @@ pub struct ConfigBuilder {
     pub max_upward_traversal: usize,
     pub require_vcs_root: bool,
     pub confidence_threshold: f32,
+    pub max_depth: usize,
 }
 
 impl ConfigBuilder {
@@ -359,6 +338,7 @@ impl ConfigBuilder {
             max_upward_traversal: 3,
             require_vcs_root: false,
             confidence_threshold: 0.3,
+            max_depth: 1,
         }
     }
 
@@ -386,6 +366,11 @@ impl ConfigBuilder {
         self
     }
 
+    pub fn max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
+
     pub fn build(self) -> (ConfigMeta, DisplayConfig, DetectionConfig) {
         let meta = ConfigMeta {
             version: "3.0".to_string(),
@@ -401,12 +386,8 @@ impl ConfigBuilder {
             max_upward_traversal: self.max_upward_traversal,
             require_vcs_root: self.require_vcs_root,
             confidence_threshold: self.confidence_threshold,
-            root_indicators: vcs_root_indicators(),
-            max_depth: 1,
+            max_depth: self.max_depth,
             detection_mode: crate::types::DetectionMode::default(),
-            max_matches_per_pattern: 15,
-            small_project_threshold: 50,
-            extreme_size_threshold: 500,
         };
 
         (meta, display, detection)

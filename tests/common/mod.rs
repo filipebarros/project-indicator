@@ -96,7 +96,6 @@ pub fn create_test_config() -> Config {
             icon: Some("⚛️".to_string()),
             color: Some("#61DAFB".to_string()),
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         },
         Framework {
@@ -108,7 +107,6 @@ pub fn create_test_config() -> Config {
             icon: Some("▲".to_string()),
             color: Some("#000000".to_string()),
             priority: 0,
-            files: vec![],
             root_indicators: vec![],
         },
         Framework {
@@ -120,7 +118,6 @@ pub fn create_test_config() -> Config {
             icon: Some("🚀".to_string()),
             color: Some("#D33847".to_string()),
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         },
         Framework {
@@ -132,7 +129,6 @@ pub fn create_test_config() -> Config {
             icon: Some("📝".to_string()),
             color: Some("#1E293B".to_string()),
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         },
     ];

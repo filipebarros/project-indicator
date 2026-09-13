@@ -97,7 +97,6 @@
 //!     icon: Some("🚀".to_string()),
 //!     color: Some("#D33847".to_string()),
 //!     priority: 1,
-//!     files: vec![],
 //!     root_indicators: vec![],
 //! };
 //!
@@ -430,7 +429,6 @@ mod tests {
             icon: None,
             color: Some("#ff3e00".to_string()),
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         };
         let result = DetectionResult::new(

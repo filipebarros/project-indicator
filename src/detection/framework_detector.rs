@@ -498,7 +498,6 @@ tokio = "1.0"
             icon: None,
             color: None,
             priority: 2,
-            files: vec![],
             root_indicators: vec![],
         };
 
@@ -509,7 +508,6 @@ tokio = "1.0"
             icon: None,
             color: None,
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         };
 
@@ -537,7 +535,6 @@ tokio = "1.0"
             icon: None,
             color: None,
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         };
 

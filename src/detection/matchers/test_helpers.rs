@@ -10,7 +10,6 @@ pub mod helpers {
             icon: None,
             color: None,
             priority,
-            files: vec![],
             root_indicators: vec![],
         }
     }

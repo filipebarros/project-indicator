@@ -128,7 +128,6 @@ mod tests {
             icon: None,
             color: None,
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         }
     }

@@ -28,7 +28,6 @@ pub mod shared;
 pub use shared::{generate_root_indicators_simple_max_weight, vcs_root_indicators};
 
 use crate::config::Config;
-use crate::types::{ConfigMeta, DetectionConfig, DisplayConfig};
 use anyhow::Result;
 use shared::ConfigBuilder;
 use std::collections::HashMap;
@@ -227,26 +226,16 @@ pub fn create_rust_dev_template() -> ConfigTemplate {
 }
 
 pub fn create_python_dev_template() -> ConfigTemplate {
+    let (meta, display, detection) = ConfigBuilder::new()
+        .display(true, 4, " | ")
+        .detection(3, false, 0.6)
+        .max_depth(3)
+        .build();
+
     let config = Config {
-        meta: ConfigMeta {
-            version: "3.0".to_string(),
-        },
-        display: DisplayConfig {
-            show_frameworks: true,
-            max_frameworks: 4,
-            framework_separator: " | ".to_string(),
-        },
-        detection: DetectionConfig {
-            max_upward_traversal: 3,
-            require_vcs_root: false,
-            confidence_threshold: 0.6,
-            root_indicators: vcs_root_indicators(),
-            max_depth: 3,
-            detection_mode: crate::types::DetectionMode::default(),
-            max_matches_per_pattern: 15,
-            small_project_threshold: 50,
-            extreme_size_threshold: 500,
-        },
+        meta,
+        display,
+        detection,
         frameworks: framework_catalog(),
         indicators: vec![create_python_indicator()],
     };
@@ -260,26 +249,16 @@ pub fn create_python_dev_template() -> ConfigTemplate {
 }
 
 pub fn create_web_dev_template() -> ConfigTemplate {
+    let (meta, display, detection) = ConfigBuilder::new()
+        .display(true, 5, ", ")
+        .detection(4, false, 0.4)
+        .max_depth(3)
+        .build();
+
     let config = Config {
-        meta: ConfigMeta {
-            version: "3.0".to_string(),
-        },
-        display: DisplayConfig {
-            show_frameworks: true,
-            max_frameworks: 5,
-            framework_separator: ", ".to_string(),
-        },
-        detection: DetectionConfig {
-            max_upward_traversal: 4,
-            require_vcs_root: false,
-            confidence_threshold: 0.4,
-            root_indicators: vcs_root_indicators(),
-            max_depth: 3,
-            detection_mode: crate::types::DetectionMode::default(),
-            max_matches_per_pattern: 15,
-            small_project_threshold: 50,
-            extreme_size_threshold: 500,
-        },
+        meta,
+        display,
+        detection,
         frameworks: framework_catalog(),
         indicators: vec![create_javascript_indicator(), create_typescript_indicator()],
     };
@@ -292,26 +271,16 @@ pub fn create_web_dev_template() -> ConfigTemplate {
 }
 
 pub fn create_mobile_dev_template() -> ConfigTemplate {
+    let (meta, display, detection) = ConfigBuilder::new()
+        .display(true, 4, " + ")
+        .detection(3, false, 0.5)
+        .max_depth(3)
+        .build();
+
     let config = Config {
-        meta: ConfigMeta {
-            version: "3.0".to_string(),
-        },
-        display: DisplayConfig {
-            show_frameworks: true,
-            max_frameworks: 4,
-            framework_separator: " + ".to_string(),
-        },
-        detection: DetectionConfig {
-            max_upward_traversal: 3,
-            require_vcs_root: false,
-            confidence_threshold: 0.5,
-            root_indicators: vcs_root_indicators(),
-            max_depth: 3,
-            detection_mode: crate::types::DetectionMode::default(),
-            max_matches_per_pattern: 15,
-            small_project_threshold: 50,
-            extreme_size_threshold: 500,
-        },
+        meta,
+        display,
+        detection,
         frameworks: framework_catalog(),
         indicators: vec![
             create_javascript_indicator(),
@@ -331,26 +300,16 @@ pub fn create_mobile_dev_template() -> ConfigTemplate {
 }
 
 pub fn create_data_science_template() -> ConfigTemplate {
+    let (meta, display, detection) = ConfigBuilder::new()
+        .display(true, 8, " • ")
+        .detection(3, false, 0.4)
+        .max_depth(3)
+        .build();
+
     let config = Config {
-        meta: ConfigMeta {
-            version: "3.0".to_string(),
-        },
-        display: DisplayConfig {
-            show_frameworks: true,
-            max_frameworks: 8,
-            framework_separator: " • ".to_string(),
-        },
-        detection: DetectionConfig {
-            max_upward_traversal: 3,
-            require_vcs_root: false,
-            confidence_threshold: 0.4,
-            root_indicators: vcs_root_indicators(),
-            max_depth: 3,
-            detection_mode: crate::types::DetectionMode::default(),
-            max_matches_per_pattern: 15,
-            small_project_threshold: 50,
-            extreme_size_threshold: 500,
-        },
+        meta,
+        display,
+        detection,
         frameworks: framework_catalog(),
         indicators: vec![
             create_python_indicator(),
@@ -369,26 +328,16 @@ pub fn create_data_science_template() -> ConfigTemplate {
 }
 
 pub fn create_enterprise_template() -> ConfigTemplate {
+    let (meta, display, detection) = ConfigBuilder::new()
+        .display(true, 6, " | ")
+        .detection(5, true, 0.3)
+        .max_depth(4)
+        .build();
+
     let config = Config {
-        meta: ConfigMeta {
-            version: "3.0".to_string(),
-        },
-        display: DisplayConfig {
-            show_frameworks: true,
-            max_frameworks: 6,
-            framework_separator: " | ".to_string(),
-        },
-        detection: DetectionConfig {
-            max_upward_traversal: 5,
-            require_vcs_root: true,
-            confidence_threshold: 0.3,
-            root_indicators: vcs_root_indicators(),
-            max_depth: 4,
-            detection_mode: crate::types::DetectionMode::default(),
-            max_matches_per_pattern: 15,
-            small_project_threshold: 50,
-            extreme_size_threshold: 500,
-        },
+        meta,
+        display,
+        detection,
         frameworks: framework_catalog(),
         indicators: vec![
             create_rust_indicator(),

@@ -116,7 +116,6 @@ mod tests {
             icon: Some("⚡".to_string()),
             color: Some("#FF0000".to_string()),
             priority: 1,
-            files: vec![],
             root_indicators: vec![],
         };
 

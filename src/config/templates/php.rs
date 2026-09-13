@@ -23,25 +23,21 @@ pub fn create_php_indicator() -> Indicator {
 
 pub fn php_frameworks() -> Vec<Framework> {
     vec![
-        {
-            let mut fw = framework(
-                "Laravel",
-                vec![Ecosystem::Packagist],
-                DetectionType::Dependencies {
-                    dependencies: vec!["laravel/framework".to_string()],
-                },
-                Some(nerd_icon("e73f")),
-                Some("#ff2d20"),
-                1,
-                vec![root_indicator(
-                    "artisan",
-                    0.9,
-                    IndicatorContext::FrameworkRoot,
-                )],
-            );
-            fw.files = vec!["artisan".to_string()];
-            fw
-        },
+        framework(
+            "Laravel",
+            vec![Ecosystem::Packagist],
+            DetectionType::Dependencies {
+                dependencies: vec!["laravel/framework".to_string()],
+            },
+            Some(nerd_icon("e73f")),
+            Some("#ff2d20"),
+            1,
+            vec![root_indicator(
+                "artisan",
+                0.9,
+                IndicatorContext::FrameworkRoot,
+            )],
+        ),
         simple_framework(
             "Symfony",
             vec![Ecosystem::Packagist],
