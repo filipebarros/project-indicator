@@ -220,25 +220,10 @@ max_upward_traversal = 10
 require_vcs_root = false
 confidence_threshold = 0.3
 max_depth = 1
-# Configurable performance thresholds
-max_matches_per_pattern = 15    # Stop after N matches per pattern
-small_project_threshold = 50    # Project size threshold for fast path
-extreme_size_threshold = 500    # Large project threshold
 
 # Detection mode: "fast" or "thorough"
 [detection.mode]
 mode = "thorough"
-
-# Root indicators (optional - no defaults)
-[[detection.root_indicators]]
-pattern = ".git"
-weight = 1.0
-context = "VersionControl"
-
-[[detection.root_indicators]]
-pattern = "Cargo.toml"
-weight = 0.9
-context = "BuildSystem"
 
 # Custom indicator (project type). `ecosystems` links it to the framework
 # catalog: frameworks sharing an ecosystem are detected for this indicator.
@@ -374,36 +359,6 @@ dependencies = ["react"]
 - `FileExists` - file/directory presence
 - `ConfigFile` - config file contents
 
-### Root Indicator System
-
-Root indicators improve project root detection with weighted scoring:
-
-```toml
-[[detection.root_indicators]]
-pattern = ".git"              # Version control
-weight = 1.0
-context = "VersionControl"
-
-[[detection.root_indicators]]
-pattern = "Cargo.toml"        # Rust projects
-weight = 0.9
-context = "BuildSystem"
-
-[[detection.root_indicators]]
-pattern = "package.json"      # Node.js projects
-weight = 0.9
-context = "PackageManifest"
-```
-
-**Context Types:**
-- `VersionControl` - .git, .hg, .svn
-- `BuildSystem` - Cargo.toml, CMakeLists.txt, Makefile
-- `PackageManifest` - package.json, pyproject.toml, go.mod
-- `ProjectStructure` - src/, lib/, workspace markers
-- `Configuration` - Config files and settings
-
-**Note**: Root indicators must be explicitly defined in your config - there are no built-in defaults.
-
 ### Confidence Scoring
 
 Detection uses weighted scoring based on:
@@ -420,12 +375,6 @@ Detection uses weighted scoring based on:
   - Build files (Makefile, tsconfig.json): 1.5
   - Source patterns (*.rs, *.ts): 1.0
 - **Root indicator bonus**: Weighted contribution from root indicators
-
-**Early termination heuristics:**
-- Ultra-high confidence (≥2.0): Single important file at root
-- High confidence (≥1.5): Multiple important files
-- Medium confidence (≥1.0): Several moderate files
-- Fallback: Stop after 15 files
 
 Implementation: `src/types/matched_file.rs`, `src/detection/confidence_scorer.rs`, `src/detection/engine.rs`
 

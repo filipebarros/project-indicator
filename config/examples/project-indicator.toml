@@ -12,24 +12,6 @@ require_vcs_root = false
 confidence_threshold = 0.3
 max_depth = 1
 detection_mode = "Thorough"
-max_matches_per_pattern = 15
-small_project_threshold = 50
-extreme_size_threshold = 500
-
-[[detection.root_indicators]]
-pattern = ".git"
-weight = 1.0
-context = "VersionControl"
-
-[[detection.root_indicators]]
-pattern = ".hg"
-weight = 1.0
-context = "VersionControl"
-
-[[detection.root_indicators]]
-pattern = ".svn"
-weight = 1.0
-context = "VersionControl"
 
 [[frameworks]]
 name = "React"
@@ -75,11 +57,6 @@ ecosystems = ["npm"]
 icon = ""
 color = "#000000"
 priority = 3
-files = [
-    "next.config.js",
-    "next.config.mjs",
-    "next.config.ts",
-]
 
 [frameworks.detection]
 type = "Dependencies"
@@ -101,11 +78,6 @@ ecosystems = ["npm"]
 icon = ""
 color = "#ff5d01"
 priority = 3
-files = [
-    "astro.config.mjs",
-    "astro.config.js",
-    "astro.config.ts",
-]
 
 [frameworks.detection]
 type = "Dependencies"
@@ -122,7 +94,6 @@ ecosystems = ["npm"]
 icon = ""
 color = "#e0234e"
 priority = 4
-files = ["nest-cli.json"]
 
 [frameworks.detection]
 type = "Dependencies"
@@ -138,7 +109,6 @@ name = "Svelte"
 ecosystems = ["npm"]
 color = "#ff3e00"
 priority = 2
-files = ["svelte.config.js"]
 
 [frameworks.detection]
 type = "Dependencies"
@@ -167,11 +137,6 @@ name = "Vite"
 ecosystems = ["npm"]
 color = "#646cff"
 priority = 5
-files = [
-    "vite.config.js",
-    "vite.config.ts",
-    "vite.config.mjs",
-]
 
 [frameworks.detection]
 type = "Dependencies"
@@ -421,7 +386,6 @@ ecosystems = ["packagist"]
 icon = ""
 color = "#ff2d20"
 priority = 1
-files = ["artisan"]
 
 [frameworks.detection]
 type = "Dependencies"
