@@ -132,3 +132,65 @@ priority = 1
 
     Ok(())
 }
+#[test]
+fn test_config_with_removed_keys_still_parses() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = TempDir::new()?;
+    let config_file = temp_dir.path().join("config.toml");
+
+    // Old-schema config containing keys removed in the 2026-09 ponytail
+    // cleanup (detection.max_matches_per_pattern/small_project_threshold/
+    // extreme_size_threshold, detection.root_indicators, Framework.files).
+    // Serde ignores unknown fields by default, so a config written before
+    // that cleanup must still parse without error.
+    let config_content = "[meta]
+version = \"3.0\"
+
+[display]
+show_frameworks = true
+max_frameworks = 3
+framework_separator = \" | \"
+
+[detection]
+max_upward_traversal = 5
+require_vcs_root = true
+confidence_threshold = 0.6
+max_matches_per_pattern = 15
+small_project_threshold = 50
+extreme_size_threshold = 500
+
+[[detection.root_indicators]]
+pattern = \".git\"
+weight = 1.0
+context = \"VersionControl\"
+
+[[indicators]]
+name = \"Test Language\"
+files = [\"test.file\"]
+color = \"#FF0000\"
+icon = \"🧪\"
+priority = 1
+
+[[frameworks]]
+name = \"Test Framework\"
+ecosystems = [\"npm\"]
+color = \"#00FF00\"
+priority = 1
+files = [\"legacy.marker\"]
+
+[frameworks.detection]
+type = \"Dependencies\"
+dependencies = [\"test-framework\"]
+";
+
+    fs::write(&config_file, config_content)?;
+
+    let config = Config::load_from_file(&config_file)?;
+
+    assert_eq!(config.detection.max_upward_traversal, 5);
+    assert_eq!(config.detection.confidence_threshold, 0.6);
+    assert_eq!(config.indicators.len(), 1);
+    assert_eq!(config.frameworks.len(), 1);
+    assert_eq!(config.frameworks[0].name, "Test Framework");
+
+    Ok(())
+}

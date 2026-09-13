@@ -25,7 +25,6 @@
 
 use crate::patterns::simple_wildcard_match;
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Thread-safe pattern matcher with per-run memoization.
 ///
@@ -35,16 +34,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// map allows `&str` lookups on both levels, so cache hits allocate nothing.
 pub struct PatternMatcher {
     cache: DashMap<String, DashMap<String, bool>>,
-    cache_hits: AtomicUsize,
-    cache_misses: AtomicUsize,
 }
 
 impl PatternMatcher {
     pub fn new() -> Self {
         Self {
             cache: DashMap::new(),
-            cache_hits: AtomicUsize::new(0),
-            cache_misses: AtomicUsize::new(0),
         }
     }
 
@@ -53,14 +48,11 @@ impl PatternMatcher {
         // Using &str for lookup avoids allocating on cache hits
         if let Some(entry) = self.cache.get(pattern) {
             if let Some(result) = entry.get(file_name) {
-                self.cache_hits.fetch_add(1, Ordering::Relaxed);
                 return *result;
             }
             // Pattern exists but filename doesn't - compute result and insert
             drop(entry); // Release lock before computing
         }
-
-        self.cache_misses.fetch_add(1, Ordering::Relaxed);
 
         let result = if pattern.contains('*') {
             self.optimized_wildcard_match(file_name, pattern)

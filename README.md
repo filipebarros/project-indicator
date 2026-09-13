@@ -22,7 +22,7 @@ Project Indicator is a high-performance replacement for shell-based project dete
 - ⚡ **Blazing Performance**: 3-5ms typical detection
 - 🎨 **Multiple Output Formats**: Simple, Full, JSON, Compact, Debug, and Rich formats
 - 🔧 **Comprehensive CLI**: Configuration management, debugging tools, and root indicator analysis
-- 🧠 **Advanced Detection**: Confidence-based scoring with weighted root indicators and early termination
+- 🧠 **Advanced Detection**: Confidence-based scoring with weighted root indicators
 - 🔧 **Configuration Templates**: Pre-built templates for different development environments
 - 🐚 **Shell Integration**: Ready-to-use integration scripts for Bash, Zsh, and Fish
 
