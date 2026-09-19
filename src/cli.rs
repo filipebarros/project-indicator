@@ -11,7 +11,7 @@ pub struct Cli {
     #[arg(long, default_value = "simple")]
     pub format: String,
 
-    #[arg(long, help = "Maximum depth to scan directories (default: 3)")]
+    #[arg(long, help = "Maximum depth to scan directories (default: 1)")]
     pub max_depth: Option<usize>,
 
     #[arg(short, long, help = "Enable verbose logging output")]

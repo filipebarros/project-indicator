@@ -22,89 +22,6 @@ const ROOT_MATCH_CONFIDENCE_FACTOR: f32 = 0.9;
 /// exists in a real manifest, which identifies the project near-certainly.
 const FRAMEWORK_MATCH_CONFIDENCE_FLOOR: f32 = 0.75;
 
-/// Builder for creating `DetectionEngine` instances.
-///
-/// ## Usage
-///
-/// ```rust
-/// # use project_indicator::detection::engine::DetectionEngineBuilder;
-/// # use project_indicator::types::Indicator;
-/// let indicators = vec![/* ... */];
-/// let engine = DetectionEngineBuilder::new(indicators, vec![]).build();
-/// ```
-pub struct DetectionEngineBuilder {
-    indicators: Vec<Indicator>,
-    frameworks: Vec<Framework>,
-    config: DetectionConfig,
-}
-
-impl DetectionEngineBuilder {
-    /// Creates a new builder with the given indicators.
-    ///
-    /// All components will use default configurations unless overridden
-    /// via `with_*` methods.
-    pub fn new(indicators: Vec<Indicator>, frameworks: Vec<Framework>) -> Self {
-        Self {
-            indicators,
-            frameworks,
-            config: DetectionConfig::default(),
-        }
-    }
-
-    /// Sets a custom detection configuration.
-    pub fn with_config(mut self, config: DetectionConfig) -> Self {
-        self.config = config;
-        self
-    }
-
-    /// Builds the `DetectionEngine`.
-    ///
-    /// A single `PatternMatcher` is created and shared across the scorer and
-    /// scanner so pattern-match memoization works across the whole pipeline.
-    pub fn build(self) -> DetectionEngine {
-        let indicators: Vec<Arc<Indicator>> = self.indicators.into_iter().map(Arc::new).collect();
-        let frameworks = Arc::new(self.frameworks);
-
-        let pattern_matcher = Arc::new(PatternMatcher::new());
-        let cache_manager = FileSystemCacheManager::new();
-        let confidence_scorer =
-            ConfidenceScorer::with_catalog(pattern_matcher.clone(), frameworks.clone());
-        let indicator_resolver = IndicatorResolver::default();
-        let framework_detector = FrameworkDetector::new();
-
-        // Create pattern compiler and scanning engine
-        let pattern_compiler = PatternCompiler::new(&indicators);
-        let file_cache = cache_manager.file_existence_cache();
-
-        let scanning_engine = ScanningEngine::with_cache(
-            PatternProcessor::new(
-                pattern_matcher.clone(),
-                pattern_compiler.unique_patterns(),
-                indicators.clone(),
-            ),
-            self.config.max_depth,
-            Some(file_cache),
-        );
-
-        let root_indicator_engine = RootIndicatorEngine::from_parts(
-            indicators.clone(),
-            frameworks.clone(),
-            self.config.clone(),
-        );
-
-        DetectionEngine {
-            indicators, // Use the converted Arc<Indicator> version
-            frameworks,
-            cache_manager,
-            confidence_scorer,
-            indicator_resolver,
-            framework_detector,
-            scanning_engine,
-            root_indicator_engine,
-        }
-    }
-}
-
 /// Main detection engine for identifying project indicators and frameworks.
 ///
 /// The DetectionEngine coordinates multiple specialized components to analyze
@@ -112,15 +29,6 @@ impl DetectionEngineBuilder {
 ///
 /// ## Construction
 ///
-/// **Recommended**: Use `DetectionEngineBuilder` for maximum flexibility:
-/// ```rust
-/// # use project_indicator::detection::engine::DetectionEngineBuilder;
-/// # use project_indicator::types::Indicator;
-/// let indicators = vec![/* ... */];
-/// let engine = DetectionEngineBuilder::new(indicators, vec![]).build();
-/// ```
-///
-/// **Simple**: Use direct constructors for default configuration:
 /// ```rust
 /// # use project_indicator::detection::engine::DetectionEngine;
 /// # use project_indicator::types::Indicator;
@@ -166,46 +74,59 @@ pub struct DetectionEngine {
 
 impl DetectionEngine {
     /// Creates a new `DetectionEngine` with default configuration.
-    ///
-    /// This is a convenience method that delegates to `DetectionEngineBuilder`.
-    /// All components will be created with default settings.
-    ///
-    /// For custom configuration, use `DetectionEngineBuilder`:
-    /// ```rust
-    /// # use project_indicator::detection::engine::DetectionEngineBuilder;
-    /// # use project_indicator::types::{Indicator, DetectionConfig};
-    /// # let indicators = vec![];
-    /// # let custom_config = DetectionConfig::default();
-    /// let engine = DetectionEngineBuilder::new(indicators, vec![])
-    ///     .with_config(custom_config)
-    ///     .build();
-    /// ```
     pub fn new(indicators: Vec<Indicator>, frameworks: Vec<Framework>) -> Self {
-        DetectionEngineBuilder::new(indicators, frameworks).build()
+        Self::with_config(indicators, frameworks, DetectionConfig::default())
     }
 
     /// Creates a new `DetectionEngine` with custom detection configuration.
     ///
-    /// This is a convenience method that delegates to `DetectionEngineBuilder`.
-    ///
-    /// Equivalent to:
-    /// ```rust
-    /// # use project_indicator::detection::engine::DetectionEngineBuilder;
-    /// # use project_indicator::types::{Indicator, DetectionConfig};
-    /// # let indicators = vec![];
-    /// # let config = DetectionConfig::default();
-    /// let engine = DetectionEngineBuilder::new(indicators, vec![])
-    ///     .with_config(config)
-    ///     .build();
-    /// ```
+    /// A single `PatternMatcher` is created and shared across the scorer and
+    /// scanner so pattern-match memoization works across the whole pipeline.
     pub fn with_config(
         indicators: Vec<Indicator>,
         frameworks: Vec<Framework>,
         detection_config: DetectionConfig,
     ) -> Self {
-        DetectionEngineBuilder::new(indicators, frameworks)
-            .with_config(detection_config)
-            .build()
+        let indicators: Vec<Arc<Indicator>> = indicators.into_iter().map(Arc::new).collect();
+        let frameworks = Arc::new(frameworks);
+
+        let pattern_matcher = Arc::new(PatternMatcher::new());
+        let cache_manager = FileSystemCacheManager::new();
+        let confidence_scorer =
+            ConfidenceScorer::with_catalog(pattern_matcher.clone(), frameworks.clone());
+        let indicator_resolver = IndicatorResolver::default();
+        let framework_detector = FrameworkDetector::new();
+
+        // Create pattern compiler and scanning engine
+        let pattern_compiler = PatternCompiler::new(&indicators);
+        let file_cache = cache_manager.file_existence_cache();
+
+        let scanning_engine = ScanningEngine::with_cache(
+            PatternProcessor::new(
+                pattern_matcher.clone(),
+                pattern_compiler.unique_patterns(),
+                indicators.clone(),
+            ),
+            detection_config.max_depth,
+            Some(file_cache),
+        );
+
+        let root_indicator_engine = RootIndicatorEngine::from_parts(
+            indicators.clone(),
+            frameworks.clone(),
+            detection_config,
+        );
+
+        Self {
+            indicators,
+            frameworks,
+            cache_manager,
+            confidence_scorer,
+            indicator_resolver,
+            framework_detector,
+            scanning_engine,
+            root_indicator_engine,
+        }
     }
 
     pub fn detect(&self, path: &Path) -> Result<DetectionResult> {
@@ -420,7 +341,7 @@ mod tests {
     #[test]
     fn test_detection_engine_creation() -> Result<(), Box<dyn std::error::Error>> {
         let indicators = vec![create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"])];
-        let engine = DetectionEngineBuilder::new(indicators, vec![]).build();
+        let engine = DetectionEngine::new(indicators, vec![]);
 
         assert_eq!(engine.indicators.len(), 1);
         assert_eq!(engine.indicators[0].name, "Rust");
@@ -431,9 +352,7 @@ mod tests {
     fn test_detection_engine_with_config() -> Result<(), Box<dyn std::error::Error>> {
         let indicators = vec![create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"])];
         let config = DetectionConfig::default();
-        let engine = DetectionEngineBuilder::new(indicators, vec![])
-            .with_config(config)
-            .build();
+        let engine = DetectionEngine::with_config(indicators, vec![], config);
 
         assert_eq!(engine.indicators.len(), 1);
         // Pattern compilation is handled internally during initialization
@@ -443,7 +362,7 @@ mod tests {
     #[test]
     fn test_detect_rust_project() -> Result<(), Box<dyn std::error::Error>> {
         let indicators = vec![create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"])];
-        let engine = DetectionEngineBuilder::new(indicators, vec![]).build();
+        let engine = DetectionEngine::new(indicators, vec![]);
         let temp_dir = create_test_rust_project()?;
 
         let result = engine.detect(temp_dir.path())?;
@@ -467,7 +386,7 @@ mod tests {
             "Python",
             vec!["*.py", "requirements.txt"],
         )];
-        let engine = DetectionEngineBuilder::new(indicators, vec![]).build();
+        let engine = DetectionEngine::new(indicators, vec![]);
         let temp_dir = create_test_rust_project()?;
 
         let result = engine.detect(temp_dir.path())?;

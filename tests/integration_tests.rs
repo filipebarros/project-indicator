@@ -2,7 +2,7 @@ mod common;
 
 use common::create_test_project;
 use project_indicator::{
-    detection::DetectionEngineBuilder,
+    detection::DetectionEngine,
     output::{OutputFormat, OutputFormatter},
     types::*,
     Config,
@@ -171,7 +171,7 @@ fn test_detection_engine_creation() -> Result<(), Box<dyn std::error::Error>> {
         vec![],
     );
 
-    let engine = DetectionEngineBuilder::new(vec![language], vec![]).build();
+    let engine = DetectionEngine::new(vec![language], vec![]);
 
     let temp_dir = create_test_project(&[("Cargo.toml", "[package]\nname = \"test\"")])?;
     let result = engine.detect(temp_dir.path())?;
@@ -247,9 +247,11 @@ fn test_builtin_full_template_detects_frameworks_out_of_box(
         ("src/index.tsx", "export default null;"),
     ])?;
 
-    let engine = DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
-        .with_config(config.detection.clone())
-        .build();
+    let engine = DetectionEngine::with_config(
+        config.indicators.clone(),
+        config.frameworks.clone(),
+        config.detection.clone(),
+    );
     let result = engine.detect(temp_dir.path())?;
 
     let language = result.indicator.as_ref().ok_or("expected a language")?;

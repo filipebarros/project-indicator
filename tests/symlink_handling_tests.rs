@@ -8,7 +8,7 @@
 
 #[cfg(unix)]
 mod unix_symlink_tests {
-    use project_indicator::detection::engine::DetectionEngineBuilder;
+    use project_indicator::detection::engine::DetectionEngine;
     use project_indicator::Config;
     use std::fs;
     use std::os::unix::fs::symlink;
@@ -45,9 +45,7 @@ edition = "2021"
         // Test detection through symlink
         let config = Config::load_default()?;
 
-        let detector =
-            DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
-                .build();
+        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
 
         let result = detector.detect(&link_path)?;
 
@@ -84,9 +82,7 @@ edition = "2021"
         // Detection should not crash with circular symlinks
         let config = Config::load_default()?;
 
-        let detector =
-            DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
-                .build();
+        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
 
         let result = detector.detect(&project_dir)?;
 
@@ -119,9 +115,7 @@ edition = "2021"
 
         // Detection should handle the self-reference gracefully
         let config = Config::load_default()?;
-        let detector =
-            DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
-                .build();
+        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
         let result = detector.detect(&project_dir)?;
 
         assert!(result.indicator.is_some());
@@ -151,9 +145,7 @@ edition = "2021"
 
         // Detection should handle broken symlinks gracefully
         let config = Config::load_default()?;
-        let detector =
-            DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
-                .build();
+        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
         let result = detector.detect(&project_dir)?;
 
         assert!(result.indicator.is_some());
@@ -188,9 +180,7 @@ edition = "2021"
 
         // Detection through the chain should work
         let config = Config::load_default()?;
-        let detector =
-            DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
-                .build();
+        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
         let result = detector.detect(&link3)?;
 
         assert!(result.indicator.is_some());
@@ -227,9 +217,7 @@ edition = "2021"
 
         // Detection should work with file symlinks present
         let config = Config::load_default()?;
-        let detector =
-            DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
-                .build();
+        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
         let result = detector.detect(&project_dir)?;
 
         assert!(result.indicator.is_some());
@@ -274,9 +262,7 @@ edition = "2021"
 
         // Detection at main project should work
         let config = Config::load_default()?;
-        let detector =
-            DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
-                .build();
+        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
         let result = detector.detect(&main_project)?;
 
         assert!(result.indicator.is_some());
@@ -314,9 +300,7 @@ edition = "2021"
 
         // Detection should complete in reasonable time
         let config = Config::load_default()?;
-        let detector =
-            DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
-                .build();
+        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
 
         let start = std::time::Instant::now();
         let result = detector.detect(&project_dir)?;
@@ -352,7 +336,7 @@ mod windows_placeholder_tests {
 /// root fast path (which stats through symlinks and always saw them).
 #[test]
 fn test_scan_detects_symlinked_file() -> Result<(), Box<dyn std::error::Error>> {
-    use project_indicator::detection::DetectionEngineBuilder;
+    use project_indicator::detection::DetectionEngine;
     use project_indicator::types::Indicator;
 
     let outside = tempfile::TempDir::new()?;
@@ -372,7 +356,7 @@ fn test_scan_detects_symlinked_file() -> Result<(), Box<dyn std::error::Error>> 
         1,
         vec![],
     );
-    let engine = DetectionEngineBuilder::new(vec![language], vec![]).build();
+    let engine = DetectionEngine::new(vec![language], vec![]);
 
     let result = engine.detect(project.path())?;
     let language = result.indicator.as_ref().ok_or("expected a language")?;

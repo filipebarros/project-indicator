@@ -3,7 +3,7 @@ use project_indicator::{
     config::{generate_root_indicators_simple_max_weight, vcs_root_indicators, Config},
     detection::{
         conflict_resolver::{ConflictResolver, ResolverConfig},
-        DetectionEngineBuilder,
+        DetectionEngine,
     },
     Result,
 };
@@ -265,7 +265,7 @@ pub fn handle_root_indicators_command(_cli: &Cli, action: &RootIndicatorAction) 
             println!("Root Indicator Performance Statistics");
             println!("===================================");
 
-            let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks).build();
+            let engine = DetectionEngine::new(config.indicators, config.frameworks);
             let stats = engine.get_root_indicator_stats();
 
             println!("📊 Overview:");

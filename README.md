@@ -96,7 +96,7 @@ project-indicator [OPTIONS] [PATH]
 
 **Options:**
 - `--format <FORMAT>` - Output format: simple (default), full, json, compact, debug, rich
-- `--max-depth <N>` - Maximum scan depth (default: 3)
+- `--max-depth <N>` - Maximum scan depth (default: 1)
 - `--mode <MODE>` - Detection mode: thorough (default) or fast
 - `-v, --verbose` - Enable verbose logging
 

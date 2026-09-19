@@ -1,7 +1,7 @@
 use project_indicator::{
     cli::Cli,
     config::Config,
-    detection::{DetectionEngine, DetectionEngineBuilder},
+    detection::DetectionEngine,
     output::{OutputFormat, OutputFormatter},
     Result,
 };
@@ -12,9 +12,11 @@ fn setup_benchmark(cli: &Cli) -> Result<(std::path::PathBuf, Config, DetectionEn
 
     let config = Config::load_default()?;
 
-    let engine = DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
-        .with_config(config.detection.clone())
-        .build();
+    let engine = DetectionEngine::with_config(
+        config.indicators.clone(),
+        config.frameworks.clone(),
+        config.detection.clone(),
+    );
 
     Ok((path, config, engine))
 }
