@@ -2,7 +2,7 @@ use project_indicator::{
     cache::PersistentCache,
     cli::Cli,
     config::{Config, ConfigParser},
-    detection::DetectionEngineBuilder,
+    detection::DetectionEngine,
     output::{OutputFormat, OutputFormatter},
     types::DetectionMode,
     Result,
@@ -58,9 +58,8 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
         };
     }
 
-    let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks)
-        .with_config(detection_config)
-        .build();
+    let engine =
+        DetectionEngine::with_config(config.indicators, config.frameworks, detection_config);
 
     let result = engine.detect(&path)?;
 

@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use project_indicator::config::TemplateGenerator;
-use project_indicator::detection::engine::DetectionEngineBuilder;
+use project_indicator::detection::engine::DetectionEngine;
 use std::fs;
 use tempfile::TempDir;
 
@@ -119,9 +119,8 @@ fn benchmark_single_language_detection(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = TemplateGenerator::generate_template(Some("full"))
         .map_err(|e| format!("Failed to generate template: {}", e))?;
-    let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks)
-        .with_config(config.detection)
-        .build();
+    let engine =
+        DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
 
     let node_project = create_node_multi_framework_project()?;
     let rust_project = create_rust_multi_framework_project()?;
@@ -161,9 +160,8 @@ fn benchmark_single_language_detection(
 fn benchmark_polyglot_detection(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let config = TemplateGenerator::generate_template(Some("full"))
         .map_err(|e| format!("Failed to generate template: {}", e))?;
-    let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks)
-        .with_config(config.detection)
-        .build();
+    let engine =
+        DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
 
     let polyglot_project = create_polyglot_project()?;
 
@@ -182,9 +180,8 @@ fn benchmark_polyglot_detection(c: &mut Criterion) -> Result<(), Box<dyn std::er
 fn benchmark_framework_count_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let config = TemplateGenerator::generate_template(Some("full"))
         .map_err(|e| format!("Failed to generate template: {}", e))?;
-    let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks)
-        .with_config(config.detection)
-        .build();
+    let engine =
+        DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
 
     // Create projects with different numbers of frameworks
     let temp1 = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
@@ -239,9 +236,8 @@ fn benchmark_framework_count_scaling(c: &mut Criterion) -> Result<(), Box<dyn st
 fn benchmark_project_size_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let config = TemplateGenerator::generate_template(Some("full"))
         .map_err(|e| format!("Failed to generate template: {}", e))?;
-    let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks)
-        .with_config(config.detection)
-        .build();
+    let engine =
+        DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
 
     let node_project = create_node_multi_framework_project()?;
 
@@ -265,9 +261,8 @@ fn benchmark_configuration_performance(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = TemplateGenerator::generate_template(Some("full"))
         .map_err(|e| format!("Failed to generate template: {}", e))?;
-    let engine = DetectionEngineBuilder::new(config.indicators, config.frameworks)
-        .with_config(config.detection)
-        .build();
+    let engine =
+        DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
 
     let node_project = create_node_multi_framework_project()?;
     let rust_project = create_rust_multi_framework_project()?;

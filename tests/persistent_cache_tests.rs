@@ -3,7 +3,7 @@
 use project_indicator::{
     cache::PersistentCache,
     config::TemplateGenerator,
-    detection::DetectionEngineBuilder,
+    detection::DetectionEngine,
     output::{OutputFormat, OutputFormatter},
 };
 use std::fs;
@@ -28,9 +28,11 @@ fn test_cached_result_renders_identically() -> Result<(), Box<dyn std::error::Er
     let cache = PersistentCache::at_base(cache_dir.path().join("results"));
 
     let config = TemplateGenerator::generate_template(Some("full"))?;
-    let engine = DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
-        .with_config(config.detection.clone())
-        .build();
+    let engine = DetectionEngine::with_config(
+        config.indicators.clone(),
+        config.frameworks.clone(),
+        config.detection.clone(),
+    );
 
     let fresh = engine.detect(project.path())?;
     cache.store(project.path(), None, &fresh, &config.display);
@@ -55,9 +57,11 @@ fn test_manifest_edit_invalidates_entry() -> Result<(), Box<dyn std::error::Erro
     let cache = PersistentCache::at_base(cache_dir.path().join("results"));
 
     let config = TemplateGenerator::generate_template(Some("full"))?;
-    let engine = DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
-        .with_config(config.detection.clone())
-        .build();
+    let engine = DetectionEngine::with_config(
+        config.indicators.clone(),
+        config.frameworks.clone(),
+        config.detection.clone(),
+    );
 
     let fresh = engine.detect(project.path())?;
     assert!(

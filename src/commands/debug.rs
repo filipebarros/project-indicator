@@ -1,7 +1,7 @@
 use project_indicator::{
     cli::Cli,
     config::Config,
-    detection::DetectionEngineBuilder,
+    detection::DetectionEngine,
     output::{OutputFormat, OutputFormatter},
     Result,
 };
@@ -22,9 +22,11 @@ pub fn handle_debug_command(cli: &Cli, verbose: bool) -> Result<()> {
         println!("Frameworks: {}", config.frameworks.len());
     }
 
-    let engine = DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
-        .with_config(config.detection.clone())
-        .build();
+    let engine = DetectionEngine::with_config(
+        config.indicators.clone(),
+        config.frameworks.clone(),
+        config.detection.clone(),
+    );
     let result = engine.detect(&path)?;
 
     let display_config = config.display;

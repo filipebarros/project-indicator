@@ -11,4 +11,4 @@ pub mod pattern_processor;
 pub mod root_indicators;
 pub mod scanner;
 
-pub use engine::{DetectionEngine, DetectionEngineBuilder};
+pub use engine::DetectionEngine;

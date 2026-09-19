@@ -14,7 +14,7 @@
 //! manifest is evidence in its own right, not a reward for a high language
 //! confidence score.
 
-use project_indicator::{config::TemplateGenerator, detection::DetectionEngineBuilder};
+use project_indicator::{config::TemplateGenerator, detection::DetectionEngine};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -70,9 +70,11 @@ fn test_all_fixtures_detect_as_expected() -> Result<(), Box<dyn std::error::Erro
         .join("fixtures");
 
     let config = TemplateGenerator::generate_template(Some("full"))?;
-    let engine = DetectionEngineBuilder::new(config.indicators.clone(), config.frameworks.clone())
-        .with_config(config.detection.clone())
-        .build();
+    let engine = DetectionEngine::with_config(
+        config.indicators.clone(),
+        config.frameworks.clone(),
+        config.detection.clone(),
+    );
 
     let mut failures = Vec::new();
 

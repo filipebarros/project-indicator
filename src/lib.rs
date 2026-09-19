@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn test_detection_engine_creation() -> Result<(), Box<dyn std::error::Error>> {
-        let engine = detection::DetectionEngineBuilder::new(vec![], vec![]).build();
+        let engine = detection::DetectionEngine::new(vec![], vec![]);
         // Engine can be created with empty language list
         let _ = engine;
         Ok(())
@@ -57,7 +57,7 @@ mod tests {
     #[test]
     fn test_module_imports() -> Result<(), Box<dyn std::error::Error>> {
         let config = config::Config::default();
-        let detection = detection::DetectionEngineBuilder::new(vec![], vec![]).build();
+        let detection = detection::DetectionEngine::new(vec![], vec![]);
         let output = output::formatters::OutputFormat::Simple;
         let patterns_result = patterns::pattern_to_regex("*.rs");
         let performance = performance::FileSystemCache::default();

@@ -1,4 +1,4 @@
-use project_indicator::detection::DetectionEngineBuilder;
+use project_indicator::detection::DetectionEngine;
 use project_indicator::types::DetectionConfig;
 use project_indicator::Config;
 use std::fs;
@@ -22,9 +22,7 @@ fn test_detection_engine_with_custom_config() -> Result<(), Box<dyn std::error::
         detection_mode: project_indicator::types::DetectionMode::default(),
     };
 
-    let engine = DetectionEngineBuilder::new(vec![], vec![])
-        .with_config(detection_config)
-        .build();
+    let engine = DetectionEngine::with_config(vec![], vec![], detection_config);
 
     let temp_dir = TempDir::new()?;
 
