@@ -7,3 +7,8 @@ test.html
 test.json
 test.md
 test.unknown
+
+# Fixture files intentionally mimic real project files (lockfiles, go.work,
+# .env, etc.) that commonly appear in contributors' personal global
+# gitignores — force-track them so `git add` never silently drops one.
+!tests/fixtures/**
