@@ -37,6 +37,13 @@ impl FileSystemTraverser {
             .standard_filters(true) // Enable .gitignore, .ignore, git/info/exclude
             .parents(true) // Walk up directory tree to find ignore files
             .git_ignore(true) // Specifically enable gitignore support
+            // Detection must be deterministic across machines: the
+            // invoking user's personal global git ignore (core.excludesFile
+            // or the ~/.config/git/ignore default) has nothing to do with
+            // the project being scanned. Without this, a common template
+            // (e.g. gitignore.io's Go template ignores `go.work`) silently
+            // makes real root-indicator files invisible to detection.
+            .git_global(false)
             .require_git(false) // Work without .git directory
             .hidden(false); // Include hidden files/dirs
         builder

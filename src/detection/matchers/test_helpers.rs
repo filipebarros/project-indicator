@@ -73,6 +73,7 @@ pub mod helpers {
                     pattern: pattern.to_string(),
                     weight,
                     context: IndicatorContext::default(),
+                    alternative_group: None,
                 })
                 .collect(),
         )

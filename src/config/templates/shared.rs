@@ -9,6 +9,26 @@ pub fn root_indicator(pattern: &str, weight: f32, context: IndicatorContext) -> 
         pattern: pattern.to_string(),
         weight,
         context,
+        alternative_group: None,
+    }
+}
+
+/// Like `root_indicator`, but tags this pattern as one of several
+/// mutually-exclusive alternatives sharing `group` (e.g. Java's pom.xml vs
+/// build.gradle). Confidence scoring takes the max weight within a group
+/// instead of summing every alternative, since a real project only ever
+/// uses one of them.
+pub fn root_indicator_grouped(
+    pattern: &str,
+    weight: f32,
+    context: IndicatorContext,
+    group: &str,
+) -> RootIndicator {
+    RootIndicator {
+        pattern: pattern.to_string(),
+        weight,
+        context,
+        alternative_group: Some(group.to_string()),
     }
 }
 
@@ -71,6 +91,7 @@ pub fn create_angular_framework() -> Framework {
             pattern: "angular.json".to_string(),
             weight: 0.9,
             context: IndicatorContext::FrameworkRoot,
+            alternative_group: None,
         }],
     }
 }
@@ -90,11 +111,13 @@ pub fn create_nextjs_framework() -> Framework {
                 pattern: "next.config.js".to_string(),
                 weight: 0.9,
                 context: IndicatorContext::FrameworkRoot,
+                alternative_group: None,
             },
             RootIndicator {
                 pattern: "next.config.ts".to_string(),
                 weight: 0.9,
                 context: IndicatorContext::FrameworkRoot,
+                alternative_group: None,
             },
         ],
     }
@@ -128,6 +151,7 @@ pub fn create_nestjs_framework() -> Framework {
             pattern: "nest-cli.json".to_string(),
             weight: 0.9,
             context: IndicatorContext::FrameworkRoot,
+            alternative_group: None,
         }],
     }
 }
@@ -146,6 +170,7 @@ pub fn create_astro_framework() -> Framework {
             pattern: "astro.config.mjs".to_string(),
             weight: 0.9,
             context: IndicatorContext::FrameworkRoot,
+            alternative_group: None,
         }],
     }
 }
@@ -179,6 +204,7 @@ pub fn create_svelte_framework() -> Framework {
             pattern: "svelte.config.js".to_string(),
             weight: 0.9,
             context: IndicatorContext::FrameworkRoot,
+            alternative_group: None,
         }],
     }
 }
@@ -212,63 +238,104 @@ pub fn node_lockfiles() -> Vec<String> {
         PACKAGE_LOCK_JSON.to_string(),
         YARN_LOCK.to_string(),
         PNPM_LOCK_YAML.to_string(),
-        "bun.lockb".to_string(),
-        "bun.lock".to_string(),
     ]
 }
 
 pub fn node_lockfile_root_indicators() -> Vec<RootIndicator> {
     vec![
-        RootIndicator {
-            pattern: PACKAGE_JSON.to_string(),
-            weight: 0.95,
-            context: IndicatorContext::LanguageRoot,
-        },
-        RootIndicator {
-            pattern: PACKAGE_LOCK_JSON.to_string(),
-            weight: 0.8,
-            context: IndicatorContext::LanguageRoot,
-        },
-        RootIndicator {
-            pattern: YARN_LOCK.to_string(),
-            weight: 0.8,
-            context: IndicatorContext::LanguageRoot,
-        },
-        RootIndicator {
-            pattern: PNPM_LOCK_YAML.to_string(),
-            weight: 0.8,
-            context: IndicatorContext::LanguageRoot,
-        },
-        RootIndicator {
-            pattern: "bun.lockb".to_string(),
-            weight: 0.8,
-            context: IndicatorContext::LanguageRoot,
-        },
-        RootIndicator {
-            pattern: "bun.lock".to_string(),
-            weight: 0.8,
-            context: IndicatorContext::LanguageRoot,
-        },
+        // Not an alternative to the lockfiles below — package.json co-occurs
+        // with whichever lockfile (or none) is present.
+        root_indicator(PACKAGE_JSON, 0.95, IndicatorContext::LanguageRoot),
+        // npm/yarn/pnpm are mutually-exclusive package-manager choices: a
+        // real project only ever has one of these lockfiles, so they
+        // contribute their max weight to scoring, not their sum.
+        root_indicator_grouped(
+            PACKAGE_LOCK_JSON,
+            0.8,
+            IndicatorContext::LanguageRoot,
+            "node-lockfile",
+        ),
+        root_indicator_grouped(
+            YARN_LOCK,
+            0.8,
+            IndicatorContext::LanguageRoot,
+            "node-lockfile",
+        ),
+        root_indicator_grouped(
+            PNPM_LOCK_YAML,
+            0.8,
+            IndicatorContext::LanguageRoot,
+            "node-lockfile",
+        ),
+    ]
+}
+
+pub fn node_runtime_config_files() -> Vec<String> {
+    vec![
+        ".npmrc".to_string(),
+        ".yarnrc".to_string(),
+        ".yarnrc.yml".to_string(),
+        "pnpm-workspace.yaml".to_string(),
+        ".nvmrc".to_string(),
+        ".node-version".to_string(),
+    ]
+}
+
+/// Supporting evidence beyond the manifest/lockfile: package-manager config
+/// files and Node version pins. Weaker signals than a lockfile, but real and
+/// common. Grouped separately from `node_lockfile_root_indicators`'s
+/// lockfile group so they still add corroborating value when they co-occur
+/// with a lockfile, which they usually do.
+pub fn node_runtime_config_root_indicators() -> Vec<RootIndicator> {
+    vec![
+        // npm/yarn/pnpm config files are alternatives to each other (a
+        // project uses one package manager's config, not several).
+        root_indicator_grouped(
+            ".npmrc",
+            0.4,
+            IndicatorContext::LanguageRoot,
+            "node-pm-config",
+        ),
+        root_indicator_grouped(
+            ".yarnrc",
+            0.6,
+            IndicatorContext::LanguageRoot,
+            "node-pm-config",
+        ),
+        root_indicator_grouped(
+            ".yarnrc.yml",
+            0.7,
+            IndicatorContext::LanguageRoot,
+            "node-pm-config",
+        ),
+        root_indicator_grouped(
+            "pnpm-workspace.yaml",
+            0.7,
+            IndicatorContext::LanguageRoot,
+            "node-pm-config",
+        ),
+        // .nvmrc vs .node-version are alternative conventions for the same
+        // thing (a Node version pin), not package-manager-specific.
+        root_indicator_grouped(
+            ".nvmrc",
+            0.6,
+            IndicatorContext::LanguageRoot,
+            "node-version-pin",
+        ),
+        root_indicator_grouped(
+            ".node-version",
+            0.55,
+            IndicatorContext::LanguageRoot,
+            "node-version-pin",
+        ),
     ]
 }
 
 pub fn vcs_root_indicators() -> Vec<RootIndicator> {
     vec![
-        RootIndicator {
-            pattern: DOT_GIT.to_string(),
-            weight: 1.0,
-            context: IndicatorContext::VersionControl,
-        },
-        RootIndicator {
-            pattern: ".hg".to_string(),
-            weight: 1.0,
-            context: IndicatorContext::VersionControl,
-        },
-        RootIndicator {
-            pattern: ".svn".to_string(),
-            weight: 1.0,
-            context: IndicatorContext::VersionControl,
-        },
+        root_indicator(DOT_GIT, 1.0, IndicatorContext::VersionControl),
+        root_indicator(".hg", 1.0, IndicatorContext::VersionControl),
+        root_indicator(".svn", 1.0, IndicatorContext::VersionControl),
     ]
 }
 
@@ -314,6 +381,7 @@ pub fn generate_root_indicators_simple_max_weight(
             pattern,
             weight,
             context: IndicatorContext::LanguageRoot,
+            alternative_group: None,
         })
         .collect()
 }

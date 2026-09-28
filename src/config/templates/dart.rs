@@ -5,7 +5,11 @@ use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorCont
 pub fn create_dart_indicator() -> Indicator {
     Indicator::with_root_indicators(
         "Dart".to_string(),
-        vec![DART_EXTENSION.to_string(), PUBSPEC_YAML.to_string()],
+        vec![
+            DART_EXTENSION.to_string(),
+            PUBSPEC_YAML.to_string(),
+            "analysis_options.yaml".to_string(),
+        ],
         "#0175c2".to_string(),
         nerd_icon("e798"),
         8,
@@ -13,6 +17,11 @@ pub fn create_dart_indicator() -> Indicator {
         vec![
             root_indicator("pubspec.yaml", 0.95, IndicatorContext::LanguageRoot),
             root_indicator("pubspec.lock", 0.8, IndicatorContext::LanguageRoot),
+            root_indicator(
+                "analysis_options.yaml",
+                0.45,
+                IndicatorContext::LanguageRoot,
+            ),
         ],
     )
 }

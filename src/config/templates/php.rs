@@ -1,4 +1,6 @@
-use super::shared::{framework, nerd_icon, root_indicator, simple_framework};
+use super::shared::{
+    framework, nerd_icon, root_indicator, root_indicator_grouped, simple_framework,
+};
 use crate::constants::{COMPOSER_JSON, COMPOSER_LOCK, PHP_EXTENSION};
 use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
 
@@ -9,6 +11,8 @@ pub fn create_php_indicator() -> Indicator {
             PHP_EXTENSION.to_string(),
             COMPOSER_JSON.to_string(),
             COMPOSER_LOCK.to_string(),
+            "phpunit.xml".to_string(),
+            "phpunit.xml.dist".to_string(),
         ],
         "#777bb4".to_string(),
         nerd_icon("e73d"),
@@ -17,6 +21,20 @@ pub fn create_php_indicator() -> Indicator {
         vec![
             root_indicator(COMPOSER_JSON, 0.95, IndicatorContext::LanguageRoot),
             root_indicator(COMPOSER_LOCK, 0.8, IndicatorContext::LanguageRoot),
+            // The checked-in template (.dist) and the local copy are
+            // alternative forms of the same PHPUnit config.
+            root_indicator_grouped(
+                "phpunit.xml.dist",
+                0.6,
+                IndicatorContext::LanguageRoot,
+                "php-phpunit-config",
+            ),
+            root_indicator_grouped(
+                "phpunit.xml",
+                0.6,
+                IndicatorContext::LanguageRoot,
+                "php-phpunit-config",
+            ),
         ],
     )
 }

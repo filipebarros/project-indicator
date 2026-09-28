@@ -1,0 +1,4 @@
+{
+  // legacy config kept during a migration
+  "tasks": {"dev": "deno run --watch main.ts"}
+}

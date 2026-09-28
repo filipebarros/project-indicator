@@ -9,6 +9,7 @@ pub fn create_elixir_indicator() -> Indicator {
             "*.exs".to_string(),
             "mix.exs".to_string(),
             "mix.lock".to_string(),
+            ".formatter.exs".to_string(),
         ],
         "#6e4a7e".to_string(),
         nerd_icon("e7cd"),
@@ -17,6 +18,9 @@ pub fn create_elixir_indicator() -> Indicator {
         vec![
             root_indicator("mix.exs", 0.95, IndicatorContext::LanguageRoot),
             root_indicator("mix.lock", 0.8, IndicatorContext::LanguageRoot),
+            // Elixir's code formatter config, present in nearly all modern
+            // Elixir projects.
+            root_indicator(".formatter.exs", 0.65, IndicatorContext::LanguageRoot),
         ],
     )
 }
