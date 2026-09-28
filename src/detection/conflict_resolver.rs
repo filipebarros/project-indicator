@@ -136,6 +136,7 @@ impl ConflictResolver {
                 pattern,
                 weight: sources[0].weight,
                 context: sources[0].context.clone(),
+                alternative_group: None,
             };
         }
 
@@ -180,6 +181,7 @@ impl ConflictResolver {
             pattern,
             weight: resolved_weight,
             context: sources[0].context.clone(),
+            alternative_group: None,
         }
     }
 
@@ -312,6 +314,7 @@ mod tests {
             pattern: pattern.to_string(),
             weight,
             context: IndicatorContext::default(),
+            alternative_group: None,
         }
     }
 
@@ -396,18 +399,21 @@ mod tests {
             pattern: ".git".to_string(),
             weight: 1.0,
             context: IndicatorContext::VersionControl,
+            alternative_group: None,
         };
 
         let language_indicator = RootIndicator {
             pattern: "package.json".to_string(),
             weight: 0.9,
             context: IndicatorContext::LanguageRoot,
+            alternative_group: None,
         };
 
         let framework_indicator = RootIndicator {
             pattern: "next.config.js".to_string(),
             weight: 0.8,
             context: IndicatorContext::FrameworkRoot,
+            alternative_group: None,
         };
 
         assert_eq!(vcs_indicator.context, IndicatorContext::VersionControl);

@@ -1,4 +1,4 @@
-use super::shared::{framework, nerd_icon, root_indicator};
+use super::shared::{framework, nerd_icon, root_indicator, root_indicator_grouped};
 use crate::constants::{BUILD_GRADLE, BUILD_GRADLE_KTS, JAVA_EXTENSION, POM_XML};
 use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
 
@@ -16,9 +16,25 @@ pub fn create_java_indicator() -> Indicator {
         11,
         vec![Ecosystem::Maven],
         vec![
-            root_indicator(POM_XML, 0.95, IndicatorContext::BuildSystem),
-            root_indicator(BUILD_GRADLE, 0.95, IndicatorContext::BuildSystem),
-            root_indicator(BUILD_GRADLE_KTS, 0.95, IndicatorContext::BuildSystem),
+            root_indicator(JAVA_EXTENSION, 0.95, IndicatorContext::LanguageRoot),
+            // pom.xml vs build.gradle are alternative build systems: a real
+            // Java project uses exactly one, so they contribute their max
+            // weight rather than being summed.
+            root_indicator_grouped(
+                POM_XML,
+                0.95,
+                IndicatorContext::BuildSystem,
+                "jvm-build-system",
+            ),
+            root_indicator_grouped(
+                BUILD_GRADLE,
+                0.95,
+                IndicatorContext::BuildSystem,
+                "jvm-build-system",
+            ),
+            // Not grouped: settings.gradle commonly co-occurs with
+            // build.gradle in multi-module projects, it isn't an alternative
+            // to it.
             root_indicator("settings.gradle", 0.8, IndicatorContext::BuildSystem),
         ],
     )

@@ -10,6 +10,7 @@ pub fn create_ruby_indicator() -> Indicator {
             GEMFILE.to_string(),
             GEMFILE_LOCK.to_string(),
             "Rakefile".to_string(),
+            ".ruby-version".to_string(),
         ],
         "#cc342d".to_string(),
         nerd_icon("e739"),
@@ -20,6 +21,7 @@ pub fn create_ruby_indicator() -> Indicator {
             root_indicator(GEMFILE_LOCK, 0.8, IndicatorContext::LanguageRoot),
             root_indicator("Rakefile", 0.85, IndicatorContext::BuildSystem),
             root_indicator(GEMSPEC_EXTENSION, 0.9, IndicatorContext::LanguageRoot),
+            root_indicator(".ruby-version", 0.5, IndicatorContext::LanguageRoot),
         ],
     )
 }

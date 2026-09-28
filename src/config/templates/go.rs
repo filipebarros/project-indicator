@@ -29,6 +29,7 @@ pub fn create_go_indicator() -> Indicator {
             GO_EXTENSION.to_string(),
             GO_MOD.to_string(),
             "go.sum".to_string(),
+            "go.work".to_string(),
         ],
         "#00add8".to_string(),
         nerd_icon("e724"),
@@ -37,6 +38,7 @@ pub fn create_go_indicator() -> Indicator {
         vec![
             root_indicator(GO_MOD, 0.9, IndicatorContext::LanguageRoot),
             root_indicator("go.sum", 0.7, IndicatorContext::LanguageRoot),
+            root_indicator("go.work", 0.75, IndicatorContext::LanguageRoot),
         ],
     )
 }

@@ -22,6 +22,25 @@ const ROOT_MATCH_CONFIDENCE_FACTOR: f32 = 0.9;
 /// exists in a real manifest, which identifies the project near-certainly.
 const FRAMEWORK_MATCH_CONFIDENCE_FLOOR: f32 = 0.75;
 
+/// The full-scan indicator score below which its result is considered
+/// ambiguous enough to be overridden by a decisive, content-aware
+/// root-indicator match (see the override in `detect()`). Matches the
+/// low-confidence tier boundary already used by
+/// `IndicatorResolver::resolve_by_confidence_tiers`.
+const ROOT_MATCH_OVERRIDE_AMBIGUITY_CEILING: f32 = 0.5;
+
+/// The root-indicator certainty (from `RootIndicatorEngine`, e.g. a
+/// `has_typescript_dependencies` check on package.json content) required to
+/// override an ambiguous full-scan result. Set above the highest certainty
+/// reachable by the data-driven `weight * context.base_priority()` fallback
+/// for today's shared Node-ecosystem root indicators (lockfiles top out at
+/// 0.8 * 0.9 = 0.72), so only the hardcoded, structurally-validated
+/// certainties in `calculate_indicator_certainty` (Cargo.toml 0.95, go.mod
+/// 0.95, pyproject.toml 0.90, tsconfig.json 0.90, TypeScript-via-devDependency
+/// 0.85) qualify — not a tie between two indicators sharing a generic root
+/// indicator (e.g. both TypeScript and JavaScript declaring package-lock.json).
+const ROOT_MATCH_OVERRIDE_CERTAINTY: f32 = 0.8;
+
 /// Main detection engine for identifying project indicators and frameworks.
 ///
 /// The DetectionEngine coordinates multiple specialized components to analyze
@@ -152,6 +171,7 @@ impl DetectionEngine {
         }
 
         // NEW: First, try to find the actual project root by walking upward
+        let mut root_indicator_match = None;
         let scan_path = if let Some((root_path, root_indicator)) = self
             .root_indicator_engine
             .find_project_root(path, &self.cache_manager.file_existence_cache())?
@@ -166,10 +186,11 @@ impl DetectionEngine {
             let indicator_file_path = root_path.join(&root_indicator.pattern);
             evidence.add_root_evidence(crate::types::EvidenceItem::root_indicator(
                 indicator_file_path.to_string_lossy().to_string(),
-                root_indicator.pattern,
+                root_indicator.pattern.clone(),
                 root_indicator.certainty,
             ));
 
+            root_indicator_match = Some(root_indicator);
             root_path
         } else {
             log::debug!("No project root found via upward traversal, scanning from current path");
@@ -260,7 +281,7 @@ impl DetectionEngine {
                 &mut evidence,
             );
 
-        let indicator = match detected_indicator {
+        let mut indicator = match detected_indicator {
             Some(indicator) => indicator,
             None => {
                 return Ok(DetectionResult::new_with_evidence(
@@ -272,7 +293,7 @@ impl DetectionEngine {
             }
         };
 
-        let confidence = self
+        let mut confidence = self
             .confidence_scorer
             .calculate_indicator_score_with_evidence(
                 &indicator,
@@ -280,6 +301,38 @@ impl DetectionEngine {
                 &mut evidence,
                 &self.indicators,
             );
+
+        // The full scan only reasons about file existence, so it can't see
+        // content-aware evidence (e.g. a "typescript" devDependency with no
+        // tsconfig.json yet). find_project_root already computed a
+        // content-aware certainty for this same root to locate scan_path;
+        // when the full scan is ambiguous and that certainty decisively
+        // disagrees, trust it instead of discarding it.
+        if let Some(root_match) = &root_indicator_match {
+            if root_match.indicator.name != indicator.name
+                && confidence < ROOT_MATCH_OVERRIDE_AMBIGUITY_CEILING
+                && root_match.certainty >= ROOT_MATCH_OVERRIDE_CERTAINTY
+            {
+                log::debug!(
+                    "Overriding ambiguous full-scan indicator '{}' ({:.3}) with root-indicator match '{}' ({:.3})",
+                    indicator.name,
+                    confidence,
+                    root_match.indicator.name,
+                    root_match.certainty
+                );
+                evidence.add_confidence_factor(crate::types::ConfidenceFactor::new(
+                    "root_indicator_override".to_string(),
+                    root_match.certainty,
+                    1.0,
+                    format!(
+                        "Overrode ambiguous full-scan result ({}) with content-aware root indicator match ({})",
+                        indicator.name, root_match.indicator.name
+                    ),
+                ));
+                indicator = root_match.indicator.clone();
+                confidence = root_match.certainty;
+            }
+        }
 
         // Framework detection is not gated on confidence: a framework
         // dependency in a manifest is evidence in its own right

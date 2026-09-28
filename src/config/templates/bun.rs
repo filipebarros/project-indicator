@@ -1,4 +1,4 @@
-use super::shared::root_indicator;
+use super::shared::{root_indicator, root_indicator_grouped};
 use crate::types::{Ecosystem, Indicator, IndicatorContext};
 
 pub fn create_bun_indicator() -> Indicator {
@@ -16,8 +16,23 @@ pub fn create_bun_indicator() -> Indicator {
         5,
         vec![Ecosystem::Npm],
         vec![
-            root_indicator("bun.lock", 0.95, IndicatorContext::RuntimeRoot),
-            root_indicator("bun.lockb", 0.95, IndicatorContext::RuntimeRoot),
+            // Text vs binary lockfile format is a mutually-exclusive choice
+            // (Bun switched formats between versions) — max weight, not summed.
+            root_indicator_grouped(
+                "bun.lock",
+                0.95,
+                IndicatorContext::RuntimeRoot,
+                "bun-lockfile",
+            ),
+            root_indicator_grouped(
+                "bun.lockb",
+                0.95,
+                IndicatorContext::RuntimeRoot,
+                "bun-lockfile",
+            ),
+            // Not grouped: bunfig.toml co-occurs with either lockfile format
+            // (see the bun-react fixture, which has both bun.lock and
+            // bunfig.toml together).
             root_indicator("bunfig.toml", 0.9, IndicatorContext::RuntimeRoot),
         ],
     )

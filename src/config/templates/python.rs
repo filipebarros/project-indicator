@@ -1,4 +1,6 @@
-use super::shared::{framework, nerd_icon, root_indicator, simple_framework};
+use super::shared::{
+    framework, nerd_icon, root_indicator, root_indicator_grouped, simple_framework,
+};
 use crate::constants::{
     PIPFILE, POETRY_LOCK, PYPROJECT_TOML, PYTHON_INTERFACE_EXTENSION, PYTHON_WINDOWS_EXTENSION,
     PY_EXTENSION, REQUIREMENTS_TXT, SETUP_PY,
@@ -17,6 +19,9 @@ pub fn create_python_indicator() -> Indicator {
             SETUP_PY.to_string(),
             PIPFILE.to_string(),
             POETRY_LOCK.to_string(),
+            "Pipfile.lock".to_string(),
+            "uv.lock".to_string(),
+            ".python-version".to_string(),
         ],
         "#3776ab".to_string(),
         nerd_icon("e73c"),
@@ -27,7 +32,25 @@ pub fn create_python_indicator() -> Indicator {
             root_indicator(REQUIREMENTS_TXT, 0.9, IndicatorContext::LanguageRoot),
             root_indicator(SETUP_PY, 0.85, IndicatorContext::LanguageRoot),
             root_indicator(PIPFILE, 0.9, IndicatorContext::LanguageRoot),
-            root_indicator(POETRY_LOCK, 0.8, IndicatorContext::LanguageRoot),
+            // poetry.lock vs uv.lock are alternatives: both lock the same
+            // pyproject.toml via a different tool, never both at once.
+            root_indicator_grouped(
+                POETRY_LOCK,
+                0.8,
+                IndicatorContext::LanguageRoot,
+                "python-pyproject-lockfile",
+            ),
+            root_indicator_grouped(
+                "uv.lock",
+                0.65,
+                IndicatorContext::LanguageRoot,
+                "python-pyproject-lockfile",
+            ),
+            // Pipfile.lock co-occurs with Pipfile (generated from it), not an
+            // alternative to it.
+            root_indicator("Pipfile.lock", 0.75, IndicatorContext::LanguageRoot),
+            // A pyenv version pin — weak alone, but real.
+            root_indicator(".python-version", 0.5, IndicatorContext::LanguageRoot),
         ],
     )
 }

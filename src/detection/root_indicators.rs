@@ -864,6 +864,7 @@ not-python = true
                 pattern: "Rocket.toml".to_string(),
                 weight: 0.9,
                 context: crate::types::IndicatorContext::FrameworkRoot,
+                alternative_group: None,
             }],
         }];
         let indicators = vec![rust_lang];
@@ -1087,6 +1088,7 @@ not-python = true
                 pattern: "Rocket.toml".to_string(),
                 weight: 0.9,
                 context: crate::types::IndicatorContext::FrameworkRoot,
+                alternative_group: None,
             }],
         }];
         let indicators = vec![rust_lang];
@@ -1157,6 +1159,7 @@ not-python = true
                 pattern: "Rocket.toml".to_string(),
                 weight: 0.9,
                 context: crate::types::IndicatorContext::FrameworkRoot,
+                alternative_group: None,
             }],
         }];
 

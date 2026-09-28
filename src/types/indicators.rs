@@ -80,6 +80,7 @@
 //!     pattern: "Cargo.toml".to_string(),
 //!     weight: 0.95,
 //!     context: IndicatorContext::LanguageRoot,
+//!     alternative_group: None,
 //! };
 //!
 //! // Context determines base priority
@@ -153,6 +154,14 @@ pub struct RootIndicator {
     pub weight: f32,
     #[serde(default)]
     pub context: IndicatorContext,
+    /// Tags this root indicator as one of several mutually-exclusive
+    /// alternatives (e.g. Java's pom.xml vs build.gradle — a real project
+    /// uses exactly one build system). Root indicators sharing the same
+    /// group contribute their max weight to confidence scoring instead of
+    /// being summed. `None` (the default) preserves sum behavior, which is
+    /// correct for co-occurring evidence (e.g. a manifest and its lockfile).
+    #[serde(default)]
+    pub alternative_group: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

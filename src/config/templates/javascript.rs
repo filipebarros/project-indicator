@@ -1,4 +1,4 @@
-use super::shared::{nerd_icon, node_lockfiles, root_indicator};
+use super::shared::{nerd_icon, node_lockfiles, node_runtime_config_files, root_indicator};
 use crate::constants::{CJS_EXTENSION, JS_EXTENSION, MJS_EXTENSION};
 use crate::types::{Ecosystem, Indicator, IndicatorContext};
 
@@ -9,8 +9,10 @@ pub fn create_javascript_indicator() -> Indicator {
         CJS_EXTENSION.to_string(),
     ];
     files.extend(node_lockfiles());
+    files.extend(node_runtime_config_files());
 
     let mut indicators = super::shared::node_lockfile_root_indicators();
+    indicators.extend(super::shared::node_runtime_config_root_indicators());
     indicators.push(root_indicator(
         "node_modules",
         0.6,

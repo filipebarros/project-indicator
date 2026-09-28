@@ -474,6 +474,7 @@ mod tests {
                 pattern: "Cargo.toml".to_string(),
                 weight: 0.95,
                 context: IndicatorContext::LanguageRoot,
+                alternative_group: None,
             }],
         );
 

@@ -9,6 +9,8 @@ pub fn create_csharp_indicator() -> Indicator {
             "*.csproj".to_string(),
             "*.sln".to_string(),
             "Program.cs".to_string(),
+            "global.json".to_string(),
+            "Directory.Build.props".to_string(),
         ],
         "#239120".to_string(),
         nerd_icon("e7b2"),
@@ -18,6 +20,12 @@ pub fn create_csharp_indicator() -> Indicator {
             root_indicator("*.csproj", 0.95, IndicatorContext::LanguageRoot),
             root_indicator("*.sln", 0.9, IndicatorContext::LanguageRoot),
             root_indicator("Program.cs", 0.85, IndicatorContext::LanguageRoot),
+            root_indicator("global.json", 0.45, IndicatorContext::LanguageRoot),
+            root_indicator(
+                "Directory.Build.props",
+                0.45,
+                IndicatorContext::LanguageRoot,
+            ),
         ],
     )
 }

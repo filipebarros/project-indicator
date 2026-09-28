@@ -1,5 +1,5 @@
 use super::shared::{framework, nerd_icon, root_indicator};
-use crate::constants::{BUILD_GRADLE, BUILD_GRADLE_KTS, KOTLIN_EXTENSION, KOTLIN_SCRIPT_EXTENSION};
+use crate::constants::{BUILD_GRADLE_KTS, KOTLIN_EXTENSION, KOTLIN_SCRIPT_EXTENSION};
 use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
 
 pub fn create_kotlin_indicator() -> Indicator {
@@ -15,8 +15,8 @@ pub fn create_kotlin_indicator() -> Indicator {
         9,
         vec![Ecosystem::Gradle, Ecosystem::Maven],
         vec![
+            root_indicator(KOTLIN_EXTENSION, 0.95, IndicatorContext::LanguageRoot),
             root_indicator(BUILD_GRADLE_KTS, 0.95, IndicatorContext::BuildSystem),
-            root_indicator(BUILD_GRADLE, 0.9, IndicatorContext::BuildSystem),
         ],
     )
 }

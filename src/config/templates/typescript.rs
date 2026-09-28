@@ -1,4 +1,4 @@
-use super::shared::{nerd_icon, node_lockfiles, root_indicator};
+use super::shared::{nerd_icon, node_lockfiles, node_runtime_config_files, root_indicator};
 use crate::constants::{CTS_EXTENSION, MTS_EXTENSION, TSCONFIG_JSON, TSX_EXTENSION, TS_EXTENSION};
 use crate::types::{Ecosystem, Indicator, IndicatorContext};
 
@@ -11,6 +11,7 @@ pub fn create_typescript_indicator() -> Indicator {
         TSCONFIG_JSON.to_string(),
     ];
     files.extend(node_lockfiles());
+    files.extend(node_runtime_config_files());
 
     let mut indicators = vec![root_indicator(
         TSCONFIG_JSON,
@@ -25,6 +26,7 @@ pub fn create_typescript_indicator() -> Indicator {
         }
     }
     indicators.extend(node_indicators);
+    indicators.extend(super::shared::node_runtime_config_root_indicators());
 
     Indicator::with_root_indicators(
         "TypeScript".to_string(),
