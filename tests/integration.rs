@@ -65,9 +65,6 @@ fn test_typescript_react_detection() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(json["frameworks"][0], "React");
     assert_eq!(json["icon"], "⚛️");
     assert_eq!(json["color"], "#61DAFB");
-
-    let compact = formatter.format(&result, OutputFormat::Compact);
-    assert_eq!(compact, "React+TS");
     Ok(())
 }
 
@@ -236,9 +233,6 @@ fn test_language_only_detection() -> Result<(), Box<dyn std::error::Error>> {
 
     let simple = formatter.format(&result, OutputFormat::Simple);
     assert_eq!(simple, "");
-
-    let compact = formatter.format(&result, OutputFormat::Compact);
-    assert_eq!(compact, "RS");
     Ok(())
 }
 
@@ -338,9 +332,6 @@ fn test_all_output_formats() -> Result<(), Box<dyn std::error::Error>> {
 
     let json_output = formatter.format(&result, OutputFormat::Json);
     assert!(serde_json::from_str::<Value>(&json_output).is_ok());
-
-    let compact = formatter.format(&result, OutputFormat::Compact);
-    assert!(!compact.is_empty());
 
     let debug = formatter.format(&result, OutputFormat::Debug);
     assert!(debug.contains("confidence"));

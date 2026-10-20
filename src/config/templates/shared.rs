@@ -343,7 +343,6 @@ pub fn vcs_root_indicators() -> Vec<RootIndicator> {
 pub struct ConfigBuilder {
     pub show_frameworks: bool,
     pub max_frameworks: usize,
-    pub framework_separator: String,
     pub max_upward_traversal: usize,
     pub require_vcs_root: bool,
     pub confidence_threshold: f32,
@@ -355,7 +354,6 @@ impl ConfigBuilder {
         Self {
             show_frameworks: true,
             max_frameworks: 3,
-            framework_separator: " + ".to_string(),
             max_upward_traversal: 3,
             require_vcs_root: false,
             confidence_threshold: 0.3,
@@ -363,15 +361,9 @@ impl ConfigBuilder {
         }
     }
 
-    pub fn display(
-        mut self,
-        show_frameworks: bool,
-        max_frameworks: usize,
-        framework_separator: &str,
-    ) -> Self {
+    pub fn display(mut self, show_frameworks: bool, max_frameworks: usize) -> Self {
         self.show_frameworks = show_frameworks;
         self.max_frameworks = max_frameworks;
-        self.framework_separator = framework_separator.to_string();
         self
     }
 
@@ -400,7 +392,6 @@ impl ConfigBuilder {
         let display = DisplayConfig {
             show_frameworks: self.show_frameworks,
             max_frameworks: self.max_frameworks,
-            framework_separator: self.framework_separator,
         };
 
         let detection = DetectionConfig {

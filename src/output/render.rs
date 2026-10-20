@@ -114,57 +114,6 @@ impl Render for JsonRenderer {
     }
 }
 
-pub struct CompactRenderer;
-
-impl CompactRenderer {
-    pub fn compact_name(&self, name: &str) -> String {
-        match name {
-            "TypeScript" => "TS".to_string(),
-            "JavaScript" => "JS".to_string(),
-            "Python" => "Py".to_string(),
-            "Rust" => "RS".to_string(),
-            "Go" => "Go".to_string(),
-            "C++" => "C++".to_string(),
-            "C#" => "C#".to_string(),
-            "Ruby" => "RB".to_string(),
-            "PHP" => "PHP".to_string(),
-            "Java" => "Java".to_string(),
-            "Swift" => "Swift".to_string(),
-            "Kotlin" => "KT".to_string(),
-            "Next.js" => "Next".to_string(),
-            "NestJS" => "Nest".to_string(),
-            "React" => "React".to_string(),
-            "Vue" => "Vue".to_string(),
-            "Angular" => "Ng".to_string(),
-            "Svelte" => "Svelte".to_string(),
-            _ => name.to_string(),
-        }
-    }
-}
-
-impl Render for CompactRenderer {
-    fn render(&self, result: &DetectionResult, config: &DisplayConfig) -> String {
-        let mut parts = Vec::new();
-
-        if let Some(framework) = result.best_framework() {
-            parts.push(self.compact_name(&framework.framework.name));
-        } else if let Some(language) = &result.indicator {
-            parts.push(self.compact_name(&language.name));
-        }
-
-        if result.best_framework().is_some() {
-            if let Some(language) = &result.indicator {
-                let lang_abbrev = self.compact_name(&language.name);
-                if lang_abbrev.len() <= 3 {
-                    parts.push(lang_abbrev);
-                }
-            }
-        }
-
-        parts.join(&config.framework_separator)
-    }
-}
-
 pub struct DebugRenderer;
 
 impl Render for DebugRenderer {
@@ -319,18 +268,6 @@ mod tests {
         let output = renderer.render(&result, &config);
         assert!(output.contains("TypeScript"));
         assert!(output.contains("React"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_compact_renderer() -> Result<(), Box<dyn std::error::Error>> {
-        let result = create_test_result();
-        let config = DisplayConfig::default();
-        let renderer = CompactRenderer;
-
-        let output = renderer.render(&result, &config);
-        assert!(output.contains("React"));
-        assert!(output.contains("TS"));
         Ok(())
     }
 

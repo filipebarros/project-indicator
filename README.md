@@ -9,7 +9,6 @@ Project Indicator is a high-performance replacement for shell-based project dete
 
 ## Key Features
 
-- ✨ **Rich Output Format**: Detailed table format for comprehensive project information
 - 🔒 **Enhanced Security**: EDITOR validation to prevent shell injection attacks
 - ⚙️ **Configurable Thresholds**: Fine-tune detection with configurable performance thresholds
 - 🧪 **Property-Based Testing**: Extensive test suite including rigorous property-based testing with proptest
@@ -20,7 +19,7 @@ Project Indicator is a high-performance replacement for shell-based project dete
 - 🔍 **Multi-language Detection**: Supports 23 languages and toolchains (Rust, JavaScript/TypeScript, Python, Go, Deno, Bun, Terraform, Nix, and more)
 - 🏗️ **Framework Recognition**: Detects 37 popular frameworks like React, Svelte, Axum, Django, Gin, Spring Boot, Laravel, Rails
 - ⚡ **Blazing Performance**: 3-5ms typical detection
-- 🎨 **Multiple Output Formats**: Simple, Full, JSON, Compact, Debug, and Rich formats
+- 🎨 **Multiple Output Formats**: Simple, Full, JSON, and Debug formats
 - 🔧 **Comprehensive CLI**: Configuration management and debugging tools
 - 🧠 **Advanced Detection**: Confidence-based scoring with weighted root indicators
 - 🔧 **Configuration Templates**: Pre-built templates for different development environments
@@ -78,9 +77,7 @@ project-indicator --format json
 
 # Different output formats
 project-indicator --format full
-project-indicator --format compact
 project-indicator --format debug
-project-indicator --format rich
 ```
 
 ## CLI Reference
@@ -95,7 +92,7 @@ project-indicator [OPTIONS] [PATH]
 - `PATH` - Directory to analyze (defaults to current directory)
 
 **Options:**
-- `--format <FORMAT>` - Output format: simple (default), full, json, compact, debug, rich
+- `--format <FORMAT>` - Output format: simple (default), full, json, debug
 - `--max-depth <N>` - Maximum scan depth (default: 1)
 - `-v, --verbose` - Enable verbose logging
 
@@ -132,16 +129,6 @@ $ project-indicator
 # JSON format
 $ project-indicator --format json
 {"indicator":"TypeScript","frameworks":["React"],"icon":"","color":"#61dafb","confidence":0.85,"evidence":["package.json"]}
-
-# Rich format (detailed table view)
-$ project-indicator --format rich
-╭────────────────────────────────────╮
-│ Project Detection Results         │
-├────────────────────────────────────┤
-│ Project:     TypeScript           │
-│ Framework:   React                │
-│ Confidence:  95%                  │
-╰────────────────────────────────────╯
 ```
 
 ## Performance
@@ -202,7 +189,6 @@ version = "3.0"
 [display]
 show_frameworks = true
 max_frameworks = 2
-framework_separator = "+"
 
 # Detection settings
 [detection]

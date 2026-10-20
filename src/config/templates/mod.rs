@@ -133,7 +133,7 @@ pub fn create_minimal_template() -> ConfigTemplate {
     ];
 
     let (meta, display, detection) = ConfigBuilder::new()
-        .display(false, 2, " | ")
+        .display(false, 2)
         .detection(2, false, 0.7)
         .build();
 
@@ -183,7 +183,7 @@ pub fn create_full_template() -> ConfigTemplate {
     // tsconfig.json) scores ~0.36, so 0.4 would skip framework detection for
     // most real projects
     let (meta, display, detection) = ConfigBuilder::new()
-        .display(true, 5, " • ")
+        .display(true, 5)
         .detection(4, false, 0.3)
         .build();
 
@@ -206,7 +206,7 @@ pub fn create_rust_dev_template() -> ConfigTemplate {
     let languages = vec![create_rust_indicator()];
 
     let (meta, display, detection) = ConfigBuilder::new()
-        .display(true, 3, " + ")
+        .display(true, 3)
         .detection(3, false, 0.6)
         .build();
 
@@ -227,7 +227,7 @@ pub fn create_rust_dev_template() -> ConfigTemplate {
 
 pub fn create_python_dev_template() -> ConfigTemplate {
     let (meta, display, detection) = ConfigBuilder::new()
-        .display(true, 4, " | ")
+        .display(true, 4)
         .detection(3, false, 0.6)
         .max_depth(3)
         .build();
@@ -250,7 +250,7 @@ pub fn create_python_dev_template() -> ConfigTemplate {
 
 pub fn create_web_dev_template() -> ConfigTemplate {
     let (meta, display, detection) = ConfigBuilder::new()
-        .display(true, 5, ", ")
+        .display(true, 5)
         .detection(4, false, 0.4)
         .max_depth(3)
         .build();
@@ -272,7 +272,7 @@ pub fn create_web_dev_template() -> ConfigTemplate {
 
 pub fn create_mobile_dev_template() -> ConfigTemplate {
     let (meta, display, detection) = ConfigBuilder::new()
-        .display(true, 4, " + ")
+        .display(true, 4)
         .detection(3, false, 0.5)
         .max_depth(3)
         .build();
@@ -301,7 +301,7 @@ pub fn create_mobile_dev_template() -> ConfigTemplate {
 
 pub fn create_data_science_template() -> ConfigTemplate {
     let (meta, display, detection) = ConfigBuilder::new()
-        .display(true, 8, " • ")
+        .display(true, 8)
         .detection(3, false, 0.4)
         .max_depth(3)
         .build();
@@ -329,7 +329,7 @@ pub fn create_data_science_template() -> ConfigTemplate {
 
 pub fn create_enterprise_template() -> ConfigTemplate {
     let (meta, display, detection) = ConfigBuilder::new()
-        .display(true, 6, " | ")
+        .display(true, 6)
         .detection(5, true, 0.3)
         .max_depth(4)
         .build();

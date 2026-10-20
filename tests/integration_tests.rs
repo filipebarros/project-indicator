@@ -196,7 +196,6 @@ fn test_config_defaults() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(config.meta.version, "3.0");
     assert!(config.display.show_frameworks);
     assert_eq!(config.display.max_frameworks, 2);
-    assert_eq!(config.display.framework_separator, "+");
     assert!(config.indicators.is_empty());
     Ok(())
 }
