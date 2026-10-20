@@ -98,7 +98,6 @@ version = \"3.0\"
 [display]
 show_frameworks = true
 max_frameworks = 3
-framework_separator = \" | \"
 
 [detection]
 max_upward_traversal = 5
@@ -122,7 +121,6 @@ priority = 1
     assert_eq!(config.detection.confidence_threshold, 0.6);
 
     assert_eq!(config.display.max_frameworks, 3);
-    assert_eq!(config.display.framework_separator, " | ");
     assert_eq!(config.indicators.len(), 1);
     assert_eq!(config.indicators[0].name, "Test Language");
 
@@ -136,7 +134,8 @@ fn test_config_with_removed_keys_still_parses() -> Result<(), Box<dyn std::error
     // Old-schema config containing keys removed in the 2026-09 ponytail
     // cleanup (detection.max_matches_per_pattern/small_project_threshold/
     // extreme_size_threshold, detection.root_indicators, Framework.files)
-    // and the 2026-10 removal (detection.detection_mode).
+    // and the 2026-10 removals (detection.detection_mode,
+    // display.framework_separator).
     // Serde ignores unknown fields by default, so a config written before
     // those cleanups must still parse without error.
     let config_content = "[meta]

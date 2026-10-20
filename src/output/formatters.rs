@@ -1,7 +1,4 @@
-use crate::output::render::{
-    CompactRenderer, DebugRenderer, FullRenderer, JsonRenderer, Render, SimpleRenderer,
-};
-use crate::output::rich::RichFormatter;
+use crate::output::render::{DebugRenderer, FullRenderer, JsonRenderer, Render, SimpleRenderer};
 use crate::types::{DetectionResult, DisplayConfig};
 #[cfg(test)]
 use serde::{Deserialize, Serialize};
@@ -10,9 +7,7 @@ pub enum OutputFormat {
     Simple,
     Full,
     Json,
-    Compact,
     Debug,
-    Rich,
 }
 
 impl std::str::FromStr for OutputFormat {
@@ -23,9 +18,7 @@ impl std::str::FromStr for OutputFormat {
             "simple" => Ok(OutputFormat::Simple),
             "full" => Ok(OutputFormat::Full),
             "json" => Ok(OutputFormat::Json),
-            "compact" => Ok(OutputFormat::Compact),
             "debug" => Ok(OutputFormat::Debug),
-            "rich" => Ok(OutputFormat::Rich),
             _ => Err(format!("Unknown output format: {}", s)),
         }
     }
@@ -43,14 +36,8 @@ impl OutputFormatter {
             OutputFormat::Simple => SimpleRenderer.render(result, &self.display_config),
             OutputFormat::Full => FullRenderer.render(result, &self.display_config),
             OutputFormat::Json => JsonRenderer.render(result, &self.display_config),
-            OutputFormat::Compact => CompactRenderer.render(result, &self.display_config),
             OutputFormat::Debug => DebugRenderer.render(result, &self.display_config),
-            OutputFormat::Rich => self.format_rich(result),
         }
-    }
-    fn format_rich(&self, result: &DetectionResult) -> String {
-        let rich_formatter = RichFormatter::new(self.display_config.clone());
-        rich_formatter.create_detailed_table(result)
     }
 }
 
@@ -75,9 +62,7 @@ mod tests {
         assert_eq!("simple".parse::<OutputFormat>()?, OutputFormat::Simple);
         assert_eq!("full".parse::<OutputFormat>()?, OutputFormat::Full);
         assert_eq!("json".parse::<OutputFormat>()?, OutputFormat::Json);
-        assert_eq!("compact".parse::<OutputFormat>()?, OutputFormat::Compact);
         assert_eq!("debug".parse::<OutputFormat>()?, OutputFormat::Debug);
-        assert_eq!("rich".parse::<OutputFormat>()?, OutputFormat::Rich);
 
         assert!("invalid".parse::<OutputFormat>().is_err());
         Ok(())
@@ -129,17 +114,6 @@ mod tests {
     }
 
     #[test]
-    fn test_compact_format() -> Result<(), Box<dyn std::error::Error>> {
-        let result = create_test_result();
-        let display_config = DisplayConfig::default();
-        let formatter = OutputFormatter::new(display_config);
-
-        let output = formatter.format(&result, OutputFormat::Compact);
-        assert_eq!(output, "React+TS");
-        Ok(())
-    }
-
-    #[test]
     fn test_debug_format() -> Result<(), Box<dyn std::error::Error>> {
         let result = create_test_result();
         let display_config = DisplayConfig::default();
@@ -150,32 +124,6 @@ mod tests {
         assert!(output.contains("React"));
         assert!(output.contains("confidence: 0.90"));
         assert!(output.contains("evidence"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_rich_format() -> Result<(), Box<dyn std::error::Error>> {
-        let result = create_test_result();
-        let display_config = DisplayConfig::default();
-        let formatter = OutputFormatter::new(display_config);
-
-        let output = formatter.format(&result, OutputFormat::Rich);
-        assert!(output.contains("Project Analysis"));
-        assert!(output.contains("TypeScript"));
-        assert!(output.contains("React"));
-        assert!(output.contains("Frameworks Detected"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_compact_names() -> Result<(), Box<dyn std::error::Error>> {
-        let renderer = CompactRenderer;
-
-        assert_eq!(renderer.compact_name("TypeScript"), "TS");
-        assert_eq!(renderer.compact_name("JavaScript"), "JS");
-        assert_eq!(renderer.compact_name("React"), "React");
-        assert_eq!(renderer.compact_name("Next.js"), "Next");
-        assert_eq!(renderer.compact_name("CustomFramework"), "CustomFramework");
         Ok(())
     }
 

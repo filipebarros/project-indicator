@@ -76,7 +76,6 @@ cargo run -- /path/to/project
 cargo run -- --format json
 cargo run -- --format full
 cargo run -- --format debug
-cargo run -- --format rich
 
 # Debugging (full evidence dump)
 cargo run -- --format debug
@@ -126,7 +125,7 @@ The detection flow follows this path:
    - Dependency analysis from package.json, Cargo.toml, deno.json, etc.
 
 7. **OutputFormatter** (`src/output/`) - Result rendering
-   - Multiple formats: simple, full, json, compact, debug, rich
+   - Multiple formats: simple, full, json, debug
    - Renderer pattern for extensibility
 
 ### Caching Architecture

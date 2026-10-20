@@ -163,7 +163,6 @@ mod tests {
         let config = DisplayConfig::default();
         assert!(config.show_frameworks);
         assert_eq!(config.max_frameworks, 2);
-        assert_eq!(config.framework_separator, "+");
         Ok(())
     }
 

@@ -25,7 +25,6 @@
 //! let display = DisplayConfig {
 //!     show_frameworks: true,
 //!     max_frameworks: 3,
-//!     framework_separator: " + ".to_string(),
 //! };
 //! ```
 //!
@@ -80,7 +79,6 @@ impl Default for DetectionConfig {
 pub struct DisplayConfig {
     pub show_frameworks: bool,
     pub max_frameworks: usize,
-    pub framework_separator: String,
 }
 
 impl Default for DisplayConfig {
@@ -88,7 +86,6 @@ impl Default for DisplayConfig {
         Self {
             show_frameworks: true,
             max_frameworks: 2,
-            framework_separator: "+".to_string(),
         }
     }
 }

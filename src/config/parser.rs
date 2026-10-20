@@ -122,7 +122,6 @@ version = "3.0"
 [display]
 show_frameworks = true
 max_frameworks = 2
-framework_separator = "+"
 
 [[indicators]]
 name = "TypeScript"

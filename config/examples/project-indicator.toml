@@ -4,7 +4,6 @@ version = "3.0"
 [display]
 show_frameworks = true
 max_frameworks = 5
-framework_separator = " • "
 
 [detection]
 max_upward_traversal = 4

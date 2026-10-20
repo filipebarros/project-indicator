@@ -36,10 +36,6 @@ fn validate_display_config(config: &Config) -> Result<()> {
         return Err(validation_error("max_frameworks must be greater than 0"));
     }
 
-    if config.display.framework_separator.is_empty() {
-        return Err(validation_error("framework_separator cannot be empty"));
-    }
-
     Ok(())
 }
 fn validate_languages(languages: &[Indicator]) -> Result<()> {
@@ -353,10 +349,6 @@ mod tests {
         assert!(validate_config(&config).is_ok());
 
         config.display.max_frameworks = 0;
-        assert!(validate_config(&config).is_err());
-
-        config.display.max_frameworks = 2;
-        config.display.framework_separator = "".to_string();
         assert!(validate_config(&config).is_err());
         Ok(())
     }

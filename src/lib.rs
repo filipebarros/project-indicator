@@ -75,9 +75,7 @@ mod tests {
             output::formatters::OutputFormat::Simple => {}
             output::formatters::OutputFormat::Full => {}
             output::formatters::OutputFormat::Json => {}
-            output::formatters::OutputFormat::Compact => {}
             output::formatters::OutputFormat::Debug => {}
-            output::formatters::OutputFormat::Rich => {}
         }
         // All modules can be imported and used
         let _ = detection;

@@ -122,7 +122,7 @@ fn test_main_config_help() -> Result<(), Box<dyn std::error::Error>> {
 fn test_main_output_formats() -> Result<(), Box<dyn std::error::Error>> {
     use std::process::Command;
 
-    let formats = ["simple", "full", "json", "compact"];
+    let formats = ["simple", "full", "json"];
 
     for format in &formats {
         let output = Command::new("cargo")
