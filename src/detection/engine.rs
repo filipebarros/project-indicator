@@ -376,12 +376,6 @@ impl DetectionEngine {
 
         Ok(result)
     }
-
-    pub fn get_root_indicator_stats(
-        &self,
-    ) -> crate::detection::root_indicators::RootIndicatorStats {
-        self.root_indicator_engine.get_stats()
-    }
 }
 
 #[cfg(test)]

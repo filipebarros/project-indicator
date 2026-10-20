@@ -540,54 +540,6 @@ impl RootIndicatorEngine {
             Ok(false)
         }
     }
-
-    pub fn get_stats(&self) -> RootIndicatorStats {
-        let total_indicators = self.indicators.len();
-        let total_indicator_root_indicators: usize = self
-            .indicators
-            .iter()
-            .map(|indicator| indicator.root_indicators.len())
-            .sum();
-        let total_framework_indicators: usize = self
-            .frameworks
-            .iter()
-            .map(|fw| fw.root_indicators.len())
-            .sum();
-
-        RootIndicatorStats {
-            total_indicators,
-            total_indicator_root_indicators,
-            total_framework_indicators,
-            early_termination_patterns: self.count_early_termination_patterns(),
-        }
-    }
-
-    fn count_early_termination_patterns(&self) -> usize {
-        let mut count = 0;
-        for indicator in &self.indicators {
-            for root_indicator in &indicator.root_indicators {
-                if self.should_early_terminate(&root_indicator.pattern) {
-                    count += 1;
-                }
-            }
-        }
-        for framework in self.frameworks.iter() {
-            for root_indicator in &framework.root_indicators {
-                if self.should_early_terminate(&root_indicator.pattern) {
-                    count += 1;
-                }
-            }
-        }
-        count
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct RootIndicatorStats {
-    pub total_indicators: usize,
-    pub total_indicator_root_indicators: usize,
-    pub total_framework_indicators: usize,
-    pub early_termination_patterns: usize,
 }
 
 #[cfg(test)]
@@ -752,25 +704,6 @@ not-python = true
         assert!(engine.should_early_terminate("next.config.js"));
         assert!(!engine.should_early_terminate("package.json"));
         assert!(!engine.should_early_terminate("README.md"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_performance_stats() -> Result<(), Box<dyn std::error::Error>> {
-        let indicators = vec![
-            create_test_indicator_with_indicators("Rust", vec![("Cargo.toml", 0.95)]),
-            create_test_indicator_with_indicators("TypeScript", vec![("tsconfig.json", 0.90)]),
-        ];
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
-            DetectionConfig::default(),
-        );
-
-        let stats = engine.get_stats();
-        assert_eq!(stats.total_indicators, 2);
-        assert_eq!(stats.total_indicator_root_indicators, 2);
-        assert!(stats.early_termination_patterns >= 2);
         Ok(())
     }
 
@@ -1142,56 +1075,6 @@ not-python = true
         let temp_dir = TempDir::new()?;
         assert!(!engine.is_boundary_directory_public(temp_dir.path()));
 
-        Ok(())
-    }
-
-    #[test]
-    fn test_get_stats_comprehensive() -> Result<(), Box<dyn std::error::Error>> {
-        let rust_lang = create_test_indicator_with_indicators("Rust", vec![("Cargo.toml", 0.95)]);
-        let catalog = vec![crate::types::Framework {
-            name: "Rocket".to_string(),
-            ecosystems: vec![],
-            detection: crate::types::DetectionType::FileExists { files: vec![] },
-            icon: None,
-            color: None,
-            priority: 1,
-            root_indicators: vec![crate::types::RootIndicator {
-                pattern: "Rocket.toml".to_string(),
-                weight: 0.9,
-                context: crate::types::IndicatorContext::FrameworkRoot,
-                alternative_group: None,
-            }],
-        }];
-
-        let indicators = vec![rust_lang];
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(std::sync::Arc::new).collect(),
-            std::sync::Arc::new(catalog),
-            DetectionConfig::default(),
-        );
-
-        let stats = engine.get_stats();
-        assert_eq!(stats.total_indicators, 1);
-        assert_eq!(stats.total_indicator_root_indicators, 1);
-        assert_eq!(stats.total_framework_indicators, 1);
-        assert!(stats.early_termination_patterns >= 1);
-        Ok(())
-    }
-
-    #[test]
-    fn test_early_termination_patterns_count() -> Result<(), Box<dyn std::error::Error>> {
-        let indicators = vec![create_test_indicator_with_indicators(
-            "Rust",
-            vec![("Cargo.toml", 0.95)],
-        )];
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
-            DetectionConfig::default(),
-        );
-
-        let count = engine.count_early_termination_patterns();
-        assert!(count >= 1);
         Ok(())
     }
 

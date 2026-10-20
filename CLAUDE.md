@@ -94,11 +94,6 @@ cargo run -- cache clear
 cargo run -- config validate
 cargo run -- config show
 cargo run -- config init --template rust-dev
-
-# Root indicator analysis
-cargo run -- root-indicators conflicts --detailed
-cargo run -- root-indicators list
-cargo run -- root-indicators validate
 ```
 
 ## Architecture Overview
@@ -339,7 +334,7 @@ For ecosystem-specific dependency matching:
 - `src/lib.rs`: Library interface for external use
 - `src/constants.rs`: Centralized file/extension constants
 - `src/patterns.rs`: Pattern matching utilities
-- `src/commands/`: CLI command implementations (detect, config, debug, benchmark, root-indicators)
+- `src/commands/`: CLI command implementations (detect, config, debug, benchmark)
 
 ## Release Process
 

@@ -3,10 +3,7 @@ mod templates;
 mod validator;
 
 pub use self::parser::{ConfigError, ConfigParser};
-pub use self::templates::{
-    generate_root_indicators_simple_max_weight, vcs_root_indicators, ConfigTemplate,
-    TemplateGenerator,
-};
+pub use self::templates::{vcs_root_indicators, ConfigTemplate, TemplateGenerator};
 pub use self::validator::validate_config;
 
 use crate::types::{ConfigMeta, DetectionConfig, DisplayConfig, Framework, Indicator};

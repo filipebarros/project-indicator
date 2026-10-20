@@ -46,10 +46,6 @@ pub enum Commands {
         #[command(subcommand)]
         action: CacheAction,
     },
-    RootIndicators {
-        #[command(subcommand)]
-        action: RootIndicatorAction,
-    },
 }
 
 #[derive(Subcommand)]
@@ -75,33 +71,6 @@ pub enum CacheAction {
     /// Delete all cached detection results
     Clear,
     /// Show cache entry count and disk usage
-    Stats,
-}
-
-#[derive(Subcommand)]
-pub enum RootIndicatorAction {
-    Conflicts {
-        #[arg(long, help = "Show detailed conflict analysis")]
-        detailed: bool,
-        #[arg(long, help = "Use legacy resolution strategy for comparison")]
-        compare_legacy: bool,
-        #[arg(long, help = "Show resolution strategies used")]
-        show_strategies: bool,
-    },
-    List {
-        #[arg(long, help = "Filter by indicator name")]
-        indicator: Option<String>,
-        #[arg(long, help = "Filter by framework name")]
-        framework: Option<String>,
-        #[arg(long, help = "Show only conflicting indicators")]
-        conflicts_only: bool,
-    },
-    Validate {
-        #[arg(long, help = "Check for common configuration issues")]
-        strict: bool,
-        #[arg(long, help = "Suggest improvements")]
-        suggest: bool,
-    },
     Stats,
 }
 
