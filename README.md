@@ -229,6 +229,12 @@ Priority order (first match wins):
 3. Windows: `%APPDATA%\project-indicator\config.toml`
 4. `./project-indicator.toml` (current directory)
 
+Parsing is strict: unknown or removed keys make the config fail to parse.
+A failing config never breaks your prompt — detection falls back to the
+built-in template — but customizations are ignored until the file is fixed.
+Run `project-indicator config validate` to see the exact error, or
+`project-indicator config init --force` to regenerate.
+
 
 ## Shell Integration
 

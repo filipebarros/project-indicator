@@ -1,6 +1,6 @@
 use project_indicator::{
     cli::ConfigAction,
-    config::{validate_config, Config, TemplateGenerator},
+    config::{validate_config, Config, ConfigParser, TemplateGenerator},
     Result,
 };
 use std::env;
@@ -55,20 +55,19 @@ fn validate_editor(editor: &str) -> Result<()> {
 pub fn handle_config_command(action: ConfigAction) -> Result<()> {
     match action {
         ConfigAction::Validate => {
-            let config_path = Config::get_config_path()?;
-
-            if !config_path.exists() {
-                println!(
-                    "❌ No configuration file found at: {}",
-                    config_path.display()
-                );
+            // Validate the file detection actually reads (same resolution
+            // order as Config::load_default), and parse it directly —
+            // load_default's soft fallback would swallow the parse error
+            // this command exists to surface.
+            let Some(config_path) = ConfigParser::active_config_path() else {
+                println!("❌ No configuration file found");
                 println!(
                     "💡 Run 'project-indicator config init' to create a default configuration"
                 );
                 std::process::exit(1);
-            }
+            };
 
-            match Config::load_default() {
+            match Config::load_from_file(&config_path) {
                 Ok(config) => match validate_config(&config) {
                     Ok(()) => {
                         println!("✅ Configuration is valid");
@@ -86,10 +85,13 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                     }
                 },
                 Err(load_error) => {
-                    println!("❌ Failed to load configuration:");
-                    println!("   {}", load_error);
+                    println!("❌ Failed to parse configuration:");
+                    println!("   {:#}", load_error);
                     println!("📍 Config file: {}", config_path.display());
-                    println!("💡 Check the file format and syntax");
+                    println!(
+                        "💡 Fix the file ('config edit') or regenerate it ('config init --force'); \
+                         until then, detection uses the built-in template"
+                    );
                     std::process::exit(1);
                 }
             }

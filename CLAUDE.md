@@ -176,6 +176,12 @@ single ecosystem-keyed framework catalog (`src/config/templates/frameworks.rs`)
   an indicator surfaces every framework whose ecosystems intersect its own
 - Users can customize via `~/.config/project-indicator/config.toml`
   (schema v3: `[[indicators]]` + `[[frameworks]]`)
+- Parsing is strict (`deny_unknown_fields`): removed or misspelled keys fail
+  to parse instead of being silently ignored. At prompt time a failing config
+  soft-falls-back to the built-in template (never breaks the shell);
+  `config validate` surfaces the exact error and `config init --force`
+  regenerates. Exception: keys under `[frameworks.detection]` — serde cannot
+  deny unknowns inside an internally-tagged enum
 
 **Key Configuration Types**:
 
