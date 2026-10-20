@@ -25,7 +25,7 @@ pub mod zig;
 
 pub mod shared;
 
-pub use shared::{generate_root_indicators_simple_max_weight, vcs_root_indicators};
+pub use shared::vcs_root_indicators;
 
 use crate::config::Config;
 use anyhow::Result;

@@ -1,6 +1,6 @@
 use crate::constants::*;
 use crate::types::{
-    ConfigMeta, DetectionConfig, DetectionType, DisplayConfig, Ecosystem, Framework, Indicator,
+    ConfigMeta, DetectionConfig, DetectionType, DisplayConfig, Ecosystem, Framework,
     IndicatorContext, RootIndicator,
 };
 
@@ -337,53 +337,6 @@ pub fn vcs_root_indicators() -> Vec<RootIndicator> {
         root_indicator(".hg", 1.0, IndicatorContext::VersionControl),
         root_indicator(".svn", 1.0, IndicatorContext::VersionControl),
     ]
-}
-
-pub fn generate_root_indicators_simple_max_weight(
-    indicators: &[Indicator],
-    frameworks: &[Framework],
-) -> Vec<RootIndicator> {
-    use std::collections::HashMap;
-
-    let mut indicator_weights: HashMap<String, f32> = HashMap::new();
-
-    for vcs_indicator in vcs_root_indicators() {
-        indicator_weights.insert(vcs_indicator.pattern, vcs_indicator.weight);
-    }
-
-    for indicator in indicators {
-        for root_indicator in &indicator.root_indicators {
-            let existing_weight = indicator_weights
-                .get(&root_indicator.pattern)
-                .unwrap_or(&0.0);
-            indicator_weights.insert(
-                root_indicator.pattern.clone(),
-                existing_weight.max(root_indicator.weight),
-            );
-        }
-    }
-
-    for framework in frameworks {
-        for root_indicator in &framework.root_indicators {
-            let existing_weight = indicator_weights
-                .get(&root_indicator.pattern)
-                .unwrap_or(&0.0);
-            indicator_weights.insert(
-                root_indicator.pattern.clone(),
-                existing_weight.max(root_indicator.weight),
-            );
-        }
-    }
-
-    indicator_weights
-        .into_iter()
-        .map(|(pattern, weight)| RootIndicator {
-            pattern,
-            weight,
-            context: IndicatorContext::LanguageRoot,
-            alternative_group: None,
-        })
-        .collect()
 }
 
 #[derive(Debug, Clone)]

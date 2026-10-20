@@ -21,7 +21,7 @@ Project Indicator is a high-performance replacement for shell-based project dete
 - 🏗️ **Framework Recognition**: Detects 37 popular frameworks like React, Svelte, Axum, Django, Gin, Spring Boot, Laravel, Rails
 - ⚡ **Blazing Performance**: 3-5ms typical detection
 - 🎨 **Multiple Output Formats**: Simple, Full, JSON, Compact, Debug, and Rich formats
-- 🔧 **Comprehensive CLI**: Configuration management, debugging tools, and root indicator analysis
+- 🔧 **Comprehensive CLI**: Configuration management and debugging tools
 - 🧠 **Advanced Detection**: Confidence-based scoring with weighted root indicators
 - 🔧 **Configuration Templates**: Pre-built templates for different development environments
 - 🐚 **Shell Integration**: Ready-to-use integration scripts for Bash, Zsh, and Fish
@@ -114,14 +114,6 @@ project-indicator config show
 ```bash
 project-indicator debug [--verbose]
 project-indicator benchmark
-```
-
-**Root Indicator Analysis:**
-```bash
-project-indicator root-indicators conflicts [--detailed] [--compare-legacy] [--show-strategies]
-project-indicator root-indicators list [--indicator NAME] [--framework NAME] [--conflicts-only]
-project-indicator root-indicators validate [--strict] [--suggest]
-project-indicator root-indicators stats
 ```
 
 ## Output Examples
