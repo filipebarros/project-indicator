@@ -34,7 +34,6 @@ pub enum Commands {
         #[arg(long)]
         verbose: bool,
     },
-    Benchmark,
     /// Manage the persistent detection result cache
     Cache {
         #[command(subcommand)]
@@ -125,13 +124,6 @@ mod tests {
             cli.command,
             Some(Commands::Debug { verbose: false })
         ));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_benchmark_subcommand() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from(["project-indicator", "benchmark"])?;
-        assert!(matches!(cli.command, Some(Commands::Benchmark)));
         Ok(())
     }
 

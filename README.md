@@ -109,10 +109,9 @@ project-indicator config edit
 project-indicator config show
 ```
 
-**Debugging & Performance:**
+**Debugging:**
 ```bash
 project-indicator debug [--verbose]
-project-indicator benchmark
 ```
 
 ## Output Examples
@@ -168,7 +167,7 @@ project-indicator cache clear   # start fresh
 project-indicator --no-cache .  # bypass for one invocation
 ```
 
-Run `project-indicator benchmark` to measure on your machine.
+Run `cargo bench` (or `hyperfine project-indicator`) to measure on your machine.
 
 ## Configuration
 
