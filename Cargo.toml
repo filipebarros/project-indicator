@@ -19,7 +19,6 @@ ignore = "0.4"
 regex = "1.12.4"
 
 anyhow = "1.0"
-thiserror = "2.0"
 
 dirs = "7.0"
 log = "0.4"

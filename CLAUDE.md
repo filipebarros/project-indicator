@@ -217,7 +217,8 @@ This ensures cache hits across the entire pipeline.
 ### 3. Error Handling
 
 - Use `anyhow::Result<T>` for functions that can fail
-- Use `thiserror` for custom error types
+- Custom error types implement `Display`/`Error` by hand (see `ConfigError`);
+  don't add an error-derive dependency for the few variants this crate needs
 - Always provide context: `.context("Failed to parse config")?`
 
 ### 4. Performance Considerations
