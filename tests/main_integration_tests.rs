@@ -119,29 +119,6 @@ fn test_main_config_help() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_main_debug_command() -> Result<(), Box<dyn std::error::Error>> {
-    use std::process::Command;
-
-    let output = Command::new("cargo").args(["run", "--", "debug"]).output();
-
-    match output {
-        Ok(output) => {
-            assert!(output.status.code().is_some());
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            assert!(
-                stderr.contains("Debug mode")
-                    || stderr.contains("config")
-                    || output.status.success()
-            );
-        }
-        Err(_) => {
-            println!("Skipping debug test - cargo run not available");
-        }
-    }
-    Ok(())
-}
-
-#[test]
 fn test_main_output_formats() -> Result<(), Box<dyn std::error::Error>> {
     use std::process::Command;
 

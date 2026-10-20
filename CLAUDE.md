@@ -78,8 +78,8 @@ cargo run -- --format full
 cargo run -- --format debug
 cargo run -- --format rich
 
-# Debugging
-cargo run -- debug --verbose
+# Debugging (full evidence dump)
+cargo run -- --format debug
 
 # Persistent cache management
 cargo run -- cache stats
@@ -329,7 +329,7 @@ For ecosystem-specific dependency matching:
 - `src/lib.rs`: Library interface for external use
 - `src/constants.rs`: Centralized file/extension constants
 - `src/patterns.rs`: Pattern matching utilities
-- `src/commands/`: CLI command implementations (detect, config, debug)
+- `src/commands/`: CLI command implementations (detect, config, cache)
 
 ## Release Process
 

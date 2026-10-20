@@ -39,14 +39,3 @@ fn test_cli_config_subcommand() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
-
-#[test]
-fn test_cli_debug_subcommand() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::try_parse_from(["project-indicator", "debug", "--verbose"])?;
-
-    match cli.command {
-        Some(Commands::Debug { verbose: true }) => {}
-        _ => panic!("Expected Debug command with verbose=true"),
-    }
-    Ok(())
-}

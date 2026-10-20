@@ -111,7 +111,7 @@ project-indicator config show
 
 **Debugging:**
 ```bash
-project-indicator debug [--verbose]
+project-indicator --format debug   # full evidence and confidence breakdown
 ```
 
 ## Output Examples
