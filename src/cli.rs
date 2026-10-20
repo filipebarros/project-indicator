@@ -20,12 +20,6 @@ pub struct Cli {
     #[arg(long, help = "Skip the persistent result cache for this invocation")]
     pub no_cache: bool,
 
-    #[arg(
-        long,
-        help = "Detection mode: 'thorough' (default, full analysis) or 'fast' (early termination with secondary check)"
-    )]
-    pub mode: Option<String>,
-
     #[command(subcommand)]
     pub command: Option<Commands>,
 }

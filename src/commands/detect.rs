@@ -4,7 +4,6 @@ use project_indicator::{
     config::{Config, ConfigParser},
     detection::DetectionEngine,
     output::{OutputFormat, OutputFormatter},
-    types::DetectionMode,
     Result,
 };
 
@@ -20,7 +19,7 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
 
     // CLI overrides change detection results, so they bypass the cache
     // entirely (neither read nor write)
-    let cache_eligible = !cli.no_cache && cli.max_depth.is_none() && cli.mode.is_none();
+    let cache_eligible = !cli.no_cache && cli.max_depth.is_none();
     let config_path = ConfigParser::active_config_path();
     let cache = if cache_eligible {
         PersistentCache::default_location()
@@ -43,19 +42,6 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
 
     if let Some(max_depth) = cli.max_depth {
         detection_config.max_depth = max_depth;
-    }
-
-    if let Some(mode_str) = &cli.mode {
-        detection_config.detection_mode = match mode_str.to_lowercase().as_str() {
-            "fast" => DetectionMode::Fast,
-            "thorough" => DetectionMode::Thorough,
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "Invalid detection mode: '{}'. Valid options are 'fast' or 'thorough'",
-                    mode_str
-                ));
-            }
-        };
     }
 
     let engine =

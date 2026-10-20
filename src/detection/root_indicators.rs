@@ -1,8 +1,6 @@
 use crate::constants::*;
 use crate::performance::FileSystemCache;
-use crate::types::{
-    DetectionConfig, DetectionMode, DetectionResult, Framework, FrameworkMatch, Indicator,
-};
+use crate::types::{DetectionConfig, Indicator};
 use crate::Result;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,73 +11,21 @@ pub struct FoundRootIndicator {
     pub certainty: f32,
     pub indicator: Arc<Indicator>,
     pub framework: Option<String>,
-    pub early_termination: bool,
     pub specificity: u8,
 }
 
 pub struct RootIndicatorEngine {
     indicators: Vec<Arc<Indicator>>,
-    frameworks: Arc<Vec<Framework>>,
     config: DetectionConfig,
     cached_home_dir: Option<PathBuf>,
 }
 
 impl RootIndicatorEngine {
-    pub fn from_parts(
-        indicators: Vec<Arc<Indicator>>,
-        frameworks: Arc<Vec<Framework>>,
-        config: DetectionConfig,
-    ) -> Self {
+    pub fn from_parts(indicators: Vec<Arc<Indicator>>, config: DetectionConfig) -> Self {
         Self {
             indicators,
-            frameworks,
             config,
             cached_home_dir: dirs::home_dir(),
-        }
-    }
-
-    pub fn detect_with_early_termination(
-        &self,
-        path: &Path,
-        file_cache: &Arc<FileSystemCache>,
-    ) -> Result<Option<DetectionResult>> {
-        match self.config.detection_mode {
-            DetectionMode::Thorough => Ok(None),
-            DetectionMode::Fast => {
-                let indicator_threshold = (self.config.confidence_threshold * 1.2).min(1.0);
-                let framework_threshold = self.config.confidence_threshold;
-
-                if let Some(result) = self.check_indicator_root_indicators(path, file_cache)? {
-                    if result.confidence >= indicator_threshold {
-                        log::debug!(
-                            "Early termination (fast mode): Found definitive indicator '{}' with confidence {:.3} (threshold: {:.3})",
-                            result.indicator.as_ref().map(|l| l.name.as_str()).unwrap_or("Unknown"),
-                            result.confidence,
-                            indicator_threshold
-                        );
-                        return Ok(Some(result));
-                    } else {
-                        log::debug!(
-                            "Root indicator found but confidence {:.3} below threshold {:.3}, continuing search",
-                            result.confidence,
-                            indicator_threshold
-                        );
-                    }
-                }
-
-                if let Some(result) = self.check_framework_root_indicators(path, file_cache)? {
-                    if result.confidence >= framework_threshold {
-                        log::debug!(
-                            "Early termination (fast mode): Found definitive framework indicator with confidence {:.3} (threshold: {:.3})",
-                            result.confidence,
-                            framework_threshold
-                        );
-                        return Ok(Some(result));
-                    }
-                }
-
-                Ok(None)
-            }
         }
     }
 
@@ -228,14 +174,12 @@ impl RootIndicatorEngine {
                     // Use lower threshold for root discovery (0.2) to catch more indicators
                     if certainty > 0.2 {
                         let specificity = self.get_pattern_specificity(&root_indicator.pattern);
-                        let early_term = self.should_early_terminate(&root_indicator.pattern);
 
                         let found_root_indicator = FoundRootIndicator {
                             pattern: root_indicator.pattern.clone(),
                             certainty,
                             indicator: indicator.clone(),
                             framework: None,
-                            early_termination: early_term,
                             specificity,
                         };
 
@@ -264,109 +208,6 @@ impl RootIndicatorEngine {
         }
 
         Ok(self.resolve_indicator_conflicts(&found_indicators).cloned())
-    }
-
-    fn check_indicator_root_indicators(
-        &self,
-        path: &Path,
-        file_cache: &Arc<FileSystemCache>,
-    ) -> Result<Option<DetectionResult>> {
-        let mut found_indicators = Vec::new();
-
-        for indicator in &self.indicators {
-            for root_indicator in &indicator.root_indicators {
-                let indicator_path = path.join(&root_indicator.pattern);
-                if file_cache.exists(&indicator_path) {
-                    let certainty = self.calculate_indicator_certainty(
-                        &indicator_path,
-                        root_indicator,
-                        indicator,
-                    )?;
-
-                    if certainty > 0.0 {
-                        found_indicators.push(FoundRootIndicator {
-                            pattern: root_indicator.pattern.clone(),
-                            certainty,
-                            indicator: indicator.clone(),
-                            framework: None,
-                            early_termination: self.should_early_terminate(&root_indicator.pattern),
-                            specificity: self.get_pattern_specificity(&root_indicator.pattern),
-                        });
-                    }
-                }
-            }
-        }
-
-        if found_indicators.is_empty() {
-            return Ok(None);
-        }
-
-        let best_indicator = self
-            .resolve_indicator_conflicts(&found_indicators)
-            .ok_or_else(|| anyhow::anyhow!("Failed to resolve indicator conflicts"))?;
-
-        Ok(Some(DetectionResult::new(
-            Some(best_indicator.indicator.clone()),
-            vec![],
-            best_indicator.certainty,
-        )))
-    }
-
-    fn check_framework_root_indicators(
-        &self,
-        path: &Path,
-        file_cache: &Arc<FileSystemCache>,
-    ) -> Result<Option<DetectionResult>> {
-        let mut found_frameworks = Vec::new();
-        let mut base_indicator = None;
-
-        if let Some(indicator_result) = self.check_indicator_root_indicators(path, file_cache)? {
-            base_indicator = indicator_result.indicator;
-        }
-
-        {
-            for framework in self.frameworks.iter() {
-                for root_indicator in &framework.root_indicators {
-                    let indicator_path = path.join(&root_indicator.pattern);
-                    if file_cache.exists(&indicator_path) {
-                        let certainty = self.calculate_framework_certainty(
-                            &indicator_path,
-                            root_indicator,
-                            framework,
-                        )?;
-
-                        if certainty > 0.0 {
-                            found_frameworks.push(FrameworkMatch {
-                                framework: framework.clone(),
-                                confidence: certainty,
-                                evidence: vec![root_indicator.pattern.clone()],
-                            });
-
-                            // Frameworks no longer have a parent indicator;
-                            // base_indicator comes from indicator matching alone
-                        }
-                    }
-                }
-            }
-        }
-
-        if found_frameworks.is_empty() {
-            return Ok(None);
-        }
-
-        found_frameworks.sort_by(|a, b| {
-            b.confidence
-                .partial_cmp(&a.confidence)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        let overall_confidence = found_frameworks[0].confidence;
-
-        Ok(Some(DetectionResult::new(
-            base_indicator,
-            found_frameworks,
-            overall_confidence,
-        )))
     }
 
     fn calculate_indicator_certainty(
@@ -417,37 +258,6 @@ impl RootIndicatorEngine {
         }
     }
 
-    fn calculate_framework_certainty(
-        &self,
-        file_path: &Path,
-        root_indicator: &crate::types::RootIndicator,
-        framework: &crate::types::Framework,
-    ) -> Result<f32> {
-        match root_indicator.pattern.as_str() {
-            NEXT_CONFIG_JS | NEXT_CONFIG_TS => Ok(0.95),
-            VITE_CONFIG_JS | VITE_CONFIG_TS => Ok(0.90),
-            NUXT_CONFIG_JS | NUXT_CONFIG_TS => Ok(0.95),
-            SVELTE_CONFIG_JS => Ok(0.95),
-            ANGULAR_JSON => Ok(0.95),
-            ROCKET_TOML => Ok(0.95),
-            MANAGE_PY => {
-                if self.is_django_manage_py(file_path)? {
-                    Ok(0.90)
-                } else {
-                    Ok(0.1)
-                }
-            }
-            REQUIREMENTS_TXT => {
-                if self.has_framework_dependencies(file_path, &framework.name)? {
-                    Ok(0.80)
-                } else {
-                    Ok(0.1)
-                }
-            }
-            _ => Ok(root_indicator.weight * root_indicator.context.base_priority()),
-        }
-    }
-
     fn resolve_indicator_conflicts<'a>(
         &self,
         indicators: &'a [FoundRootIndicator],
@@ -463,21 +273,6 @@ impl RootIndicatorEngine {
                 .then(a.specificity.cmp(&b.specificity))
                 .then(a.indicator.priority.cmp(&b.indicator.priority))
         })
-    }
-
-    fn should_early_terminate(&self, pattern: &str) -> bool {
-        matches!(
-            pattern,
-            CARGO_TOML
-                | GO_MOD
-                | PYPROJECT_TOML
-                | TSCONFIG_JSON
-                | NEXT_CONFIG_JS
-                | NEXT_CONFIG_TS
-                | ANGULAR_JSON
-                | ROCKET_TOML
-                | MANAGE_PY
-        )
     }
 
     fn get_pattern_specificity(&self, pattern: &str) -> u8 {
@@ -517,36 +312,13 @@ impl RootIndicatorEngine {
             Ok(false)
         }
     }
-
-    fn is_django_manage_py(&self, path: &Path) -> Result<bool> {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            Ok(content.contains("django") && content.contains("execute_from_command_line"))
-        } else {
-            Ok(false)
-        }
-    }
-
-    fn has_framework_dependencies(&self, path: &Path, framework_name: &str) -> Result<bool> {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            let content_lower = content.to_lowercase();
-            let framework_lower = framework_name.to_lowercase();
-            match framework_lower.as_str() {
-                "django" => Ok(content_lower.contains("django")),
-                "flask" => Ok(content_lower.contains("flask")),
-                "fastapi" => Ok(content_lower.contains("fastapi")),
-                _ => Ok(false),
-            }
-        } else {
-            Ok(false)
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::FileSystemCache;
     use crate::detection::root_indicators::RootIndicatorEngine;
-    use crate::types::{DetectionConfig, DetectionMode, Indicator};
+    use crate::types::{DetectionConfig, Indicator};
     use std::fs;
     use std::path::Path;
     use std::sync::Arc;
@@ -555,130 +327,8 @@ mod tests {
     use crate::detection::matchers::test_helpers::helpers::create_test_indicator_with_indicators;
 
     #[test]
-    fn test_early_termination_rust() -> Result<(), Box<dyn std::error::Error>> {
-        let indicators = vec![create_test_indicator_with_indicators(
-            "Rust",
-            vec![("Cargo.toml", 0.95)],
-        )];
-        let config = DetectionConfig {
-            detection_mode: DetectionMode::Fast,
-            ..Default::default()
-        };
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
-            config,
-        );
-
-        let temp_dir = TempDir::new()?;
-        let cargo_content = r#"
-[package]
-name = "test-project"
-version = "0.1.0"
-edition = "2021"
-"#;
-        fs::write(temp_dir.path().join("Cargo.toml"), cargo_content)?;
-
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
-
-        assert!(result.is_some());
-        let result = result.ok_or("Failed to get detection result")?;
-        assert!(result.indicator.is_some());
-        assert_eq!(
-            result
-                .indicator
-                .as_ref()
-                .ok_or("Failed to get indicator reference")?
-                .name,
-            "Rust"
-        );
-        assert!(result.confidence >= 0.9);
-        Ok(())
-    }
-
-    #[test]
-    fn test_typescript_vs_javascript_resolution() -> Result<(), Box<dyn std::error::Error>> {
-        let indicators = vec![
-            create_test_indicator_with_indicators("JavaScript", vec![("package.json", 0.70)]),
-            create_test_indicator_with_indicators("TypeScript", vec![("package.json", 0.85)]),
-        ];
-        let config = DetectionConfig {
-            detection_mode: DetectionMode::Fast,
-            ..Default::default()
-        };
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
-            config,
-        );
-
-        let temp_dir = TempDir::new()?;
-
-        let ts_package_json = r#"
-{
-  "name": "test-project",
-  "dependencies": {
-    "react": "^18.0.0"
-  },
-  "devDependencies": {
-    "typescript": "^4.9.0",
-    "@types/react": "^18.0.0"
-  }
-}
-"#;
-        fs::write(temp_dir.path().join("package.json"), ts_package_json)?;
-
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
-
-        assert!(result.is_some());
-        let result = result.ok_or("Failed to get detection result")?;
-        assert!(result.indicator.is_some());
-        assert_eq!(
-            result
-                .indicator
-                .as_ref()
-                .ok_or("Failed to get indicator reference")?
-                .name,
-            "TypeScript"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_no_early_termination_when_uncertain() -> Result<(), Box<dyn std::error::Error>> {
-        let indicators = vec![create_test_indicator_with_indicators(
-            "Python",
-            vec![("pyproject.toml", 0.90)],
-        )];
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
-            DetectionConfig::default(),
-        );
-
-        let temp_dir = TempDir::new()?;
-        let invalid_content = r#"
-[tool.random]
-not-python = true
-"#;
-        fs::write(temp_dir.path().join("pyproject.toml"), invalid_content)?;
-
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
-
-        assert!(result.is_none());
-        Ok(())
-    }
-
-    #[test]
     fn test_specificity_resolution() -> Result<(), Box<dyn std::error::Error>> {
-        let engine = RootIndicatorEngine::from_parts(
-            vec![],
-            Arc::new(Vec::new()),
-            DetectionConfig::default(),
-        );
+        let engine = RootIndicatorEngine::from_parts(vec![], DetectionConfig::default());
 
         assert!(
             engine.get_pattern_specificity("tsconfig.json")
@@ -692,137 +342,13 @@ not-python = true
     }
 
     #[test]
-    fn test_early_termination_patterns() -> Result<(), Box<dyn std::error::Error>> {
-        let engine = RootIndicatorEngine::from_parts(
-            vec![],
-            Arc::new(Vec::new()),
-            DetectionConfig::default(),
-        );
-
-        assert!(engine.should_early_terminate("Cargo.toml"));
-        assert!(engine.should_early_terminate("tsconfig.json"));
-        assert!(engine.should_early_terminate("next.config.js"));
-        assert!(!engine.should_early_terminate("package.json"));
-        assert!(!engine.should_early_terminate("README.md"));
-        Ok(())
-    }
-
-    #[test]
     fn test_engine_creation_from_arc_indicators() -> Result<(), Box<dyn std::error::Error>> {
         let indicators: Vec<Arc<Indicator>> = vec![Arc::new(
             create_test_indicator_with_indicators("Rust", vec![("Cargo.toml", 0.95)]),
         )];
         let config = DetectionConfig::default();
-        let engine =
-            RootIndicatorEngine::from_parts(indicators, std::sync::Arc::new(Vec::new()), config);
+        let engine = RootIndicatorEngine::from_parts(indicators, config);
         assert_eq!(engine.indicators.len(), 1);
-        Ok(())
-    }
-
-    #[test]
-    fn test_detect_with_early_termination_thorough_mode() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let indicators = vec![create_test_indicator_with_indicators(
-            "Rust",
-            vec![("Cargo.toml", 0.95)],
-        )];
-        let config = DetectionConfig {
-            detection_mode: DetectionMode::Thorough,
-            ..Default::default()
-        };
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
-            config,
-        );
-
-        let temp_dir = TempDir::new()?;
-        fs::write(
-            temp_dir.path().join("Cargo.toml"),
-            "[package]\nname = \"test\"",
-        )?;
-
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
-
-        // In thorough mode, should return None (no early termination)
-        assert!(result.is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn test_detect_with_early_termination_fast_mode_low_confidence(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let indicators = vec![create_test_indicator_with_indicators(
-            "Rust",
-            vec![("Cargo.toml", 0.3)],
-        )];
-        let config = DetectionConfig {
-            detection_mode: DetectionMode::Fast,
-            confidence_threshold: 0.8,
-            ..Default::default()
-        };
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
-            config,
-        );
-
-        let temp_dir = TempDir::new()?;
-        fs::write(
-            temp_dir.path().join("Cargo.toml"),
-            "[package]\nname = \"test\"",
-        )?;
-
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
-
-        // Should return None because confidence is below threshold
-        assert!(result.is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn test_detect_with_early_termination_framework_indicators(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let rust_lang = create_test_indicator_with_indicators("Rust", vec![("Cargo.toml", 0.95)]);
-        let catalog = vec![crate::types::Framework {
-            name: "Rocket".to_string(),
-            ecosystems: vec![],
-            detection: crate::types::DetectionType::FileExists { files: vec![] },
-            icon: None,
-            color: None,
-            priority: 1,
-            root_indicators: vec![crate::types::RootIndicator {
-                pattern: "Rocket.toml".to_string(),
-                weight: 0.9,
-                context: crate::types::IndicatorContext::FrameworkRoot,
-                alternative_group: None,
-            }],
-        }];
-        let indicators = vec![rust_lang];
-        let config = DetectionConfig {
-            detection_mode: DetectionMode::Fast,
-            confidence_threshold: 0.8,
-            ..Default::default()
-        };
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(std::sync::Arc::new).collect(),
-            std::sync::Arc::new(catalog),
-            config,
-        );
-
-        let temp_dir = TempDir::new()?;
-        fs::write(
-            temp_dir.path().join("Rocket.toml"),
-            "[package]\nname = \"test\"",
-        )?;
-
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
-
-        // Should find framework indicator
-        assert!(result.is_some());
         Ok(())
     }
 
@@ -834,7 +360,6 @@ not-python = true
         )];
         let engine = RootIndicatorEngine::from_parts(
             indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
             DetectionConfig::default(),
         );
 
@@ -864,7 +389,6 @@ not-python = true
         )];
         let engine = RootIndicatorEngine::from_parts(
             indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
             DetectionConfig::default(),
         );
 
@@ -890,11 +414,8 @@ not-python = true
             max_upward_traversal: 1,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
-            config,
-        );
+        let engine =
+            RootIndicatorEngine::from_parts(indicators.into_iter().map(Arc::new).collect(), config);
 
         let temp_dir = TempDir::new()?;
         let subdir = temp_dir.path().join("deep").join("nested").join("path");
@@ -922,11 +443,8 @@ not-python = true
             require_vcs_root: true,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
-            config,
-        );
+        let engine =
+            RootIndicatorEngine::from_parts(indicators.into_iter().map(Arc::new).collect(), config);
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -955,11 +473,8 @@ not-python = true
             require_vcs_root: true,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
-            config,
-        );
+        let engine =
+            RootIndicatorEngine::from_parts(indicators.into_iter().map(Arc::new).collect(), config);
 
         let temp_dir = TempDir::new()?;
         fs::write(
@@ -977,77 +492,6 @@ not-python = true
     }
 
     #[test]
-    fn test_check_indicator_root_indicators() -> Result<(), Box<dyn std::error::Error>> {
-        let indicators = vec![create_test_indicator_with_indicators(
-            "Rust",
-            vec![("Cargo.toml", 0.95)],
-        )];
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
-            DetectionConfig::default(),
-        );
-
-        let temp_dir = TempDir::new()?;
-        fs::write(
-            temp_dir.path().join("Cargo.toml"),
-            "[package]\nname = \"test\"",
-        )?;
-
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.check_indicator_root_indicators(temp_dir.path(), &file_cache)?;
-
-        assert!(result.is_some());
-        let result = result.ok_or("Expected Some but got None")?;
-        assert!(result.indicator.is_some());
-        let indicator = result
-            .indicator
-            .ok_or("Expected Some indicator but got None")?;
-        assert_eq!(indicator.name, "Rust");
-        Ok(())
-    }
-
-    #[test]
-    fn test_check_framework_root_indicators() -> Result<(), Box<dyn std::error::Error>> {
-        let rust_lang = create_test_indicator_with_indicators("Rust", vec![("Cargo.toml", 0.95)]);
-        let catalog = vec![crate::types::Framework {
-            name: "Rocket".to_string(),
-            ecosystems: vec![],
-            detection: crate::types::DetectionType::FileExists { files: vec![] },
-            icon: None,
-            color: None,
-            priority: 1,
-            root_indicators: vec![crate::types::RootIndicator {
-                pattern: "Rocket.toml".to_string(),
-                weight: 0.9,
-                context: crate::types::IndicatorContext::FrameworkRoot,
-                alternative_group: None,
-            }],
-        }];
-        let indicators = vec![rust_lang];
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(std::sync::Arc::new).collect(),
-            std::sync::Arc::new(catalog),
-            DetectionConfig::default(),
-        );
-
-        let temp_dir = TempDir::new()?;
-        fs::write(
-            temp_dir.path().join("Rocket.toml"),
-            "[package]\nname = \"test\"",
-        )?;
-
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.check_framework_root_indicators(temp_dir.path(), &file_cache)?;
-
-        assert!(result.is_some());
-        let result = result.ok_or("Expected Some but got None")?;
-        assert!(!result.frameworks.is_empty());
-        assert_eq!(result.frameworks[0].framework.name, "Rocket");
-        Ok(())
-    }
-
-    #[test]
     fn test_is_boundary_directory_public() -> Result<(), Box<dyn std::error::Error>> {
         let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
@@ -1055,7 +499,6 @@ not-python = true
         )];
         let engine = RootIndicatorEngine::from_parts(
             indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
             DetectionConfig::default(),
         );
 
@@ -1086,7 +529,6 @@ not-python = true
         ];
         let engine = RootIndicatorEngine::from_parts(
             indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
             DetectionConfig::default(),
         );
 
@@ -1098,48 +540,12 @@ not-python = true
         fs::write(temp_dir.path().join("tsconfig.json"), "{}")?;
 
         let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.check_indicator_root_indicators(temp_dir.path(), &file_cache)?;
+        let result = engine.find_project_root(temp_dir.path(), &file_cache)?;
 
         assert!(result.is_some());
-        let result = result.ok_or("Expected Some but got None")?;
-        assert!(result.indicator.is_some());
+        let (_, found) = result.ok_or("Expected Some but got None")?;
         // Should prefer Rust due to higher weight (0.95 vs 0.90)
-        let indicator = result
-            .indicator
-            .ok_or("Expected Some indicator but got None")?;
-        assert_eq!(indicator.name, "Rust");
-        Ok(())
-    }
-
-    #[test]
-    fn test_no_early_termination_when_uncertain_comprehensive(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let indicators = vec![create_test_indicator_with_indicators(
-            "Rust",
-            vec![("Cargo.toml", 0.3)],
-        )];
-        let config = DetectionConfig {
-            detection_mode: DetectionMode::Fast,
-            confidence_threshold: 0.8,
-            ..Default::default()
-        };
-        let engine = RootIndicatorEngine::from_parts(
-            indicators.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
-            config,
-        );
-
-        let temp_dir = TempDir::new()?;
-        fs::write(
-            temp_dir.path().join("Cargo.toml"),
-            "[package]\nname = \"test\"",
-        )?;
-
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
-
-        // Should not terminate early due to low confidence
-        assert!(result.is_none());
+        assert_eq!(found.indicator.name, "Rust");
         Ok(())
     }
 
@@ -1151,25 +557,20 @@ not-python = true
         let indicator = create_test_indicator_with_indicators("Deno", vec![("deno.json", 0.95)]);
         let languages = vec![indicator];
         let config = DetectionConfig {
-            detection_mode: DetectionMode::Fast,
             confidence_threshold: 0.3,
             ..Default::default()
         };
-        let engine = RootIndicatorEngine::from_parts(
-            languages.into_iter().map(Arc::new).collect(),
-            Arc::new(Vec::new()),
-            config,
-        );
+        let engine =
+            RootIndicatorEngine::from_parts(languages.into_iter().map(Arc::new).collect(), config);
 
         let temp_dir = TempDir::new()?;
         fs::write(temp_dir.path().join("deno.json"), "{}")?;
 
         let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.detect_with_early_termination(temp_dir.path(), &file_cache)?;
+        let result = engine.find_project_root(temp_dir.path(), &file_cache)?;
 
-        let result = result.ok_or("expected early termination on deno.json")?;
-        let found = result.indicator.ok_or("expected an indicator")?;
-        assert_eq!(found.name, "Deno");
+        let (_, found) = result.ok_or("expected root discovery on deno.json")?;
+        assert_eq!(found.indicator.name, "Deno");
         Ok(())
     }
 }

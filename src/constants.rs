@@ -75,18 +75,6 @@ pub const JULIA_EXTENSION: &str = "*.jl";
 // Other
 pub const DART_EXTENSION: &str = "*.dart";
 
-// Framework config files
-pub const NEXT_CONFIG_JS: &str = "next.config.js";
-pub const NEXT_CONFIG_TS: &str = "next.config.ts";
-pub const ANGULAR_JSON: &str = "angular.json";
-pub const ROCKET_TOML: &str = "Rocket.toml";
-pub const MANAGE_PY: &str = "manage.py";
-pub const VITE_CONFIG_JS: &str = "vite.config.js";
-pub const VITE_CONFIG_TS: &str = "vite.config.ts";
-pub const NUXT_CONFIG_JS: &str = "nuxt.config.js";
-pub const NUXT_CONFIG_TS: &str = "nuxt.config.ts";
-pub const SVELTE_CONFIG_JS: &str = "svelte.config.js";
-
 // Project/Build files
 pub const GEMSPEC_EXTENSION: &str = "*.gemspec";
 pub const XCWORKSPACE_EXTENSION: &str = "*.xcworkspace";
@@ -94,7 +82,5 @@ pub const VCXPROJ_EXTENSION: &str = "*.vcxproj";
 pub const QT_PRO_EXTENSION: &str = "*.pro";
 pub const QT_PRI_EXTENSION: &str = "*.pri";
 
-pub const EARLY_TERMINATION: &str = "early_termination";
-pub const EARLY_TERMINATION_MSG: &str = "Root indicator found - early termination";
 pub const FRAMEWORK_DETECTION: &str = "framework_detection";
 pub const FRAMEWORK_DETECTION_PATTERN: &str = "FRAMEWORK_DETECTION";

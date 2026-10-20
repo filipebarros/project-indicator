@@ -1,4 +1,3 @@
-use crate::constants::*;
 use crate::detection::caches::FileSystemCacheManager;
 use crate::detection::confidence_scorer::ConfidenceScorer;
 use crate::detection::framework_detector::FrameworkDetector;
@@ -130,11 +129,8 @@ impl DetectionEngine {
             Some(file_cache),
         );
 
-        let root_indicator_engine = RootIndicatorEngine::from_parts(
-            indicators.clone(),
-            frameworks.clone(),
-            detection_config,
-        );
+        let root_indicator_engine =
+            RootIndicatorEngine::from_parts(indicators.clone(), detection_config);
 
         Self {
             indicators,
@@ -150,7 +146,6 @@ impl DetectionEngine {
 
     pub fn detect(&self, path: &Path) -> Result<DetectionResult> {
         let mut evidence = DetectionEvidence::new();
-        let detection_start = std::time::Instant::now();
 
         // Safety check: Don't scan from boundary directories (home, system dirs)
         // These are too large and not meaningful to scan
@@ -197,61 +192,6 @@ impl DetectionEngine {
             path.to_path_buf()
         };
 
-        // Continue with existing detection logic using scan_path instead of path
-        if let Some(early_result) = self
-            .root_indicator_engine
-            .detect_with_early_termination(&scan_path, &self.cache_manager.file_existence_cache())
-            .with_context(|| "Failed to check root indicators")?
-        {
-            evidence.add_confidence_factor(crate::types::ConfidenceFactor::new(
-                EARLY_TERMINATION.to_owned(),
-                early_result.confidence,
-                1.0,
-                EARLY_TERMINATION_MSG.to_owned(),
-            ));
-            evidence.set_scan_metrics(0, detection_start.elapsed().as_millis() as u64);
-
-            log::debug!(
-                "Early termination successful: {} with confidence {:.3} in {}ms",
-                early_result
-                    .indicator
-                    .as_ref()
-                    .map(|l| l.name.as_str())
-                    .unwrap_or("Unknown"),
-                early_result.confidence,
-                detection_start.elapsed().as_millis()
-            );
-
-            // Framework detection is not gated on confidence: a framework
-            // dependency in a manifest is evidence in its own right
-            let frameworks = if let Some(ref indicator) = early_result.indicator {
-                self.framework_detector
-                    .detect_frameworks_with_evidence(
-                        &scan_path,
-                        indicator,
-                        &self.frameworks,
-                        &mut evidence,
-                        &self.cache_manager.file_existence_cache(),
-                        self.cache_manager.parsed_file_cache(),
-                    )
-                    .with_context(|| "Failed to detect frameworks")?
-            } else {
-                Vec::new()
-            };
-
-            let mut result = early_result;
-            result.frameworks = frameworks;
-            result.evidence = evidence;
-            // Same framework-evidence floor as the full-scan path (the root
-            // floor is implicit here: early termination is root-driven)
-            if !result.frameworks.is_empty() {
-                result.confidence = result.confidence.max(FRAMEWORK_MATCH_CONFIDENCE_FLOOR);
-            }
-
-            return Ok(result);
-        }
-
-        log::debug!("No definitive root indicators found, falling back to file scanning");
         let scan_start = std::time::Instant::now();
 
         let detailed_files = self

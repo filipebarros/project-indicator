@@ -78,10 +78,6 @@ cargo run -- --format full
 cargo run -- --format debug
 cargo run -- --format rich
 
-# Performance modes
-cargo run -- --mode fast     # Early termination
-cargo run -- --mode thorough # Full scan (default)
-
 # Debugging
 cargo run -- debug --verbose
 cargo run -- benchmark
@@ -147,8 +143,8 @@ The detection flow follows this path:
   plus the binary version; any mismatch is a miss
 - **Failure policy**: every error degrades silently to a fresh detection
   (`log::debug` only) — the cache must never break a prompt
-- **Bypass**: `--no-cache`, or automatically when `--max-depth`/`--mode`
-  overrides are passed
+- **Bypass**: `--no-cache`, or automatically when a `--max-depth` override
+  is passed
 
 The remaining caches live and die within a single detection run:
 

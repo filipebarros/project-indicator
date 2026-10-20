@@ -408,7 +408,6 @@ impl ConfigBuilder {
             require_vcs_root: self.require_vcs_root,
             confidence_threshold: self.confidence_threshold,
             max_depth: self.max_depth,
-            detection_mode: crate::types::DetectionMode::default(),
         };
 
         (meta, display, detection)

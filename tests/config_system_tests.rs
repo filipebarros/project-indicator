@@ -19,7 +19,6 @@ fn test_detection_engine_with_custom_config() -> Result<(), Box<dyn std::error::
         require_vcs_root: false,
         confidence_threshold: 0.8,
         max_depth: 3,
-        detection_mode: project_indicator::types::DetectionMode::default(),
     };
 
     let engine = DetectionEngine::with_config(vec![], vec![], detection_config);
@@ -37,7 +36,6 @@ fn test_detection_config_serialization() -> Result<(), Box<dyn std::error::Error
         require_vcs_root: true,
         confidence_threshold: 0.4,
         max_depth: 3,
-        detection_mode: project_indicator::types::DetectionMode::default(),
     };
 
     let toml_str = toml::to_string(&original_config)?;
@@ -137,9 +135,10 @@ fn test_config_with_removed_keys_still_parses() -> Result<(), Box<dyn std::error
 
     // Old-schema config containing keys removed in the 2026-09 ponytail
     // cleanup (detection.max_matches_per_pattern/small_project_threshold/
-    // extreme_size_threshold, detection.root_indicators, Framework.files).
+    // extreme_size_threshold, detection.root_indicators, Framework.files)
+    // and the 2026-10 removal (detection.detection_mode).
     // Serde ignores unknown fields by default, so a config written before
-    // that cleanup must still parse without error.
+    // those cleanups must still parse without error.
     let config_content = "[meta]
 version = \"3.0\"
 
@@ -155,6 +154,7 @@ confidence_threshold = 0.6
 max_matches_per_pattern = 15
 small_project_threshold = 50
 extreme_size_threshold = 500
+detection_mode = \"Fast\"
 
 [[detection.root_indicators]]
 pattern = \".git\"

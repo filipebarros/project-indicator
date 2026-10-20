@@ -97,7 +97,6 @@ project-indicator [OPTIONS] [PATH]
 **Options:**
 - `--format <FORMAT>` - Output format: simple (default), full, json, compact, debug, rich
 - `--max-depth <N>` - Maximum scan depth (default: 1)
-- `--mode <MODE>` - Detection mode: thorough (default) or fast
 - `-v, --verbose` - Enable verbose logging
 
 ### Subcommands
@@ -213,9 +212,6 @@ require_vcs_root = false
 confidence_threshold = 0.3
 max_depth = 1
 
-# Detection mode: "fast" or "thorough"
-[detection.mode]
-mode = "thorough"
 
 # Custom indicator (project type). `ecosystems` links it to the framework
 # catalog: frameworks sharing an ecosystem are detected for this indicator.

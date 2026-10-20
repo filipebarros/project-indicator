@@ -147,7 +147,6 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                         println!("📦 Active Configuration:");
                         println!("   Indicators: {}", config.indicators.len());
                         println!("   Total frameworks: {}", config.frameworks.len());
-                        println!("   Detection mode: {:?}", config.detection.detection_mode);
                         println!();
                         println!(
                             "💡 Run 'project-indicator config validate' to check configuration"
