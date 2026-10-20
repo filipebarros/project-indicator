@@ -50,14 +50,3 @@ fn test_cli_debug_subcommand() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
-
-#[test]
-fn test_cli_benchmark_subcommand() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::try_parse_from(["project-indicator", "benchmark"])?;
-
-    match cli.command {
-        Some(Commands::Benchmark) => {}
-        _ => panic!("Expected Benchmark command"),
-    }
-    Ok(())
-}

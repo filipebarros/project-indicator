@@ -1,10 +1,8 @@
-pub mod benchmark;
 pub mod cache;
 pub mod config;
 pub mod debug;
 pub mod detect;
 
-pub use benchmark::handle_benchmark_command;
 pub use cache::handle_cache_command;
 pub use config::handle_config_command;
 pub use debug::handle_debug_command;
