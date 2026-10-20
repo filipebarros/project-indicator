@@ -127,67 +127,63 @@ priority = 1
     Ok(())
 }
 #[test]
-fn test_config_with_removed_keys_still_parses() -> Result<(), Box<dyn std::error::Error>> {
-    let temp_dir = TempDir::new()?;
-    let config_file = temp_dir.path().join("config.toml");
-
-    // Old-schema config containing keys removed in the 2026-09 ponytail
-    // cleanup (detection.max_matches_per_pattern/small_project_threshold/
-    // extreme_size_threshold, detection.root_indicators, Framework.files)
-    // and the 2026-10 removals (detection.detection_mode,
-    // display.framework_separator).
-    // Serde ignores unknown fields by default, so a config written before
-    // those cleanups must still parse without error.
-    let config_content = "[meta]
-version = \"3.0\"
-
-[display]
-show_frameworks = true
-max_frameworks = 3
-framework_separator = \" | \"
-
-[detection]
-max_upward_traversal = 5
-require_vcs_root = true
-confidence_threshold = 0.6
-max_matches_per_pattern = 15
-small_project_threshold = 50
-extreme_size_threshold = 500
-detection_mode = \"Fast\"
-
-[[detection.root_indicators]]
-pattern = \".git\"
-weight = 1.0
-context = \"VersionControl\"
-
+fn test_removed_config_keys_fail_parse() -> Result<(), Box<dyn std::error::Error>> {
+    // Removed schema keys must be rejected loudly, not silently ignored:
+    // a stale config gets surfaced ('config validate' names the unknown
+    // key) instead of half-applying. At prompt time Config::load_default
+    // still soft-falls-back to the built-in template, so a stale config
+    // can never break the shell (covered by
+    // persistent_cache_tests::test_unparsable_config_soft_fallback).
+    let indicators = r##"
 [[indicators]]
-name = \"Test Language\"
-files = [\"test.file\"]
-color = \"#FF0000\"
-icon = \"🧪\"
+name = "Test Language"
+files = ["test.file"]
+color = "#FF0000"
+icon = "T"
 priority = 1
+"##;
 
-[[frameworks]]
-name = \"Test Framework\"
-ecosystems = [\"npm\"]
-color = \"#00FF00\"
-priority = 1
-files = [\"legacy.marker\"]
+    let cases = [
+        (
+            "framework_separator",
+            format!(
+                "[display]\nshow_frameworks = true\nmax_frameworks = 3\nframework_separator = \" | \"\n{indicators}"
+            ),
+        ),
+        (
+            "detection_mode",
+            format!("[detection]\nmax_upward_traversal = 5\nrequire_vcs_root = false\nconfidence_threshold = 0.3\ndetection_mode = \"Fast\"\n{indicators}"),
+        ),
+        (
+            "max_matches_per_pattern",
+            format!("[detection]\nmax_upward_traversal = 5\nrequire_vcs_root = false\nconfidence_threshold = 0.3\nmax_matches_per_pattern = 15\n{indicators}"),
+        ),
+        (
+            "root_indicators",
+            format!("[detection]\nmax_upward_traversal = 5\nrequire_vcs_root = false\nconfidence_threshold = 0.3\n\n[[detection.root_indicators]]\npattern = \".git\"\nweight = 1.0\n{indicators}"),
+        ),
+        (
+            "files",
+            format!(
+                "{indicators}\n[[frameworks]]\nname = \"F\"\necosystems = [\"npm\"]\npriority = 1\nfiles = [\"legacy.marker\"]\n\n[frameworks.detection]\ntype = \"Dependencies\"\ndependencies = [\"x\"]\n"
+            ),
+        ),
+    ];
 
-[frameworks.detection]
-type = \"Dependencies\"
-dependencies = [\"test-framework\"]
-";
+    for (removed_key, stale_config) in cases {
+        let temp_dir = TempDir::new()?;
+        let config_file = temp_dir.path().join("config.toml");
+        fs::write(&config_file, &stale_config)?;
 
-    fs::write(&config_file, config_content)?;
-
-    let config = Config::load_from_file(&config_file)?;
-
-    assert_eq!(config.detection.max_upward_traversal, 5);
-    assert_eq!(config.detection.confidence_threshold, 0.6);
-    assert_eq!(config.indicators.len(), 1);
-    assert_eq!(config.frameworks.len(), 1);
-    assert_eq!(config.frameworks[0].name, "Test Framework");
+        let err = match Config::load_from_file(&config_file) {
+            Err(err) => format!("{err:#}"),
+            Ok(_) => panic!("config with removed key '{removed_key}' must fail to parse"),
+        };
+        assert!(
+            err.contains(removed_key),
+            "parse error for removed key '{removed_key}' should name it, got: {err}"
+        );
+    }
 
     Ok(())
 }

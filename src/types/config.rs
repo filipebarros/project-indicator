@@ -52,6 +52,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct DetectionConfig {
     pub max_upward_traversal: usize,
     pub require_vcs_root: bool,
@@ -76,6 +77,7 @@ impl Default for DetectionConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct DisplayConfig {
     pub show_frameworks: bool,
     pub max_frameworks: usize,
@@ -91,6 +93,7 @@ impl Default for DisplayConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigMeta {
     pub version: String,
 }

@@ -161,7 +161,12 @@ pub enum DetectionType {
     },
 }
 
+// NOTE: `detection` is an internally-tagged enum (`#[serde(tag = "type")]`),
+// and serde cannot enforce deny_unknown_fields inside internally-tagged
+// variant content — unknown keys under [frameworks.detection] are still
+// silently ignored. Every other config struct rejects unknown keys.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Framework {
     pub name: String,
     /// Ecosystems this framework belongs to. Scopes which indicators can

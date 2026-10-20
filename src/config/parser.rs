@@ -70,7 +70,9 @@ impl ConfigParser {
                     Ok(config) => return Ok(config),
                     Err(e) => {
                         log::warn!(
-                            "Ignoring unparsable config at {} ({}); using built-in template",
+                            "Ignoring unparsable config at {} ({}); using built-in template. \
+                             Run 'project-indicator config validate' to see the error, or \
+                             'project-indicator config init --force' to regenerate",
                             path.display(),
                             e
                         );
@@ -92,7 +94,7 @@ impl ConfigParser {
     }
     pub fn parse_toml_content(content: &str) -> Result<Config> {
         let config: Config = toml::from_str(content)
-            .with_context(|| "Failed to parse configuration file as V2 format")?;
+            .with_context(|| "Configuration does not match the v3 schema")?;
 
         if !config.meta.version.starts_with("3.") {
             log::warn!(

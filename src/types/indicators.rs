@@ -149,6 +149,7 @@ impl IndicatorContext {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct RootIndicator {
     pub pattern: String,
     pub weight: f32,
@@ -165,6 +166,7 @@ pub struct RootIndicator {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Indicator {
     pub name: String,
     pub files: Vec<String>,
