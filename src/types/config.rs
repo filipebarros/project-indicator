@@ -1,7 +1,7 @@
 //! Configuration types for project detection behavior.
 //!
 //! This module contains all configuration-related types that control how the detection
-//! engine operates, including detection modes, thresholds, display settings, and caching.
+//! engine operates, including thresholds, display settings, and caching.
 //!
 //! # Overview
 //!
@@ -10,25 +10,16 @@
 //! - [`DetectionConfig`] - Core detection behavior (depth, confidence)
 //! - [`DisplayConfig`] - Output formatting and display preferences
 //! - [`ConfigMeta`] - Configuration file metadata and versioning
-//! - [`DetectionMode`] - Fast vs Thorough detection strategies
-//!
-//! # Detection Modes
-//!
-//! The engine supports two detection modes:
-//!
-//! - **Fast**: Quick detection using priority files only (Cargo.toml, package.json, etc.)
-//! - **Thorough**: Full directory traversal with comprehensive pattern matching (default)
 //!
 //! # Example
 //!
 //! ```rust
-//! use project_indicator::types::{DetectionConfig, DetectionMode, DisplayConfig};
+//! use project_indicator::types::{DetectionConfig, DisplayConfig};
 //!
 //! // Create custom detection configuration
 //! let mut config = DetectionConfig::default();
 //! config.max_depth = 3;
 //! config.confidence_threshold = 0.5;
-//! config.detection_mode = DetectionMode::Fast;
 //!
 //! // Customize display settings
 //! let display = DisplayConfig {
@@ -61,13 +52,6 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub enum DetectionMode {
-    Fast,
-    #[default]
-    Thorough,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DetectionConfig {
     pub max_upward_traversal: usize,
@@ -75,8 +59,6 @@ pub struct DetectionConfig {
     pub confidence_threshold: f32,
     #[serde(default = "default_max_depth")]
     pub max_depth: usize,
-    #[serde(default)]
-    pub detection_mode: DetectionMode,
 }
 
 fn default_max_depth() -> usize {
@@ -90,7 +72,6 @@ impl Default for DetectionConfig {
             require_vcs_root: false,
             confidence_threshold: 0.3,
             max_depth: default_max_depth(),
-            detection_mode: DetectionMode::default(),
         }
     }
 }
