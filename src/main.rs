@@ -6,9 +6,7 @@ use project_indicator::{
 
 mod commands;
 
-use commands::{
-    handle_cache_command, handle_config_command, handle_debug_command, handle_detect_command,
-};
+use commands::{handle_cache_command, handle_config_command, handle_detect_command};
 
 fn main() {
     if let Err(e) = run() {
@@ -32,7 +30,6 @@ fn run() -> Result<()> {
 
     match cli.command {
         Some(Commands::Config { action }) => handle_config_command(action),
-        Some(Commands::Debug { verbose }) => handle_debug_command(&cli, verbose),
         Some(Commands::Cache { action }) => handle_cache_command(action),
         None => handle_detect_command(&cli),
     }

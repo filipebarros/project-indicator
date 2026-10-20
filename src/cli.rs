@@ -30,10 +30,6 @@ pub enum Commands {
         #[command(subcommand)]
         action: ConfigAction,
     },
-    Debug {
-        #[arg(long)]
-        verbose: bool,
-    },
     /// Manage the persistent detection result cache
     Cache {
         #[command(subcommand)]
@@ -103,26 +99,6 @@ mod tests {
             Some(Commands::Config {
                 action: ConfigAction::Validate
             })
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_debug_subcommand() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from(["project-indicator", "debug", "--verbose"])?;
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Debug { verbose: true })
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_debug_subcommand_no_verbose() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from(["project-indicator", "debug"])?;
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Debug { verbose: false })
         ));
         Ok(())
     }
@@ -251,15 +227,17 @@ mod tests {
             "/custom/path",
             "--format",
             "full",
-            "debug",
-            "--verbose",
+            "cache",
+            "stats",
         ])?;
 
         assert_eq!(cli.path, Some(PathBuf::from("/custom/path")));
         assert_eq!(cli.format, "full");
         assert!(matches!(
             cli.command,
-            Some(Commands::Debug { verbose: true })
+            Some(Commands::Cache {
+                action: CacheAction::Stats
+            })
         ));
         Ok(())
     }

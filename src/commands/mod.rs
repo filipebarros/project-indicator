@@ -1,11 +1,9 @@
 pub mod cache;
 pub mod config;
-pub mod debug;
 pub mod detect;
 
 pub use cache::handle_cache_command;
 pub use config::handle_config_command;
-pub use debug::handle_debug_command;
 pub use detect::handle_detect_command;
 
 use project_indicator::Result;
