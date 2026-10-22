@@ -13,7 +13,6 @@ pub fn check_kotlin_ecosystem<P: AsRef<Path>>(
     let mut found_deps = Vec::new();
     let mut evidence = Vec::new();
 
-    // Check build.gradle.kts (Kotlin DSL for Gradle)
     if try_config_file_deps(
         parsed_cache,
         &path,
@@ -26,7 +25,6 @@ pub fn check_kotlin_ecosystem<P: AsRef<Path>>(
         return Ok((found_deps, evidence));
     }
 
-    // Check settings.gradle.kts
     if try_config_file_deps(
         parsed_cache,
         &path,
@@ -39,7 +37,6 @@ pub fn check_kotlin_ecosystem<P: AsRef<Path>>(
         return Ok((found_deps, evidence));
     }
 
-    // Check pom.xml (Maven for Kotlin)
     if try_config_file_deps(
         parsed_cache,
         &path,

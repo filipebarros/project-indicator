@@ -19,7 +19,10 @@ impl std::str::FromStr for OutputFormat {
             "full" => Ok(OutputFormat::Full),
             "json" => Ok(OutputFormat::Json),
             "debug" => Ok(OutputFormat::Debug),
-            _ => Err(format!("Unknown output format: {}", s)),
+            _ => Err(format!(
+                "Unknown output format: {}. Valid options: simple, full, json, debug",
+                s
+            )),
         }
     }
 }
@@ -64,7 +67,16 @@ mod tests {
         assert_eq!("json".parse::<OutputFormat>()?, OutputFormat::Json);
         assert_eq!("debug".parse::<OutputFormat>()?, OutputFormat::Debug);
 
-        assert!("invalid".parse::<OutputFormat>().is_err());
+        // A stale format from a pre-upgrade shell integration (e.g. the
+        // removed "compact") must get an error that names the valid options
+        let err = match "compact".parse::<OutputFormat>() {
+            Err(err) => err,
+            Ok(_) => panic!("removed format must not parse"),
+        };
+        assert!(
+            err.contains("simple") && err.contains("json"),
+            "format error must list valid options, got: {err}"
+        );
         Ok(())
     }
 

@@ -68,7 +68,6 @@ impl TimeoutManager {
     pub fn check_early_termination(&self, high_priority_count: usize) -> bool {
         let scanned = self.files_scanned.load(Ordering::Relaxed);
 
-        // Strong evidence threshold: 3+ high-priority files
         if high_priority_count >= 3 {
             log::trace!(
                 "Early termination: strong evidence (high_priority={}, threshold=3)",
@@ -78,7 +77,6 @@ impl TimeoutManager {
             return true;
         }
 
-        // File count threshold: 15+ files scanned
         if scanned >= 15 {
             log::trace!(
                 "Early termination: file count limit (scanned={}, threshold=15)",

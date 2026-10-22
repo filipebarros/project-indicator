@@ -41,7 +41,6 @@ mod tests {
     #[test]
     fn test_detection_engine_creation() -> Result<(), Box<dyn std::error::Error>> {
         let engine = detection::DetectionEngine::new(vec![], vec![]);
-        // Engine can be created with empty language list
         let _ = engine;
         Ok(())
     }
@@ -77,7 +76,6 @@ mod tests {
             output::formatters::OutputFormat::Json => {}
             output::formatters::OutputFormat::Debug => {}
         }
-        // All modules can be imported and used
         let _ = detection;
         Ok(())
     }

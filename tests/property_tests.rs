@@ -10,8 +10,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 
-// Custom strategies for generating test data
-
 /// Strategy for generating valid file paths
 fn path_strategy() -> impl Strategy<Value = PathBuf> {
     prop::collection::vec("[a-zA-Z0-9_-]{1,10}", 1..5).prop_map(|components| {
@@ -58,8 +56,6 @@ fn cache_operation_strategy() -> impl Strategy<Value = CacheOp> {
     ]
 }
 
-// Property Tests
-
 proptest! {
     /// Invariant: FileSystemCache holds at most one entry per distinct path
     #[test]
@@ -103,7 +99,6 @@ proptest! {
             let result1 = matcher.matches_pattern(filename, &pattern);
             let result2 = matcher.matches_pattern(filename, &pattern);
 
-            // Should be deterministic - same inputs always give same output
             prop_assert_eq!(
                 result1,
                 result2,
@@ -139,7 +134,6 @@ proptest! {
 
         let stats = cache.stats();
 
-        // Hit rate calculation should be consistent
         let total_accesses = stats.hits + stats.misses;
         if total_accesses > 0 {
             let expected_hit_rate = (stats.hits as f64 / total_accesses as f64) * 100.0;
@@ -159,7 +153,6 @@ proptest! {
 /// Concurrent property tests
 #[test]
 fn test_concurrent_cache_operations_maintain_invariants() {
-    // Use a fixed seed for reproducibility
     let config = ProptestConfig::with_cases(20);
 
     proptest!(config, |(
@@ -172,7 +165,6 @@ fn test_concurrent_cache_operations_maintain_invariants() {
         let total_ops: usize = operations.iter().map(|thread_ops| thread_ops.len()).sum();
         let mut handles = vec![];
 
-        // Spawn thread for each operation set
         for thread_ops in operations {
             let cache_clone: Arc<FileSystemCache> = Arc::clone(&cache);
             let handle = thread::spawn(move || {
@@ -190,14 +182,12 @@ fn test_concurrent_cache_operations_maintain_invariants() {
             handles.push(handle);
         }
 
-        // Wait for all threads
         for handle in handles {
             if let Err(e) = handle.join() {
                 panic!("Thread panicked: {:?}", e);
             }
         }
 
-        // Verify invariants after concurrent access
         let stats = cache.stats();
 
         prop_assert!(
@@ -225,21 +215,18 @@ fn test_edge_case_patterns() {
     )| {
         let matcher = PatternMatcher::new();
 
-        // Pattern "*" should match everything
         prop_assert!(
             matcher.matches_pattern(&filename, "*"),
             "Pattern '*' should match '{}'",
             filename
         );
 
-        // Exact match should always work
         prop_assert!(
             matcher.matches_pattern(&filename, &filename),
             "Exact match failed for '{}'",
             filename
         );
 
-        // Empty pattern should not match non-empty filename
         prop_assert!(
             !matcher.matches_pattern(&filename, ""),
             "Empty pattern should not match '{}'",

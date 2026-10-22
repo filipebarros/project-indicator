@@ -7,7 +7,7 @@
 //!
 //! The configuration system is organized into several focused types:
 //!
-//! - [`DetectionConfig`] - Core detection behavior (depth, confidence)
+//! - [`DetectionConfig`] - Core detection behavior (depth, traversal)
 //! - [`DisplayConfig`] - Output formatting and display preferences
 //! - [`ConfigMeta`] - Configuration file metadata and versioning
 //!
@@ -19,7 +19,6 @@
 //! // Create custom detection configuration
 //! let mut config = DetectionConfig::default();
 //! config.max_depth = 3;
-//! config.confidence_threshold = 0.5;
 //!
 //! // Customize display settings
 //! let display = DisplayConfig {
@@ -56,7 +55,6 @@ use serde::{Deserialize, Serialize};
 pub struct DetectionConfig {
     pub max_upward_traversal: usize,
     pub require_vcs_root: bool,
-    pub confidence_threshold: f32,
     #[serde(default = "default_max_depth")]
     pub max_depth: usize,
 }
@@ -70,7 +68,6 @@ impl Default for DetectionConfig {
         Self {
             max_upward_traversal: 10,
             require_vcs_root: false,
-            confidence_threshold: 0.3,
             max_depth: default_max_depth(),
         }
     }

@@ -194,7 +194,6 @@ max_frameworks = 2
 [detection]
 max_upward_traversal = 10
 require_vcs_root = false
-confidence_threshold = 0.3
 max_depth = 1
 
 
@@ -224,10 +223,14 @@ dependencies = ["my-framework"]
 ### Configuration Locations
 
 Priority order (first match wins):
-1. `$XDG_CONFIG_HOME/project-indicator/config.toml`
-2. `$HOME/.config/project-indicator/config.toml`
-3. Windows: `%APPDATA%\project-indicator\config.toml`
-4. `./project-indicator.toml` (current directory)
+1. `./project-indicator.toml` (current directory)
+2. `./.project-indicator.toml` (current directory)
+3. `$XDG_CONFIG_HOME/project-indicator/config.toml` (defaults to `~/.config`)
+4. `$XDG_CONFIG_HOME/project-indicator.toml`
+5. `$HOME/.project-indicator.toml`
+
+A config file in the current directory shadows the global one — if your
+global edits seem ignored, check for a local file first.
 
 Parsing is strict: unknown or removed keys make the config fail to parse.
 A failing config never breaks your prompt — detection falls back to the

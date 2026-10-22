@@ -10,7 +10,6 @@ pub struct FoundRootIndicator {
     pub pattern: String,
     pub certainty: f32,
     pub indicator: Arc<Indicator>,
-    pub framework: Option<String>,
     pub specificity: u8,
 }
 
@@ -36,7 +35,6 @@ impl RootIndicatorEngine {
         start_path: &Path,
         file_cache: &Arc<FileSystemCache>,
     ) -> Result<Option<(PathBuf, FoundRootIndicator)>> {
-        // Safety check: don't traverse if we're already at a boundary directory
         if self.is_boundary_directory(start_path) {
             log::debug!(
                 "Starting path {} is a boundary directory, skipping upward traversal",
@@ -69,7 +67,6 @@ impl RootIndicatorEngine {
                 return Ok(Some((current, indicator)));
             }
 
-            // Move up one directory
             let parent = match current.parent() {
                 Some(p) => {
                     // Don't traverse beyond filesystem root
@@ -85,7 +82,6 @@ impl RootIndicatorEngine {
                 }
             };
 
-            // Stop at boundary directories (home, system dirs)
             // Check parent BEFORE allocating PathBuf
             if self.is_boundary_directory(parent) {
                 log::debug!(
@@ -95,7 +91,6 @@ impl RootIndicatorEngine {
                 break;
             }
 
-            // Only allocate PathBuf if we're continuing
             current = parent.to_path_buf();
             levels += 1;
         }
@@ -119,20 +114,17 @@ impl RootIndicatorEngine {
     /// Check if a directory is a boundary that we shouldn't traverse past
     /// Returns true for home directory, /Users, /home, system directories
     fn is_boundary_directory(&self, path: &Path) -> bool {
-        // Check cached home directory
         if let Some(ref home) = self.cached_home_dir {
             if path == home {
                 return true;
             }
         }
 
-        // Check for common system boundary directories
         // Optimize: check most common ones first and avoid string conversion if possible
         if path.as_os_str() == "/" {
             return true;
         }
 
-        // Only convert to string for remaining checks
         let path_str = path.to_string_lossy();
         matches!(
             path_str.as_ref(),
@@ -140,8 +132,10 @@ impl RootIndicatorEngine {
         )
     }
 
-    /// Check for any root indicator at specific path
-    /// This checks both indicator and VCS markers
+    /// Check for indicator root files at a specific path. A VCS marker
+    /// (.git/.hg/.svn) is never itself a root candidate; it is consulted
+    /// only as the require_vcs_root gate, which demands the marker in the
+    /// same directory as the indicator file.
     fn check_root_indicators_at_path(
         &self,
         path: &Path,
@@ -149,18 +143,25 @@ impl RootIndicatorEngine {
     ) -> Result<Option<FoundRootIndicator>> {
         let mut found_indicators = Vec::new();
 
-        // Check for .git directory (common project root marker)
-        let git_dir = path.join(".git");
-        let has_git = file_cache.exists(&git_dir);
-        if has_git {
-            log::trace!("Found .git directory at {}", path.display());
+        // Must be checked before the indicator loop: the strong-indicator
+        // early exit below would otherwise bypass it.
+        if self.config.require_vcs_root {
+            let has_vcs = [".git", ".hg", ".svn"]
+                .iter()
+                .any(|marker| file_cache.exists(&path.join(marker)));
+            if !has_vcs {
+                log::trace!(
+                    "require_vcs_root: no VCS marker at {}, rejecting root candidates",
+                    path.display()
+                );
+                return Ok(None);
+            }
         }
 
         // Optimization: Check high-priority indicators first for early exit
         let mut indicators_by_priority: Vec<_> = self.indicators.iter().collect();
         indicators_by_priority.sort_by_key(|indicator| indicator.priority);
 
-        // Check indicator root indicators
         for indicator in indicators_by_priority {
             for root_indicator in &indicator.root_indicators {
                 let indicator_path = path.join(&root_indicator.pattern);
@@ -179,7 +180,6 @@ impl RootIndicatorEngine {
                             pattern: root_indicator.pattern.clone(),
                             certainty,
                             indicator: indicator.clone(),
-                            framework: None,
                             specificity,
                         };
 
@@ -199,12 +199,6 @@ impl RootIndicatorEngine {
                     }
                 }
             }
-        }
-
-        // If require_vcs_root is enabled, only accept roots with .git
-        if self.config.require_vcs_root && has_git && found_indicators.is_empty() {
-            log::trace!("Found .git but no indicators at {}", path.display());
-            return Ok(None);
         }
 
         Ok(self.resolve_indicator_conflicts(&found_indicators).cloned())
@@ -395,7 +389,6 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let subdir = temp_dir.path().join("subdir");
         fs::create_dir(&subdir)?;
-        // Don't create Cargo.toml
 
         let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.find_project_root(&subdir, &file_cache)?;
@@ -451,15 +444,15 @@ mod tests {
             temp_dir.path().join("Cargo.toml"),
             "[package]\nname = \"test\"",
         )?;
-        // Don't create .git
 
         let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.find_project_root(temp_dir.path(), &file_cache)?;
 
-        // Should not find it because VCS root is required but not present
-        // However, the function might still find the Cargo.toml file
-        // Just verify the function completes without error
-        let _ = result;
+        assert!(
+            result.is_none(),
+            "require_vcs_root must reject an indicator root without .git, got: {:?}",
+            result.map(|(path, found)| (path, found.pattern))
+        );
         Ok(())
     }
 
@@ -481,13 +474,46 @@ mod tests {
             temp_dir.path().join("Cargo.toml"),
             "[package]\nname = \"test\"",
         )?;
-        fs::create_dir(temp_dir.path().join(".git"))?; // Create VCS root
+        fs::create_dir(temp_dir.path().join(".git"))?;
 
         let file_cache = Arc::new(FileSystemCache::new());
         let result = engine.find_project_root(temp_dir.path(), &file_cache)?;
 
         // Should find it because VCS root is present
         assert!(result.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_project_root_vcs_root_accepts_non_git_vcs(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // The flag is require_vcs_root, not require_git_root: Mercurial and
+        // SVN checkouts must satisfy it too.
+        let indicators = vec![create_test_indicator_with_indicators(
+            "Rust",
+            vec![("Cargo.toml", 0.95)],
+        )];
+        let config = DetectionConfig {
+            require_vcs_root: true,
+            ..Default::default()
+        };
+        let engine =
+            RootIndicatorEngine::from_parts(indicators.into_iter().map(Arc::new).collect(), config);
+
+        let temp_dir = TempDir::new()?;
+        fs::write(
+            temp_dir.path().join("Cargo.toml"),
+            "[package]\nname = \"test\"",
+        )?;
+        fs::create_dir(temp_dir.path().join(".hg"))?;
+
+        let file_cache = Arc::new(FileSystemCache::new());
+        let result = engine.find_project_root(temp_dir.path(), &file_cache)?;
+
+        assert!(
+            result.is_some(),
+            "an .hg checkout must satisfy require_vcs_root"
+        );
         Ok(())
     }
 
@@ -502,19 +528,16 @@ mod tests {
             DetectionConfig::default(),
         );
 
-        // Test home directory
         if let Some(home) = dirs::home_dir() {
             assert!(engine.is_boundary_directory_public(&home));
         }
 
-        // Test system directories (may not be boundary on all systems)
         assert!(engine.is_boundary_directory_public(Path::new("/")));
         // /usr and /System may not be considered boundary on all systems
         // Just test that the function doesn't panic
         let _ = engine.is_boundary_directory_public(Path::new("/usr"));
         let _ = engine.is_boundary_directory_public(Path::new("/System"));
 
-        // Test non-boundary directory
         let temp_dir = TempDir::new()?;
         assert!(!engine.is_boundary_directory_public(temp_dir.path()));
 
@@ -556,10 +579,7 @@ mod tests {
     fn test_data_driven_certainty_fallback() -> Result<(), Box<dyn std::error::Error>> {
         let indicator = create_test_indicator_with_indicators("Deno", vec![("deno.json", 0.95)]);
         let languages = vec![indicator];
-        let config = DetectionConfig {
-            confidence_threshold: 0.3,
-            ..Default::default()
-        };
+        let config = DetectionConfig::default();
         let engine =
             RootIndicatorEngine::from_parts(languages.into_iter().map(Arc::new).collect(), config);
 

@@ -37,7 +37,6 @@ pub fn create_test_project(files: &[(&str, &str)]) -> Result<TempDir, Box<dyn st
     for (file_path, content) in files {
         let full_path = temp_dir.path().join(file_path);
 
-        // Create parent directories if needed
         if let Some(parent) = full_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -168,7 +167,6 @@ mod tests {
         assert_eq!(config.indicators[1].name, "Rust");
         assert_eq!(config.indicators[2].name, "Python");
 
-        // Verify the framework catalog
         assert_eq!(config.frameworks.len(), 4);
         let names: Vec<&str> = config.frameworks.iter().map(|f| f.name.as_str()).collect();
         assert!(names.contains(&"React"));

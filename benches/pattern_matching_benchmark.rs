@@ -8,7 +8,6 @@ fn benchmark_common_patterns(c: &mut Criterion) {
     let mut group = c.benchmark_group("pattern_matching");
     let matcher = Arc::new(PatternMatcher::new());
 
-    // Common extension patterns
     let extensions = vec![
         ("*.rs", "src/main.rs", true),
         ("*.js", "index.js", true),
@@ -40,7 +39,6 @@ fn benchmark_common_patterns(c: &mut Criterion) {
         });
     });
 
-    // Exact match patterns
     group.bench_function("exact_match", |b| {
         b.iter(|| {
             black_box(matcher.matches_pattern("Cargo.toml", "Cargo.toml"));
@@ -49,7 +47,6 @@ fn benchmark_common_patterns(c: &mut Criterion) {
         });
     });
 
-    // Prefix patterns
     group.bench_function("prefix_match", |b| {
         b.iter(|| {
             black_box(matcher.matches_pattern("test_file.rs", "test_*"));

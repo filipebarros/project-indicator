@@ -8,7 +8,6 @@ use tempfile::TempDir;
 fn create_node_multi_framework_project() -> Result<TempDir, Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
-    // package.json with multiple frameworks
     let package_json = r#"{
   "name": "multi-framework-project",
   "version": "1.0.0",
@@ -85,25 +84,21 @@ pydantic==2.0.0
 fn create_polyglot_project() -> Result<TempDir, Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
-    // Node.js
     fs::write(
         temp_dir.path().join("package.json"),
         r#"{"dependencies": {"react": "^18.0.0", "express": "^4.0.0"}}"#,
     )
     .map_err(|e| format!("Failed to write package.json: {}", e))?;
 
-    // Rust
     fs::write(
         temp_dir.path().join("Cargo.toml"),
         "[package]\nname = \"app\"\n\n[dependencies]\nactix-web = \"4.0\"",
     )
     .map_err(|e| format!("Failed to write Cargo.toml: {}", e))?;
 
-    // Python
     fs::write(temp_dir.path().join("requirements.txt"), "django\nflask")
         .map_err(|e| format!("Failed to write requirements.txt: {}", e))?;
 
-    // Go
     fs::write(
         temp_dir.path().join("go.mod"),
         "module example.com/app\n\nrequire github.com/gin-gonic/gin v1.9.0",
@@ -183,7 +178,6 @@ fn benchmark_framework_count_scaling(c: &mut Criterion) -> Result<(), Box<dyn st
     let engine =
         DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
 
-    // Create projects with different numbers of frameworks
     let temp1 = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
     fs::write(
         temp1.path().join("package.json"),

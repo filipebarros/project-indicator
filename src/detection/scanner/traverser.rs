@@ -36,7 +36,7 @@ impl FileSystemTraverser {
             .max_depth(Some(self.max_depth))
             .standard_filters(true) // Enable .gitignore, .ignore, git/info/exclude
             .parents(true) // Walk up directory tree to find ignore files
-            .git_ignore(true) // Specifically enable gitignore support
+            .git_ignore(true)
             // Detection must be deterministic across machines: the
             // invoking user's personal global git ignore (core.excludesFile
             // or the ~/.config/git/ignore default) has nothing to do with
@@ -73,17 +73,14 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
 
-        // Create some test files
         fs::write(root.join("file1.rs"), "fn main() {}")?;
         fs::write(root.join("file2.rs"), "fn test() {}")?;
         fs::write(root.join(".gitignore"), "target/")?;
 
-        // Create nested directory
         let nested = root.join("src");
         fs::create_dir(&nested)?;
         fs::write(nested.join("lib.rs"), "// lib")?;
 
-        // Create ignored directory
         let ignored = root.join("target");
         fs::create_dir(&ignored)?;
         fs::write(ignored.join("build.rs"), "// should be ignored")?;
@@ -116,7 +113,6 @@ mod tests {
         let walker = traverser.build_walker(temp_dir.path());
 
         // Can't directly test WalkBuilder internals, but we can verify it builds
-        // Just verify it executes without panicking
         let _count = walker.build().count();
         Ok(())
     }

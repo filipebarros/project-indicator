@@ -331,21 +331,12 @@ pub fn node_runtime_config_root_indicators() -> Vec<RootIndicator> {
     ]
 }
 
-pub fn vcs_root_indicators() -> Vec<RootIndicator> {
-    vec![
-        root_indicator(DOT_GIT, 1.0, IndicatorContext::VersionControl),
-        root_indicator(".hg", 1.0, IndicatorContext::VersionControl),
-        root_indicator(".svn", 1.0, IndicatorContext::VersionControl),
-    ]
-}
-
 #[derive(Debug, Clone)]
 pub struct ConfigBuilder {
     pub show_frameworks: bool,
     pub max_frameworks: usize,
     pub max_upward_traversal: usize,
     pub require_vcs_root: bool,
-    pub confidence_threshold: f32,
     pub max_depth: usize,
 }
 
@@ -356,7 +347,6 @@ impl ConfigBuilder {
             max_frameworks: 3,
             max_upward_traversal: 3,
             require_vcs_root: false,
-            confidence_threshold: 0.3,
             max_depth: 1,
         }
     }
@@ -367,15 +357,9 @@ impl ConfigBuilder {
         self
     }
 
-    pub fn detection(
-        mut self,
-        max_upward_traversal: usize,
-        require_vcs_root: bool,
-        confidence_threshold: f32,
-    ) -> Self {
+    pub fn detection(mut self, max_upward_traversal: usize, require_vcs_root: bool) -> Self {
         self.max_upward_traversal = max_upward_traversal;
         self.require_vcs_root = require_vcs_root;
-        self.confidence_threshold = confidence_threshold;
         self
     }
 
@@ -397,7 +381,6 @@ impl ConfigBuilder {
         let detection = DetectionConfig {
             max_upward_traversal: self.max_upward_traversal,
             require_vcs_root: self.require_vcs_root,
-            confidence_threshold: self.confidence_threshold,
             max_depth: self.max_depth,
         };
 

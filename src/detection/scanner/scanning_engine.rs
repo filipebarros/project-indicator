@@ -1,6 +1,3 @@
-// Main scanning orchestration logic
-// Coordinates pattern matching, timeout management, and file traversal
-
 use super::{FileSystemTraverser, TimeoutManager};
 use crate::detection::pattern_processor::PatternProcessor;
 use crate::performance::FileSystemCache;
@@ -59,7 +56,6 @@ pub struct ScanningEngine {
     max_depth: usize,
     file_cache: Option<Arc<FileSystemCache>>,
 
-    // Configurable thresholds
     max_matches_per_pattern: usize,
     small_project_threshold: usize,
     extreme_size_threshold: usize,
@@ -86,7 +82,6 @@ impl ScanningEngine {
     pub fn scan(&self, path: &Path) -> Result<Vec<MatchedFile>> {
         log::trace!("Starting scan for path: {}", path.display());
 
-        // Phase 1: Check high-priority files (fast path)
         if let Some(priority_matches) = self.check_priority_files(path)? {
             log::debug!(
                 "Priority fast path successful: found {} matches in root",
@@ -97,7 +92,6 @@ impl ScanningEngine {
 
         log::debug!("No priority files found, proceeding with full directory scan");
 
-        // Phase 2: Full directory scan with timeout
         self.scan_with_timeout(path)
     }
 
@@ -123,7 +117,6 @@ impl ScanningEngine {
         for file_name in files {
             let file_path = path.join(file_name);
 
-            // Use cache if available, otherwise direct filesystem check
             let exists_and_is_file = if let Some(cache) = &self.file_cache {
                 cache.is_file(&file_path)
             } else {
@@ -165,7 +158,6 @@ impl ScanningEngine {
             return Ok(self.check_root_files(path, self.pattern_processor.get_exact_patterns()));
         }
 
-        // Optimization: Use sequential scan for small projects to avoid parallel overhead
         if estimated_size < self.small_project_threshold {
             log::debug!(
                 "Using sequential scan (estimated {} files < {} threshold)",
@@ -175,7 +167,6 @@ impl ScanningEngine {
             return self.scan_sequential(path, &traverser, estimated_size);
         }
 
-        // Use parallel scanning for larger projects
         log::debug!(
             "Using parallel scan (estimated {} files >= {} threshold)",
             estimated_size,
@@ -225,7 +216,6 @@ impl ScanningEngine {
     ) -> Result<Vec<MatchedFile>> {
         let scan_start = std::time::Instant::now();
         let timeout_mgr = TimeoutManager::new(estimated_size);
-        // Pre-allocate with reasonable capacity to reduce reallocations
         let mut matched_files =
             Vec::with_capacity(estimated_size.min(self.max_matches_per_pattern));
         let mut high_priority_count = 0;
@@ -234,7 +224,6 @@ impl ScanningEngine {
         let walker = traverser.build_walker(path);
 
         for result in walker.build() {
-            // Early bailout conditions
             if matched_files.len() >= self.max_matches_per_pattern {
                 log::debug!(
                     "Sequential scan: max matches ({}) reached",
@@ -261,7 +250,6 @@ impl ScanningEngine {
             if is_strong {
                 high_priority_count += 1;
 
-                // Optimization: Early exit if we have enough strong evidence (3+ strong indicators)
                 if high_priority_count >= 3 && matched_files.len() >= 3 {
                     log::debug!(
                         "Sequential scan: sufficient strong evidence ({}), early exit",
@@ -279,14 +267,12 @@ impl ScanningEngine {
                 }
             }
 
-            // Pattern matching
             if let Some(file_match) =
                 self.pattern_processor
                     .match_file_against_patterns(entry.path(), path, patterns)
             {
                 matched_files.push(file_match);
 
-                // Early termination check (less frequent now)
                 if is_strong && timeout_mgr.check_early_termination(high_priority_count) {
                     log::debug!(
                         "Sequential scan: early termination triggered (high_priority={}, scanned={})",
@@ -320,7 +306,6 @@ impl ScanningEngine {
         estimated_size: usize,
     ) -> Result<Vec<MatchedFile>> {
         let scan_start = std::time::Instant::now();
-        // Pre-allocate with reasonable capacity (max matches expected)
         let matched_files = Arc::new(Mutex::new(Vec::with_capacity(self.max_matches_per_pattern)));
         let high_priority_count = Arc::new(AtomicUsize::new(0));
         let total_matches = Arc::new(AtomicUsize::new(0));
@@ -329,8 +314,6 @@ impl ScanningEngine {
         // heuristics are evaluated globally, not per worker thread
         let timeout_mgr = Arc::new(TimeoutManager::new(estimated_size));
 
-        // Optimization: Share patterns via Arc to avoid cloning the entire vector.
-        // The Arc clone is just a pointer copy with reference counting.
         let patterns = self.pattern_processor.get_patterns_arc();
 
         let walker = traverser.build_walker(path);
@@ -351,7 +334,6 @@ impl ScanningEngine {
                     return ignore::WalkState::Quit;
                 }
 
-                // Check timeout
                 if timeout_mgr.should_stop() {
                     return ignore::WalkState::Quit;
                 }
@@ -370,7 +352,6 @@ impl ScanningEngine {
                 if is_strong {
                     let hp_count = high_priority_count.fetch_add(1, Ordering::Relaxed) + 1;
 
-                    // Optimization: Early exit if we have enough strong evidence (3+ strong indicators)
                     // Check this BEFORE pattern matching to save work
                     if hp_count >= 3 && total_matches.load(Ordering::Relaxed) >= 3 {
                         log::trace!(
@@ -382,7 +363,6 @@ impl ScanningEngine {
                     }
                 }
 
-                // Match against patterns
                 if let Some(file_match) = pattern_processor.match_file_against_patterns(
                     entry.path(),
                     &base_path,
@@ -393,7 +373,6 @@ impl ScanningEngine {
                         let count = files.len();
                         total_matches.store(count, Ordering::Relaxed);
 
-                        // Max matches check
                         if count >= self.max_matches_per_pattern {
                             log::trace!(
                                 "Parallel scan: max matches ({}) reached",
@@ -403,7 +382,6 @@ impl ScanningEngine {
                             return ignore::WalkState::Quit;
                         }
 
-                        // Early termination check
                         if is_strong {
                             let hp_count = high_priority_count.load(Ordering::Relaxed);
                             if timeout_mgr.check_early_termination(hp_count) {
@@ -523,11 +501,9 @@ mod tests {
         let engine = create_test_engine();
         let temp_dir = TempDir::new()?;
 
-        // Create non-matching files
         fs::write(temp_dir.path().join("readme.txt"), "text")?;
 
         let matches = engine.scan(temp_dir.path())?;
-        // Should be empty since no files match patterns
         assert!(matches.is_empty());
 
         Ok(())
@@ -539,7 +515,6 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
 
-        // Create nested structure
         let src = root.join("src");
         fs::create_dir(&src)?;
         fs::write(src.join("lib.rs"), "// lib")?;
@@ -597,7 +572,6 @@ mod tests {
         let engine = create_test_engine();
         let temp_dir = TempDir::new()?;
 
-        // Create non-matching files
         fs::write(temp_dir.path().join("readme.txt"), "text")?;
 
         let matches = engine.scan_with_timeout(temp_dir.path())?;
@@ -734,7 +708,6 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
 
-        // Create a small directory structure
         let src = root.join("src");
         fs::create_dir(&src)?;
         fs::write(src.join("lib.rs"), "// lib")?;
@@ -752,7 +725,6 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
 
-        // Create a medium-sized directory structure
         for i in 0..50 {
             let dir = root.join(format!("dir_{}", i));
             fs::create_dir(&dir)?;
@@ -771,7 +743,6 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
 
-        // Create a large directory structure
         for i in 0..100 {
             let dir = root.join(format!("dir_{}", i));
             fs::create_dir(&dir)?;
@@ -790,7 +761,6 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
 
-        // Create a very large directory structure
         for i in 0..200 {
             let dir = root.join(format!("dir_{}", i));
             fs::create_dir(&dir)?;
@@ -846,7 +816,7 @@ mod tests {
         let pattern_processor =
             PatternProcessor::new(pattern_matcher, patterns, vec![Arc::new(rust_lang)]);
 
-        let engine = ScanningEngine::with_cache(pattern_processor, 1, None); // Very low depth
+        let engine = ScanningEngine::with_cache(pattern_processor, 1, None);
 
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
@@ -865,7 +835,6 @@ mod tests {
         let matches = engine.scan_with_timeout(root)?;
         // Should return some matches even if timeout occurred, but may be empty due to timeout
         // The important thing is that the function doesn't panic
-        // Just verify the function completed successfully
         let _ = matches;
 
         Ok(())
