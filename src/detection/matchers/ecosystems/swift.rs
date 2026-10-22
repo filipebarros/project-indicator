@@ -13,7 +13,6 @@ pub fn check_swift_ecosystem<P: AsRef<Path>>(
     let mut found_deps = Vec::new();
     let mut evidence = Vec::new();
 
-    // Check Package.swift (Swift Package Manager)
     if try_config_file_deps(
         parsed_cache,
         &path,

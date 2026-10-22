@@ -16,12 +16,10 @@ mod unix_symlink_tests {
 
     #[test]
     fn test_detection_through_simple_symlink() -> Result<(), Box<dyn std::error::Error>> {
-        // Create a temp directory with a real Rust project
         let temp_dir = TempDir::new()?;
         let project_dir = temp_dir.path().join("real_project");
         fs::create_dir(&project_dir)?;
 
-        // Create a Cargo.toml file
         fs::write(
             project_dir.join("Cargo.toml"),
             r#"[package]
@@ -31,18 +29,15 @@ edition = "2021"
 "#,
         )?;
 
-        // Create a src directory with main.rs
         fs::create_dir(project_dir.join("src"))?;
         fs::write(
             project_dir.join("src/main.rs"),
             "fn main() { println!(\"Hello\"); }",
         )?;
 
-        // Create a symlink to the project
         let link_path = temp_dir.path().join("link_to_project");
         symlink(&project_dir, &link_path)?;
 
-        // Test detection through symlink
         let config = Config::load_default()?;
 
         let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
@@ -62,11 +57,9 @@ edition = "2021"
     fn test_detection_with_circular_symlink() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = TempDir::new()?;
 
-        // Create a project directory
         let project_dir = temp_dir.path().join("project");
         fs::create_dir(&project_dir)?;
 
-        // Create a Cargo.toml file
         fs::write(
             project_dir.join("Cargo.toml"),
             "[package]\nname = \"test\"\nversion = \"0.1.0\"",
@@ -86,7 +79,6 @@ edition = "2021"
 
         let result = detector.detect(&project_dir)?;
 
-        // Should still detect Rust project at the root level
         assert!(result.indicator.is_some());
         let language = result
             .indicator
@@ -103,11 +95,9 @@ edition = "2021"
         let project_dir = temp_dir.path().join("project");
         fs::create_dir(&project_dir)?;
 
-        // Create a self-referencing symlink
         let self_link = project_dir.join("self_link");
         symlink(&project_dir, &self_link)?;
 
-        // Create a valid project file
         fs::write(
             project_dir.join("Cargo.toml"),
             "[package]\nname = \"test\"\nversion = \"0.1.0\"",
@@ -133,11 +123,9 @@ edition = "2021"
         let project_dir = temp_dir.path().join("project");
         fs::create_dir(&project_dir)?;
 
-        // Create a broken symlink (points to non-existent file)
         let broken_link = project_dir.join("broken_link");
         symlink("/nonexistent/path", &broken_link)?;
 
-        // Create a valid project file
         fs::write(
             project_dir.join("Cargo.toml"),
             "[package]\nname = \"test\"\nversion = \"0.1.0\"",
@@ -161,7 +149,6 @@ edition = "2021"
     fn test_detection_with_symlink_chain() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = TempDir::new()?;
 
-        // Create the actual project
         let project_dir = temp_dir.path().join("real_project");
         fs::create_dir(&project_dir)?;
         fs::write(
@@ -178,7 +165,6 @@ edition = "2021"
         symlink(&link1, &link2)?;
         symlink(&link2, &link3)?;
 
-        // Detection through the chain should work
         let config = Config::load_default()?;
         let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
         let result = detector.detect(&link3)?;
@@ -198,7 +184,6 @@ edition = "2021"
         let project_dir = temp_dir.path().join("project");
         fs::create_dir(&project_dir)?;
 
-        // Create a package.json
         let package_json = project_dir.join("package.json");
         fs::write(
             &package_json,
@@ -211,17 +196,14 @@ edition = "2021"
 }"#,
         )?;
 
-        // Create a symlink to the package.json file
         let link_to_file = project_dir.join("link_package.json");
         symlink(&package_json, &link_to_file)?;
 
-        // Detection should work with file symlinks present
         let config = Config::load_default()?;
         let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
         let result = detector.detect(&project_dir)?;
 
         assert!(result.indicator.is_some());
-        // Should detect JavaScript/TypeScript project
         let language = result
             .indicator
             .as_ref()
@@ -236,7 +218,6 @@ edition = "2021"
     fn test_nested_project_with_symlink() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = TempDir::new()?;
 
-        // Create main project
         let main_project = temp_dir.path().join("main");
         fs::create_dir(&main_project)?;
         fs::write(
@@ -244,11 +225,9 @@ edition = "2021"
             "[package]\nname = \"main\"\nversion = \"0.1.0\"",
         )?;
 
-        // Create a subdirectory
         let subdir = main_project.join("vendor");
         fs::create_dir(&subdir)?;
 
-        // Create another project outside
         let external_project = temp_dir.path().join("external");
         fs::create_dir(&external_project)?;
         fs::write(
@@ -256,11 +235,9 @@ edition = "2021"
             "[package]\nname = \"external\"\nversion = \"0.1.0\"",
         )?;
 
-        // Symlink external project into vendor directory
         let link_in_vendor = subdir.join("external_link");
         symlink(&external_project, &link_in_vendor)?;
 
-        // Detection at main project should work
         let config = Config::load_default()?;
         let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
         let result = detector.detect(&main_project)?;
@@ -280,13 +257,11 @@ edition = "2021"
         let project_dir = temp_dir.path().join("project");
         fs::create_dir(&project_dir)?;
 
-        // Create a valid project
         fs::write(
             project_dir.join("Cargo.toml"),
             "[package]\nname = \"test\"\nversion = \"0.1.0\"",
         )?;
 
-        // Create many symlinks in the project directory
         for i in 0..50 {
             let link_name = project_dir.join(format!("link_{}", i));
             // Create circular symlinks
@@ -298,7 +273,6 @@ edition = "2021"
             }
         }
 
-        // Detection should complete in reasonable time
         let config = Config::load_default()?;
         let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
 

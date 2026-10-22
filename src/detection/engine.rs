@@ -62,7 +62,7 @@ const ROOT_MATCH_OVERRIDE_CERTAINTY: f32 = 0.8;
 /// - **IndicatorResolver**: Resolves indicator conflicts when multiple indicators detected
 /// - **ConfidenceScorer**: Calculates confidence scores for indicator matches
 /// - **FrameworkDetector**: Identifies frameworks within detected indicators
-/// - **RootIndicatorEngine**: Fast path detection using root indicator files
+/// - **RootIndicatorEngine**: Upward-traversal project-root discovery and boundary-directory checks
 ///
 /// ## Shared Resources
 ///
@@ -81,7 +81,6 @@ pub struct DetectionEngine {
     indicators: Vec<Arc<Indicator>>,
     frameworks: Arc<Vec<Framework>>,
 
-    // Specialized components
     cache_manager: FileSystemCacheManager,
     confidence_scorer: ConfidenceScorer,
     indicator_resolver: IndicatorResolver,
@@ -115,7 +114,6 @@ impl DetectionEngine {
         let indicator_resolver = IndicatorResolver::default();
         let framework_detector = FrameworkDetector::new();
 
-        // Create pattern compiler and scanning engine
         let pattern_compiler = PatternCompiler::new(&indicators);
         let file_cache = cache_manager.file_existence_cache();
 
@@ -165,7 +163,7 @@ impl DetectionEngine {
             ));
         }
 
-        // NEW: First, try to find the actual project root by walking upward
+        // First, try to find the actual project root by walking upward
         let mut root_indicator_match = None;
         let scan_path = if let Some((root_path, root_indicator)) = self
             .root_indicator_engine

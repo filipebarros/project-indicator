@@ -75,7 +75,6 @@ cargo run -- /path/to/project
 # Different output formats
 cargo run -- --format json
 cargo run -- --format full
-cargo run -- --format debug
 
 # Debugging (full evidence dump)
 cargo run -- --format debug
@@ -100,9 +99,10 @@ The detection flow follows this path:
    - Creates and coordinates all specialized components
    - Shares a single `Arc<PatternMatcher>` across components for cache efficiency
 
-2. **RootIndicatorEngine** - Fast path detection
-   - Checks for high-confidence root files (`.git`, `Cargo.toml`, etc.)
-   - Early returns if confidence threshold met
+2. **RootIndicatorEngine** - Project root discovery
+   - Walks upward from the start path looking for high-confidence root
+     files (`.git`, `Cargo.toml`, etc.) to pick the directory to scan
+   - Refuses to scan from boundary directories (home, system dirs)
 
 3. **ScanningEngine** (`src/detection/scanner/`) - File discovery
    - Traverses directory with configurable depth
@@ -185,7 +185,7 @@ single ecosystem-keyed framework catalog (`src/config/templates/frameworks.rs`)
 
 **Key Configuration Types**:
 
-- `DetectionConfig`: Scan depth, thresholds, root indicators
+- `DetectionConfig`: Scan depth, upward traversal, VCS-root requirement
 - `DisplayConfig`: Output formatting preferences
 
 ### Type System

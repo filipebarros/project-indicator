@@ -9,7 +9,6 @@ mod framework;
 mod indicators;
 mod matched_file;
 
-// Re-export all public types
 pub use config::{ConfigMeta, DetectionConfig, DisplayConfig};
 pub use detection::{
     ConfidenceFactor, DetectionEvidence, DetectionResult, EvidenceItem, EvidenceType,

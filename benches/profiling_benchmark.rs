@@ -86,7 +86,6 @@ fn setup_large_project(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let base = temp_dir.path();
 
-    // Create src directory with many files
     let src = base.join("src");
     fs::create_dir_all(&src)?;
 
@@ -99,7 +98,6 @@ fn setup_large_project(
         )?;
     }
 
-    // Add Cargo.toml
     fs::write(
         base.join("Cargo.toml"),
         r#"[package]
@@ -121,12 +119,10 @@ fn setup_deep_nested_project(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let mut current = temp_dir.path().to_path_buf();
 
-    // Create deep nesting
     for i in 0..depth {
         current = current.join(format!("level_{}", i));
         fs::create_dir_all(&current)?;
 
-        // Add some files at each level
         fs::write(
             current.join(format!("file_{}.js", i)),
             "console.log('test');",
@@ -153,7 +149,6 @@ fn benchmark_monorepo_detection(c: &mut Criterion) -> Result<(), Box<dyn std::er
         .map_err(|e| format!("Failed to generate template: {}", e))?;
     let engine = DetectionEngine::new(config.indicators, config.frameworks);
 
-    // Benchmark each sub-project
     for (idx, path) in project_paths.iter().enumerate() {
         let name = path
             .file_name()
@@ -222,11 +217,11 @@ fn benchmark_upward_traversal(c: &mut Criterion) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-/// Benchmark early termination effectiveness
-fn benchmark_early_termination(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
-    let mut group = c.benchmark_group("early_termination");
+/// Benchmark detection cost on strong vs weak root-indicator projects
+fn benchmark_indicator_strength(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
+    let mut group = c.benchmark_group("indicator_strength");
 
-    // Project with strong root indicators (should trigger early termination)
+    // Project with strong root indicators (Cargo.toml found via upward traversal)
     let temp_dir_strong =
         TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
     fs::write(
@@ -240,7 +235,7 @@ fn benchmark_early_termination(c: &mut Criterion) -> Result<(), Box<dyn std::err
     )
     .map_err(|e| format!("Failed to write Cargo.lock: {}", e))?;
 
-    // Create many files that won't matter due to early termination
+    // Bulk files alongside the root indicator to make the scan non-trivial
     let src = temp_dir_strong.path().join("src");
     fs::create_dir_all(&src).map_err(|e| format!("Failed to create src: {}", e))?;
     for i in 0..100 {
@@ -291,7 +286,6 @@ fn benchmark_framework_detection_overhead(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
-    // Create Node.js project with multiple frameworks
     fs::write(
         temp_dir.path().join("package.json"),
         r#"{
@@ -371,8 +365,8 @@ fn benchmark_upward_traversal_wrapper(c: &mut Criterion) {
     }
 }
 
-fn benchmark_early_termination_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_early_termination(c) {
+fn benchmark_indicator_strength_wrapper(c: &mut Criterion) {
+    if let Err(e) = benchmark_indicator_strength(c) {
         eprintln!("Benchmark failed: {}", e);
         std::process::exit(1);
     }
@@ -397,7 +391,7 @@ criterion_group!(
     benchmark_monorepo_detection_wrapper,
     benchmark_file_count_scaling_wrapper,
     benchmark_upward_traversal_wrapper,
-    benchmark_early_termination_wrapper,
+    benchmark_indicator_strength_wrapper,
     benchmark_framework_detection_overhead_wrapper,
     benchmark_cache_effectiveness_wrapper
 );

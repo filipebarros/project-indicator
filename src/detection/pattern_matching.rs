@@ -44,13 +44,11 @@ impl PatternMatcher {
     }
 
     pub fn matches_pattern(&self, file_name: &str, pattern: &str) -> bool {
-        // Check cache: pattern -> filename -> result
         // Using &str for lookup avoids allocating on cache hits
         if let Some(entry) = self.cache.get(pattern) {
             if let Some(result) = entry.get(file_name) {
                 return *result;
             }
-            // Pattern exists but filename doesn't - compute result and insert
             drop(entry); // Release lock before computing
         }
 

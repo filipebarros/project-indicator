@@ -81,7 +81,6 @@ impl FrameworkDetector {
             }
         }
 
-        // Convert path to PathBuf for thread safety
         let path_buf = path.to_path_buf();
 
         if !dependency_frameworks.is_empty() {
@@ -94,7 +93,6 @@ impl FrameworkDetector {
             all_matches.append(&mut dependency_matches);
         }
 
-        // Check file-existence frameworks
         if !file_exists_frameworks.is_empty() {
             let file_exists_matches: Vec<FrameworkMatch> = file_exists_frameworks
                 .iter()
@@ -122,7 +120,6 @@ impl FrameworkDetector {
             all_matches.extend(file_exists_matches);
         }
 
-        // Check config-file frameworks
         if !config_file_frameworks.is_empty() {
             let config_file_matches: Vec<FrameworkMatch> = config_file_frameworks
                 .iter()

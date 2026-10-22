@@ -20,10 +20,8 @@ pub const PACKAGES_CONFIG: &str = "packages.config";
 pub const PACKAGE_SWIFT: &str = "Package.swift";
 pub const MIX_EXS: &str = "mix.exs";
 
-// VCS
 pub const DOT_GIT: &str = ".git";
 
-// Lock files
 pub const PACKAGE_LOCK_JSON: &str = "package-lock.json";
 pub const YARN_LOCK: &str = "yarn.lock";
 pub const PNPM_LOCK_YAML: &str = "pnpm-lock.yaml";
@@ -33,8 +31,6 @@ pub const POETRY_LOCK: &str = "poetry.lock";
 pub const CARGO_LOCK: &str = "Cargo.lock";
 pub const PUBSPEC_LOCK: &str = "pubspec.lock";
 pub const LUAROCKS_LOCK: &str = "luarocks.lock";
-
-// File extensions
 
 // JavaScript/TypeScript
 pub const JS_EXTENSION: &str = "*.js";

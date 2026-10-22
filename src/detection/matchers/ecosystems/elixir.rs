@@ -13,7 +13,6 @@ pub fn check_elixir_ecosystem<P: AsRef<Path>>(
     let mut found_deps = Vec::new();
     let mut evidence = Vec::new();
 
-    // Check mix.exs (Elixir/Mix)
     if try_config_file_deps(
         parsed_cache,
         &path,

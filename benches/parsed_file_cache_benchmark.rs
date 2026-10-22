@@ -204,11 +204,9 @@ version = "0.1.0"
 fn benchmark_parse_failures(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
-    // Create invalid JSON
     fs::write(temp_dir.path().join("bad.json"), r#"{"invalid json"#)
         .map_err(|e| format!("Failed to write bad.json: {}", e))?;
 
-    // Create invalid TOML
     fs::write(temp_dir.path().join("bad.toml"), r#"[invalid toml"#)
         .map_err(|e| format!("Failed to write bad.toml: {}", e))?;
 
@@ -225,7 +223,6 @@ fn benchmark_parse_failures(c: &mut Criterion) -> Result<(), Box<dyn std::error:
         let _ = cache.get_json_value(temp_dir.path().join("bad.json"));
 
         b.iter(|| {
-            // Subsequent attempts should be fast
             let _ = black_box(cache.get_json_value(temp_dir.path().join("bad.json")));
         });
     });
