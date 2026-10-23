@@ -1,8 +1,8 @@
 //! Project and root indicator types.
 //!
 //! This module defines the core types for language detection and project
-//! root discovery. Pattern matching itself lives in the detection engine
-//! (`PatternMatcher`), which matches file basenames against these patterns.
+//! root discovery. Pattern matching itself lives in `crate::patterns`,
+//! which matches file basenames against these patterns.
 //!
 //! # Overview
 //!

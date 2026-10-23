@@ -3,7 +3,7 @@ mod common;
 use common::create_test_project;
 use project_indicator::{
     detection::DetectionEngine,
-    output::{OutputFormat, OutputFormatter},
+    output::{render, OutputFormat},
     types::*,
     Config,
 };
@@ -145,15 +145,14 @@ fn test_output_formatting() -> Result<(), Box<dyn std::error::Error>> {
     let framework_match = FrameworkMatch::new(framework, 0.9, vec!["package.json".to_string()]);
 
     let result = DetectionResult::new(None, vec![framework_match], 0.9);
-    let formatter = OutputFormatter::new(DisplayConfig::default());
 
-    let simple = formatter.format(&result, OutputFormat::Simple);
+    let simple = render(&result, OutputFormat::Simple, &DisplayConfig::default());
     assert_eq!(simple, "\x1b[38;2;97;218;251m⚛️\x1b[0m");
 
-    let full = formatter.format(&result, OutputFormat::Full);
+    let full = render(&result, OutputFormat::Full, &DisplayConfig::default());
     assert_eq!(full, "⚛️|#61DAFB");
 
-    let json = formatter.format(&result, OutputFormat::Json);
+    let json = render(&result, OutputFormat::Json, &DisplayConfig::default());
     assert!(json.contains("\"frameworks\":[\"React\"]"));
     assert!(json.contains("\"icon\":\"⚛️\""));
     assert!(json.contains("\"color\":\"#61DAFB\""));
@@ -203,10 +202,16 @@ fn test_config_defaults() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_wildcard_patterns() -> Result<(), Box<dyn std::error::Error>> {
     // The engine's single matcher; Indicator itself no longer matches files
-    let matcher = project_indicator::detection::pattern_matching::PatternMatcher::new();
-    assert!(matcher.matches_pattern("main.cpp", "*.cpp"));
-    assert!(matcher.matches_pattern("CMakeLists.txt", "CMakeLists.txt"));
-    assert!(!matcher.matches_pattern("main.py", "*.cpp"));
+    assert!(project_indicator::patterns::matches_pattern(
+        "main.cpp", "*.cpp"
+    ));
+    assert!(project_indicator::patterns::matches_pattern(
+        "CMakeLists.txt",
+        "CMakeLists.txt"
+    ));
+    assert!(!project_indicator::patterns::matches_pattern(
+        "main.py", "*.cpp"
+    ));
     Ok(())
 }
 

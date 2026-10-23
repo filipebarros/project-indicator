@@ -331,7 +331,6 @@ impl ScanningEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::detection::pattern_matching::PatternMatcher;
     use crate::test_utils::create_test_rust_project;
     use std::fs;
     use std::sync::Arc;
@@ -344,8 +343,7 @@ mod tests {
             "*.js".to_string(),
         ]);
 
-        let pattern_matcher = Arc::new(PatternMatcher::new());
-        let pattern_processor = PatternProcessor::new(pattern_matcher, patterns);
+        let pattern_processor = PatternProcessor::new(patterns);
 
         ScanningEngine::with_cache(pattern_processor, 3, None)
     }
@@ -403,8 +401,7 @@ mod tests {
     #[test]
     fn test_engine_with_cache() -> Result<()> {
         let patterns = Arc::new(vec!["*.rs".to_string(), "Cargo.toml".to_string()]);
-        let pattern_matcher = Arc::new(PatternMatcher::new());
-        let pattern_processor = PatternProcessor::new(pattern_matcher, patterns);
+        let pattern_processor = PatternProcessor::new(patterns);
 
         let file_cache = Arc::new(FileSystemCache::new());
         let engine = ScanningEngine::with_cache(pattern_processor, 3, Some(file_cache));
@@ -421,8 +418,7 @@ mod tests {
         let patterns = Arc::new(vec!["special.config".to_string(), "*.xyz".to_string()]);
         // Detection must survive the extreme-size bailout via the root
         // exact-pattern check
-        let pattern_matcher = Arc::new(PatternMatcher::new());
-        let pattern_processor = PatternProcessor::new(pattern_matcher, patterns);
+        let pattern_processor = PatternProcessor::new(patterns);
         let engine = ScanningEngine::with_cache(pattern_processor, 3, None);
 
         let temp_dir = TempDir::new()?;
@@ -441,8 +437,7 @@ mod tests {
     #[test]
     fn test_scan_timeout_exceeded() -> Result<()> {
         let patterns = Arc::new(vec!["*.rs".to_string()]);
-        let pattern_matcher = Arc::new(PatternMatcher::new());
-        let pattern_processor = PatternProcessor::new(pattern_matcher, patterns);
+        let pattern_processor = PatternProcessor::new(patterns);
 
         let engine = ScanningEngine::with_cache(pattern_processor, 1, None); // Very low depth to trigger timeout
 
@@ -593,8 +588,7 @@ mod tests {
     #[test]
     fn test_scan_timeout_exceeded_scenario() -> Result<()> {
         let patterns = Arc::new(vec!["*.rs".to_string()]);
-        let pattern_matcher = Arc::new(PatternMatcher::new());
-        let pattern_processor = PatternProcessor::new(pattern_matcher, patterns);
+        let pattern_processor = PatternProcessor::new(patterns);
 
         let engine = ScanningEngine::with_cache(pattern_processor, 1, None);
 

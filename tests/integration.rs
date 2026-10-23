@@ -3,7 +3,7 @@ mod common;
 use common::{create_test_config, create_test_project};
 use project_indicator::{
     detection::DetectionEngine,
-    output::{OutputFormat, OutputFormatter},
+    output::{render, OutputFormat},
     types::DisplayConfig,
 };
 use serde_json::Value;
@@ -53,13 +53,12 @@ fn test_typescript_react_detection() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(result.frameworks[0].framework.name, "React");
 
     let display_config = DisplayConfig::default();
-    let formatter = OutputFormatter::new(display_config);
 
-    let simple = formatter.format(&result, OutputFormat::Simple);
+    let simple = render(&result, OutputFormat::Simple, &display_config);
     assert!(simple.contains("⚛️"));
     assert!(simple.starts_with("\x1b[38;2;"), "icon should be colored");
 
-    let json_output = formatter.format(&result, OutputFormat::Json);
+    let json_output = render(&result, OutputFormat::Json, &display_config);
     let json: Value = serde_json::from_str(&json_output)?;
     assert_eq!(json["indicator"], "TypeScript");
     assert_eq!(json["frameworks"][0], "React");
@@ -103,13 +102,12 @@ serde = { version = "1.0", features = ["derive"] }
     assert_eq!(result.frameworks[0].framework.name, "Rocket");
 
     let display_config = DisplayConfig::default();
-    let formatter = OutputFormatter::new(display_config);
 
-    let simple = formatter.format(&result, OutputFormat::Simple);
+    let simple = render(&result, OutputFormat::Simple, &display_config);
     assert!(simple.contains("🚀"));
     assert!(simple.starts_with("\x1b[38;2;"), "icon should be colored");
 
-    let full = formatter.format(&result, OutputFormat::Full);
+    let full = render(&result, OutputFormat::Full, &display_config);
     assert!(full.contains("🚀"));
     assert!(full.contains("#D33847"));
     assert!(full.contains("|"));
@@ -157,9 +155,8 @@ build-backend = "setuptools.build_meta"
     assert_eq!(result.frameworks[0].framework.name, "Django");
 
     let display_config = DisplayConfig::default();
-    let formatter = OutputFormatter::new(display_config);
 
-    let debug = formatter.format(&result, OutputFormat::Debug);
+    let debug = render(&result, OutputFormat::Debug, &display_config);
     assert!(debug.contains("Project: Python"));
     assert!(debug.contains("Django"));
     assert!(debug.contains("confidence"));
@@ -195,9 +192,8 @@ fn test_nextjs_priority_over_react() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(result.frameworks[0].framework.name, "Next.js");
 
     let display_config = DisplayConfig::default();
-    let formatter = OutputFormatter::new(display_config);
 
-    let simple = formatter.format(&result, OutputFormat::Simple);
+    let simple = render(&result, OutputFormat::Simple, &display_config);
     assert!(simple.contains("▲"));
     assert!(simple.starts_with("\x1b[38;2;"), "icon should be colored");
     Ok(())
@@ -229,9 +225,8 @@ fn test_language_only_detection() -> Result<(), Box<dyn std::error::Error>> {
     assert!(result.frameworks.is_empty());
 
     let display_config = DisplayConfig::default();
-    let formatter = OutputFormatter::new(display_config);
 
-    let simple = formatter.format(&result, OutputFormat::Simple);
+    let simple = render(&result, OutputFormat::Simple, &display_config);
     assert_eq!(simple, "");
     Ok(())
 }
@@ -252,12 +247,11 @@ fn test_no_detection() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(result.confidence, 0.0);
 
     let display_config = DisplayConfig::default();
-    let formatter = OutputFormatter::new(display_config);
 
-    let simple = formatter.format(&result, OutputFormat::Simple);
+    let simple = render(&result, OutputFormat::Simple, &display_config);
     assert_eq!(simple, "");
 
-    let json_output = formatter.format(&result, OutputFormat::Json);
+    let json_output = render(&result, OutputFormat::Json, &display_config);
     let json: Value = serde_json::from_str(&json_output)?;
     assert_eq!(json["indicator"], Value::Null);
     assert_eq!(json["frameworks"], Value::Array(vec![]));
@@ -286,9 +280,7 @@ fn test_framework_limiting() -> Result<(), Box<dyn std::error::Error>> {
     let engine = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
     let result = engine.detect(temp_dir.path())?;
 
-    let formatter = OutputFormatter::new(display_config);
-
-    let json_output = formatter.format(&result, OutputFormat::Json);
+    let json_output = render(&result, OutputFormat::Json, &display_config);
     let json: Value = serde_json::from_str(&json_output)?;
 
     assert_eq!(
@@ -321,19 +313,18 @@ fn test_all_output_formats() -> Result<(), Box<dyn std::error::Error>> {
     let result = engine.detect(temp_dir.path())?;
 
     let display_config = DisplayConfig::default();
-    let formatter = OutputFormatter::new(display_config);
 
-    let simple = formatter.format(&result, OutputFormat::Simple);
+    let simple = render(&result, OutputFormat::Simple, &display_config);
     assert!(!simple.is_empty());
 
-    let full = formatter.format(&result, OutputFormat::Full);
+    let full = render(&result, OutputFormat::Full, &display_config);
     assert!(full.contains("|"));
     assert!(!full.is_empty());
 
-    let json_output = formatter.format(&result, OutputFormat::Json);
+    let json_output = render(&result, OutputFormat::Json, &display_config);
     assert!(serde_json::from_str::<Value>(&json_output).is_ok());
 
-    let debug = formatter.format(&result, OutputFormat::Debug);
+    let debug = render(&result, OutputFormat::Debug, &display_config);
     assert!(debug.contains("confidence"));
     Ok(())
 }

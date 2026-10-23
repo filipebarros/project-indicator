@@ -35,25 +35,12 @@ proptest = "1.11"
 name = "project-indicator"
 path = "src/main.rs"
 
-# Core benchmarks for key optimizations
 [[bench]]
-name = "parsed_file_cache_benchmark"
+name = "component_benchmark"
 harness = false
 
 [[bench]]
-name = "pattern_matching_benchmark"
-harness = false
-
-[[bench]]
-name = "filesystem_cache_benchmark"
-harness = false
-
-[[bench]]
-name = "profiling_benchmark"
-harness = false
-
-[[bench]]
-name = "framework_detection_benchmark"
+name = "detection_benchmark"
 harness = false
 
 [profile.release]

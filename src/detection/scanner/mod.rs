@@ -18,16 +18,13 @@
 //!
 //! ```no_run
 //! use project_indicator::detection::scanner::ScanningEngine;
-//! use project_indicator::detection::pattern_matching::PatternMatcher;
 //! use project_indicator::detection::pattern_processor::PatternProcessor;
 //! use std::sync::Arc;
 //! use std::path::Path;
 //!
 //! # fn main() -> anyhow::Result<()> {
-//! // Setup pattern matching infrastructure
-//! let pattern_matcher = Arc::new(PatternMatcher::new());
 //! let patterns = Arc::new(vec!["*.rs".to_string(), "Cargo.toml".to_string()]);
-//! let pattern_processor = PatternProcessor::new(pattern_matcher, patterns);
+//! let pattern_processor = PatternProcessor::new(patterns);
 //!
 //! // Create scanning engine with max depth of 3
 //! let engine = ScanningEngine::with_cache(pattern_processor, 3, None);

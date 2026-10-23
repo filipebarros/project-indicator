@@ -18,15 +18,14 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
 
-    if cli.verbose {
-        env_logger::Builder::from_default_env()
-            .filter_level(log::LevelFilter::Debug)
-            .init();
+    let level = if cli.verbose {
+        log::LevelFilter::Debug
     } else {
-        env_logger::Builder::from_default_env()
-            .filter_level(log::LevelFilter::Warn)
-            .init();
-    }
+        log::LevelFilter::Warn
+    };
+    env_logger::Builder::from_default_env()
+        .filter_level(level)
+        .init();
 
     match cli.command {
         Some(Commands::Config { action }) => handle_config_command(action),

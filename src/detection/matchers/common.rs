@@ -12,10 +12,6 @@ pub fn calculate_confidence(required: usize, matched: usize) -> f32 {
     confidence.min(1.0)
 }
 
-pub fn calculate_dependency_confidence(required: &[String], matched: &[String]) -> f32 {
-    calculate_confidence(required.len(), matched.len())
-}
-
 pub fn sort_framework_matches(matches: &mut [FrameworkMatch]) {
     matches.sort_by(|a, b| {
         b.confidence
@@ -30,7 +26,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_calculate_dependency_confidence() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_calculate_confidence_ratios() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(calculate_confidence(1, 1), 1.0);
 
         let confidence = calculate_confidence(2, 1);

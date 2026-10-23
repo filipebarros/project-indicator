@@ -76,10 +76,6 @@ impl FileSystemCache {
         self.get_metadata(path).map(|m| m.is_file).unwrap_or(false)
     }
 
-    pub fn is_dir(&self, path: &Path) -> bool {
-        self.get_metadata(path).map(|m| m.is_dir).unwrap_or(false)
-    }
-
     pub fn clear(&self) {
         self.metadata_cache.clear();
     }
@@ -150,7 +146,7 @@ mod tests {
 
         assert!(!cache.exists(path));
         assert!(!cache.is_file(path));
-        assert!(!cache.is_dir(path));
+        assert!(!cache.exists(path));
 
         let stats = cache.stats();
         // Only the first lookup should miss; subsequent lookups hit the
@@ -165,7 +161,6 @@ mod tests {
         let temp_dir = TempDir::new()?;
 
         assert!(cache.exists(temp_dir.path()));
-        assert!(cache.is_dir(temp_dir.path()));
         assert!(!cache.is_file(temp_dir.path()));
         Ok(())
     }

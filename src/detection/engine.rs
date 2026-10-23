@@ -1,12 +1,11 @@
-use crate::detection::caches::FileSystemCacheManager;
+use crate::detection::caches::ParsedFileCache;
 use crate::detection::confidence_scorer::ConfidenceScorer;
 use crate::detection::framework_detector::FrameworkDetector;
 use crate::detection::indicator_resolver::IndicatorResolver;
-use crate::detection::pattern_compiler::PatternCompiler;
-use crate::detection::pattern_matching::PatternMatcher;
 use crate::detection::pattern_processor::PatternProcessor;
 use crate::detection::root_indicators::RootIndicatorEngine;
 use crate::detection::scanner::ScanningEngine;
+use crate::performance::FileSystemCache;
 use crate::types::{DetectionConfig, DetectionEvidence, DetectionResult, Framework, Indicator};
 use crate::Result;
 use anyhow::Context;
@@ -56,32 +55,19 @@ const ROOT_MATCH_OVERRIDE_CERTAINTY: f32 = 0.8;
 ///
 /// ## Architecture
 ///
-/// - **PatternCompiler**: Extracts and compiles file patterns from indicator definitions
-/// - **FileSystemCacheManager**: Manages file existence and parsed file caches
+/// - **FileSystemCache / ParsedFileCache**: Per-run caches for file existence and parsed manifests
 /// - **ScanningEngine**: Performs directory traversal and file matching with adaptive performance
 /// - **IndicatorResolver**: Resolves indicator conflicts when multiple indicators detected
 /// - **ConfidenceScorer**: Calculates confidence scores for indicator matches
 /// - **FrameworkDetector**: Identifies frameworks within detected indicators
 /// - **RootIndicatorEngine**: Upward-traversal project-root discovery and boundary-directory checks
 ///
-/// ## Shared Resources
-///
-/// ### PatternMatcher Ownership
-///
-/// DetectionEngine creates a single `Arc<PatternMatcher>` instance and shares it with:
-/// - `ConfidenceScorer` - for calculating indicator match confidence
-/// - `ScanningEngine` (via `PatternProcessor`) - for efficient file pattern matching
-///
-/// This design ensures:
-/// 1. **Single cache instance** - All pattern matches benefit from shared cache
-/// 2. **Memory efficiency** - No duplicate matcher instances
-/// 3. **Thread safety** - PatternMatcher uses DashMap for concurrent access
-/// 4. **Performance** - Cache hits across entire detection pipeline
 pub struct DetectionEngine {
     indicators: Vec<Arc<Indicator>>,
     frameworks: Arc<Vec<Framework>>,
 
-    cache_manager: FileSystemCacheManager,
+    file_cache: Arc<FileSystemCache>,
+    parsed_cache: ParsedFileCache,
     confidence_scorer: ConfidenceScorer,
     indicator_resolver: IndicatorResolver,
     framework_detector: FrameworkDetector,
@@ -97,8 +83,6 @@ impl DetectionEngine {
 
     /// Creates a new `DetectionEngine` with custom detection configuration.
     ///
-    /// A single `PatternMatcher` is created and shared across the scorer and
-    /// scanner so pattern-match memoization works across the whole pipeline.
     pub fn with_config(
         indicators: Vec<Indicator>,
         frameworks: Vec<Framework>,
@@ -107,20 +91,26 @@ impl DetectionEngine {
         let indicators: Vec<Arc<Indicator>> = indicators.into_iter().map(Arc::new).collect();
         let frameworks = Arc::new(frameworks);
 
-        let pattern_matcher = Arc::new(PatternMatcher::new());
-        let cache_manager = FileSystemCacheManager::new();
-        let confidence_scorer =
-            ConfidenceScorer::with_catalog(pattern_matcher.clone(), frameworks.clone());
+        let file_cache = Arc::new(FileSystemCache::new());
+        let parsed_cache = ParsedFileCache::new();
+        let confidence_scorer = ConfidenceScorer::with_catalog(frameworks.clone());
         let indicator_resolver = IndicatorResolver::default();
         let framework_detector = FrameworkDetector::new();
 
-        let pattern_compiler = PatternCompiler::new(&indicators);
-        let file_cache = cache_manager.file_existence_cache();
+        // Deduplicated set of every file pattern the indicators reference
+        let unique_patterns: Arc<Vec<String>> = Arc::new(
+            indicators
+                .iter()
+                .flat_map(|i| i.files.iter().cloned())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect(),
+        );
 
         let scanning_engine = ScanningEngine::with_cache(
-            PatternProcessor::new(pattern_matcher.clone(), pattern_compiler.unique_patterns()),
+            PatternProcessor::new(unique_patterns),
             detection_config.max_depth,
-            Some(file_cache),
+            Some(file_cache.clone()),
         );
 
         let root_indicator_engine =
@@ -129,7 +119,8 @@ impl DetectionEngine {
         Self {
             indicators,
             frameworks,
-            cache_manager,
+            file_cache,
+            parsed_cache,
             confidence_scorer,
             indicator_resolver,
             framework_detector,
@@ -160,7 +151,7 @@ impl DetectionEngine {
         let mut root_indicator_match = None;
         let scan_path = if let Some((root_path, root_indicator)) = self
             .root_indicator_engine
-            .find_project_root(path, &self.cache_manager.file_existence_cache())?
+            .find_project_root(path, &self.file_cache)?
         {
             log::info!(
                 "Upward traversal: Found project root at {} (started from {}, pattern: {})",
@@ -274,8 +265,8 @@ impl DetectionEngine {
                 &indicator,
                 &self.frameworks,
                 &mut evidence,
-                &self.cache_manager.file_existence_cache(),
-                self.cache_manager.parsed_file_cache(),
+                &self.file_cache,
+                &self.parsed_cache,
             )
             .with_context(|| "Failed to detect frameworks")?;
 

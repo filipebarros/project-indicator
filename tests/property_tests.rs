@@ -3,7 +3,7 @@
 //! These tests verify invariants across randomized inputs to catch edge cases
 //! that might be missed by example-based testing.
 
-use project_indicator::detection::pattern_matching::PatternMatcher;
+use project_indicator::patterns::matches_pattern;
 use project_indicator::performance::FileSystemCache;
 use proptest::prelude::*;
 use std::path::PathBuf;
@@ -93,11 +93,10 @@ proptest! {
         pattern in pattern_strategy(),
         filenames in prop::collection::vec(filename_strategy(), 1..20)
     ) {
-        let matcher = PatternMatcher::new();
 
         for filename in &filenames {
-            let result1 = matcher.matches_pattern(filename, &pattern);
-            let result2 = matcher.matches_pattern(filename, &pattern);
+            let result1 = matches_pattern(filename, &pattern);
+            let result2 = matches_pattern(filename, &pattern);
 
             prop_assert_eq!(
                 result1,
@@ -108,7 +107,7 @@ proptest! {
             );
 
             // Third call should also match (testing cache consistency)
-            let result3 = matcher.matches_pattern(filename, &pattern);
+            let result3 = matches_pattern(filename, &pattern);
             prop_assert_eq!(
                 result1,
                 result3,
@@ -213,22 +212,21 @@ fn test_edge_case_patterns() {
     proptest!(config, |(
         filename in filename_strategy()
     )| {
-        let matcher = PatternMatcher::new();
 
         prop_assert!(
-            matcher.matches_pattern(&filename, "*"),
+            matches_pattern(&filename, "*"),
             "Pattern '*' should match '{}'",
             filename
         );
 
         prop_assert!(
-            matcher.matches_pattern(&filename, &filename),
+            matches_pattern(&filename, &filename),
             "Exact match failed for '{}'",
             filename
         );
 
         prop_assert!(
-            !matcher.matches_pattern(&filename, ""),
+            !matches_pattern(&filename, ""),
             "Empty pattern should not match '{}'",
             filename
         );

@@ -1,4 +1,4 @@
-use super::common::{calculate_dependency_confidence, sort_framework_matches};
+use super::common::{calculate_confidence, sort_framework_matches};
 use super::ecosystems::*;
 use crate::detection::caches::ParsedFileCache;
 use crate::types::{DetectionType, Ecosystem, Framework, FrameworkMatch};
@@ -51,7 +51,7 @@ impl DependencyMatcher {
                 check_ecosystem(*ecosystem, &path, dependencies, parsed_cache)?;
 
             if !found_deps.is_empty() {
-                let confidence = calculate_dependency_confidence(dependencies, &found_deps);
+                let confidence = calculate_confidence(dependencies.len(), found_deps.len());
                 return Ok(Some(FrameworkMatch::new(
                     framework.clone(),
                     confidence,

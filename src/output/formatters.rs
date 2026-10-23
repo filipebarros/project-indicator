@@ -26,21 +26,12 @@ impl std::str::FromStr for OutputFormat {
         }
     }
 }
-pub struct OutputFormatter {
-    display_config: DisplayConfig,
-}
-
-impl OutputFormatter {
-    pub fn new(display_config: DisplayConfig) -> Self {
-        Self { display_config }
-    }
-    pub fn format(&self, result: &DetectionResult, format: OutputFormat) -> String {
-        match format {
-            OutputFormat::Simple => render_simple(result, &self.display_config),
-            OutputFormat::Full => render_full(result, &self.display_config),
-            OutputFormat::Json => render_json(result, &self.display_config),
-            OutputFormat::Debug => render_debug(result, &self.display_config),
-        }
+pub fn render(result: &DetectionResult, format: OutputFormat, config: &DisplayConfig) -> String {
+    match format {
+        OutputFormat::Simple => render_simple(result, config),
+        OutputFormat::Full => render_full(result, config),
+        OutputFormat::Json => render_json(result, config),
+        OutputFormat::Debug => render_debug(result, config),
     }
 }
 
@@ -84,9 +75,8 @@ mod tests {
     fn test_simple_format() -> Result<(), Box<dyn std::error::Error>> {
         let result = create_test_result();
         let display_config = DisplayConfig::default();
-        let formatter = OutputFormatter::new(display_config);
 
-        let output = formatter.format(&result, OutputFormat::Simple);
+        let output = render(&result, OutputFormat::Simple, &display_config);
         // Icon wrapped in ANSI truecolor from the framework color (#61DAFB)
         assert_eq!(output, "\x1b[38;2;97;218;251m⚛️\x1b[0m");
         Ok(())
@@ -96,9 +86,8 @@ mod tests {
     fn test_full_format() -> Result<(), Box<dyn std::error::Error>> {
         let result = create_test_result();
         let display_config = DisplayConfig::default();
-        let formatter = OutputFormatter::new(display_config);
 
-        let output = formatter.format(&result, OutputFormat::Full);
+        let output = render(&result, OutputFormat::Full, &display_config);
         assert!(output.contains("󰛦"));
         assert!(output.contains("#3178C6"));
         assert!(output.contains("⚛️"));
@@ -112,9 +101,8 @@ mod tests {
     fn test_json_format() -> Result<(), Box<dyn std::error::Error>> {
         let result = create_test_result();
         let display_config = DisplayConfig::default();
-        let formatter = OutputFormatter::new(display_config);
 
-        let output = formatter.format(&result, OutputFormat::Json);
+        let output = render(&result, OutputFormat::Json, &display_config);
 
         let json: JsonOutput = serde_json::from_str(&output)?;
         assert_eq!(json.indicator, Some("TypeScript".to_string()));
@@ -129,9 +117,8 @@ mod tests {
     fn test_debug_format() -> Result<(), Box<dyn std::error::Error>> {
         let result = create_test_result();
         let display_config = DisplayConfig::default();
-        let formatter = OutputFormatter::new(display_config);
 
-        let output = formatter.format(&result, OutputFormat::Debug);
+        let output = render(&result, OutputFormat::Debug, &display_config);
         assert!(output.contains("Project: TypeScript"));
         assert!(output.contains("React"));
         assert!(output.contains("confidence: 0.90"));
@@ -164,9 +151,7 @@ mod tests {
             ..Default::default()
         };
 
-        let formatter = OutputFormatter::new(display_config);
-
-        let json_output = formatter.format(&result, OutputFormat::Json);
+        let json_output = render(&result, OutputFormat::Json, &display_config);
         let json: JsonOutput = serde_json::from_str(&json_output)?;
         assert_eq!(json.frameworks.len(), 1);
         Ok(())
@@ -177,16 +162,15 @@ mod tests {
         let mut result = create_test_result();
 
         result.confidence = f32::NAN;
-        let formatter = OutputFormatter::new(DisplayConfig::default());
 
-        let json_output = formatter.format(&result, OutputFormat::Json);
+        let json_output = render(&result, OutputFormat::Json, &DisplayConfig::default());
         let parsed: JsonOutput = serde_json::from_str(&json_output)?;
 
         assert_eq!(parsed.confidence, 0.0);
         assert!(parsed.indicator.is_some());
 
         result.confidence = f32::INFINITY;
-        let json_output = formatter.format(&result, OutputFormat::Json);
+        let json_output = render(&result, OutputFormat::Json, &DisplayConfig::default());
         let parsed: JsonOutput = serde_json::from_str(&json_output)?;
 
         assert_eq!(parsed.confidence, 0.0);
@@ -196,9 +180,8 @@ mod tests {
     #[test]
     fn test_json_format_fallback_structure() -> Result<(), Box<dyn std::error::Error>> {
         let result = create_test_result();
-        let formatter = OutputFormatter::new(DisplayConfig::default());
 
-        let json_output = formatter.format(&result, OutputFormat::Json);
+        let json_output = render(&result, OutputFormat::Json, &DisplayConfig::default());
         let json: JsonOutput = serde_json::from_str(&json_output)?;
 
         assert!(json.indicator.is_some());

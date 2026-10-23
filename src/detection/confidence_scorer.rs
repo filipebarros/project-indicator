@@ -1,4 +1,3 @@
-use crate::detection::pattern_matching::PatternMatcher;
 use crate::types::{
     ConfidenceFactor, DetectionEvidence, DirectoryType, Framework, Indicator, MatchedFile,
     RootIndicator,
@@ -7,7 +6,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub struct ConfidenceScorer {
-    pattern_matcher: Arc<PatternMatcher>,
     /// Framework catalog: framework root-indicator weights contribute to
     /// pattern importance
     frameworks: Arc<Vec<Framework>>,
@@ -15,17 +13,11 @@ pub struct ConfidenceScorer {
 
 impl ConfidenceScorer {
     pub fn new() -> Self {
-        Self::with_catalog(Arc::new(PatternMatcher::new()), Arc::new(Vec::new()))
+        Self::with_catalog(Arc::new(Vec::new()))
     }
 
-    pub fn with_catalog(
-        pattern_matcher: Arc<PatternMatcher>,
-        frameworks: Arc<Vec<Framework>>,
-    ) -> Self {
-        Self {
-            pattern_matcher,
-            frameworks,
-        }
+    pub fn with_catalog(frameworks: Arc<Vec<Framework>>) -> Self {
+        Self { frameworks }
     }
 
     /// The weight, context authority, and alternative-group (if any) of the
@@ -40,10 +32,7 @@ impl ConfidenceScorer {
     ) -> (f32, f32, Option<String>) {
         for indicator in indicators {
             for root_indicator in &indicator.root_indicators {
-                if self
-                    .pattern_matcher
-                    .matches_pattern(pattern, &root_indicator.pattern)
-                {
+                if crate::patterns::matches_pattern(pattern, &root_indicator.pattern) {
                     return (
                         root_indicator.weight,
                         root_indicator.context.base_priority(),
@@ -55,10 +44,7 @@ impl ConfidenceScorer {
 
         for framework in self.frameworks.iter() {
             for root_indicator in &framework.root_indicators {
-                if self
-                    .pattern_matcher
-                    .matches_pattern(pattern, &root_indicator.pattern)
-                {
+                if crate::patterns::matches_pattern(pattern, &root_indicator.pattern) {
                     return (
                         root_indicator.weight,
                         root_indicator.context.base_priority(),
@@ -71,7 +57,7 @@ impl ConfidenceScorer {
         (0.5, 1.0, None)
     }
 
-    pub fn get_pattern_importance(&self, pattern: &str, indicators: &[Arc<Indicator>]) -> f32 {
+    fn get_pattern_importance(&self, pattern: &str, indicators: &[Arc<Indicator>]) -> f32 {
         self.get_pattern_details(pattern, indicators).0
     }
 
@@ -124,10 +110,7 @@ impl ConfidenceScorer {
 
             let best_match_weight = matched_files
                 .iter()
-                .filter(|file| {
-                    self.pattern_matcher
-                        .matches_pattern(&file.filename, pattern)
-                })
+                .filter(|file| crate::patterns::matches_pattern(&file.filename, pattern))
                 .map(|file| file.weight())
                 .fold(0.0f32, |a, b| a.max(b));
 
@@ -175,8 +158,7 @@ impl ConfidenceScorer {
                     .root_indicators
                     .iter()
                     .filter_map(|root_indicator| {
-                        self.pattern_matcher
-                            .matches_pattern(&file.filename, &root_indicator.pattern)
+                        crate::patterns::matches_pattern(&file.filename, &root_indicator.pattern)
                             .then_some(root_indicator.weight)
                     })
             })
@@ -217,7 +199,7 @@ impl ConfidenceScorer {
                     && indicator
                         .files
                         .iter()
-                        .any(|pattern| self.pattern_matcher.matches_pattern(&f.filename, pattern))
+                        .any(|pattern| crate::patterns::matches_pattern(&f.filename, pattern))
             })
             .count();
 
@@ -233,7 +215,7 @@ impl ConfidenceScorer {
                     && indicator
                         .files
                         .iter()
-                        .any(|pattern| self.pattern_matcher.matches_pattern(&f.filename, pattern))
+                        .any(|pattern| crate::patterns::matches_pattern(&f.filename, pattern))
             })
             .map(|f| f.relative_path.split('/').next().unwrap_or("").to_string())
             .collect();
@@ -249,7 +231,7 @@ impl ConfidenceScorer {
                     && indicator
                         .files
                         .iter()
-                        .any(|pattern| self.pattern_matcher.matches_pattern(&f.filename, pattern))
+                        .any(|pattern| crate::patterns::matches_pattern(&f.filename, pattern))
             })
             .count();
 
@@ -271,9 +253,7 @@ impl ConfidenceScorer {
         Self::sum_with_grouped_max(indicator.root_indicators.iter().filter(|root_indicator| {
             matched_files.iter().any(|file| {
                 file.depth == 0
-                    && self
-                        .pattern_matcher
-                        .matches_pattern(&file.filename, &root_indicator.pattern)
+                    && crate::patterns::matches_pattern(&file.filename, &root_indicator.pattern)
             })
         }))
     }
