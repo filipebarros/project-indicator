@@ -73,6 +73,7 @@ pub fn check_ecosystem<P: AsRef<Path>>(
 ) -> Result<(Vec<String>, Vec<String>)> {
     match ecosystem {
         Ecosystem::Npm => check_node_ecosystem(&path, dependencies, parsed_cache),
+        Ecosystem::Deno => check_deno_ecosystem(&path, dependencies, parsed_cache),
         Ecosystem::Pypi => check_python_ecosystem(&path, dependencies, parsed_cache),
         Ecosystem::Cargo => check_rust_ecosystem(&path, dependencies, parsed_cache),
         Ecosystem::Go => check_go_ecosystem(&path, dependencies, parsed_cache),

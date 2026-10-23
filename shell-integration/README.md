@@ -37,6 +37,18 @@ when = true
 shell = ["sh"]
 ```
 
+## tmux
+
+Warm invocations are served from the persistent cache, so the binary is cheap
+enough to call from the status line:
+
+```tmux
+set -g status-right '#(cd #{pane_current_path} && NO_COLOR=1 project-indicator) | %H:%M'
+```
+
+(`NO_COLOR=1` because tmux renders its own colors; drop it if your status-right
+passes ANSI through.)
+
 ## Cache management
 
 ```bash

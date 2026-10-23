@@ -2,7 +2,7 @@
 name = "project-indicator"
 version = "5.0.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.88"
 authors = ["Filipe Barros <afbarros@me.com>"]
 description = "Fast project type and framework detection for shell prompts"
 license = "MIT"

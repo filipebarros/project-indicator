@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use clap::Parser;
 use project_indicator::{
     cli::{Cli, Commands},

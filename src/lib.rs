@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod cache;
 pub mod cli;
 pub mod config;

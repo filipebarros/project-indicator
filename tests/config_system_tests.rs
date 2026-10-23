@@ -146,6 +146,7 @@ priority = 1
         .args(["config", "show"])
         .current_dir(&workdir)
         .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
         .env("XDG_CONFIG_HOME", home.path().join("xdg-config"))
         .output()?;
 
@@ -155,7 +156,8 @@ priority = 1
         .find(|l| l.contains("(active)"))
         .unwrap_or_default();
     assert!(
-        active_line.contains("project-indicator.toml") && active_line.contains('/'),
+        active_line.contains("project-indicator.toml")
+            && active_line.contains(std::path::MAIN_SEPARATOR),
         "the cwd config must be marked active and shown as an absolute path, got: {stdout}"
     );
     assert!(
@@ -186,6 +188,7 @@ fn test_config_show_surfaces_unparsable_active_config() -> Result<(), Box<dyn st
         .args(["config", "show"])
         .current_dir(home.path())
         .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
         .env("XDG_CONFIG_HOME", home.path().join("xdg-config"))
         .output()?;
 
@@ -221,6 +224,7 @@ fn test_validate_hint_for_outranked_config() -> Result<(), Box<dyn std::error::E
         .args(["config", "validate"])
         .current_dir(&workdir)
         .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
         .env("XDG_CONFIG_HOME", home.path().join("xdg-config"))
         .output()?;
 

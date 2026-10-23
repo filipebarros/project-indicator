@@ -130,6 +130,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum Ecosystem {
     Npm,
+    Deno,
     Pypi,
     Cargo,
     Go,
