@@ -1,4 +1,4 @@
-use crate::detection::pattern_matching::PatternMatcher;
+use crate::patterns::matches_pattern;
 use crate::types::MatchedFile;
 use std::collections::HashSet;
 use std::path::Path;
@@ -6,14 +6,13 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct PatternProcessor {
-    pattern_matcher: Arc<PatternMatcher>,
     unique_patterns: Arc<Vec<String>>,
     extension_filter: Arc<HashSet<String>>,
     exact_patterns: Arc<HashSet<String>>,
 }
 
 impl PatternProcessor {
-    pub fn new(pattern_matcher: Arc<PatternMatcher>, patterns: Arc<Vec<String>>) -> Self {
+    pub fn new(patterns: Arc<Vec<String>>) -> Self {
         let mut extension_filter = HashSet::new();
         let mut exact_patterns = HashSet::new();
 
@@ -28,7 +27,6 @@ impl PatternProcessor {
         }
 
         Self {
-            pattern_matcher,
             unique_patterns: patterns,
             extension_filter: Arc::new(extension_filter),
             exact_patterns: Arc::new(exact_patterns),
@@ -49,7 +47,7 @@ impl PatternProcessor {
         let should_scan = self
             .unique_patterns
             .iter()
-            .any(|pattern| self.pattern_matcher.matches_pattern(filename, pattern));
+            .any(|pattern| matches_pattern(filename, pattern));
 
         should_scan
     }
@@ -64,7 +62,7 @@ impl PatternProcessor {
             if let Some(relative_str) = relative_path.to_str() {
                 if let Some(filename) = relative_path.file_name().and_then(|n| n.to_str()) {
                     for pattern in patterns {
-                        if self.pattern_matcher.matches_pattern(filename, pattern) {
+                        if matches_pattern(filename, pattern) {
                             return Some(MatchedFile::new(
                                 filename.to_string(),
                                 relative_str.to_string(),

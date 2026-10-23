@@ -3,7 +3,7 @@ use project_indicator::{
     cli::Cli,
     config::{Config, ConfigParser},
     detection::DetectionEngine,
-    output::{OutputFormat, OutputFormatter},
+    output::{render, OutputFormat},
     Result,
 };
 
@@ -32,7 +32,7 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
             // Cache hit: render from the cached result and display snapshot,
             // skipping config parsing and engine construction. Note that
             // tracking snapshots are not recorded for cache hits.
-            println!("{}", OutputFormatter::new(display).format(&result, format));
+            println!("{}", render(&result, format, &display));
             return Ok(());
         }
     }
@@ -55,9 +55,7 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
         cache.store(&path, config_path.as_deref(), &result, &display_config);
     }
 
-    let formatter = OutputFormatter::new(display_config);
-
-    let output = formatter.format(&result, format);
+    let output = render(&result, format, &display_config);
     println!("{}", output);
 
     Ok(())

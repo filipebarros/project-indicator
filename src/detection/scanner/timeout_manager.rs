@@ -9,13 +9,13 @@
 //! All operations are thread-safe using atomic types.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub struct TimeoutManager {
     start_time: Instant,
     timeout_duration: Duration,
-    files_scanned: Arc<AtomicUsize>,
+    // The parallel scan shares the whole manager via Arc; no inner Arc needed
+    files_scanned: AtomicUsize,
 }
 
 impl TimeoutManager {
@@ -25,7 +25,7 @@ impl TimeoutManager {
         Self {
             start_time: Instant::now(),
             timeout_duration,
-            files_scanned: Arc::new(AtomicUsize::new(0)),
+            files_scanned: AtomicUsize::new(0),
         }
     }
 
@@ -57,6 +57,7 @@ impl TimeoutManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use std::thread;
 
     #[test]

@@ -29,8 +29,8 @@ impl FileSystemTraverser {
         Self { max_depth }
     }
 
-    /// Configure WalkBuilder with gitignore support
-    fn configure_walker(&self, path: &Path) -> WalkBuilder {
+    /// Configured WalkBuilder with gitignore support
+    pub fn build_walker(&self, path: &Path) -> WalkBuilder {
         let mut builder = WalkBuilder::new(path);
         builder
             .max_depth(Some(self.max_depth))
@@ -55,11 +55,6 @@ impl FileSystemTraverser {
         std::fs::read_dir(path)
             .map(|entries| entries.count())
             .unwrap_or(0)
-    }
-
-    /// Get configured WalkBuilder for external use
-    pub fn build_walker(&self, path: &Path) -> WalkBuilder {
-        self.configure_walker(path)
     }
 }
 

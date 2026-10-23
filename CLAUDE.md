@@ -54,10 +54,8 @@ cargo doc --no-deps --document-private-items
 cargo bench
 
 # Run specific benchmark
-cargo bench --bench pattern_matching_benchmark
-cargo bench --bench parsed_file_cache_benchmark
-cargo bench --bench filesystem_cache_benchmark
-cargo bench --bench framework_detection_benchmark
+cargo bench --bench component_benchmark  # pattern matching + per-run caches
+cargo bench --bench detection_benchmark  # end-to-end engine.detect scenarios
 
 # Dry run (compile but don't run)
 cargo bench --no-run
@@ -97,7 +95,7 @@ The detection flow follows this path:
 
 1. **DetectionEngine** (`src/detection/engine.rs`) - Orchestrator
    - Creates and coordinates all specialized components
-   - Shares a single `Arc<PatternMatcher>` across components for cache efficiency
+   - Wires the per-run caches and components together
 
 2. **RootIndicatorEngine** - Project root discovery
    - Walks upward from the start path looking for high-confidence root
@@ -159,12 +157,9 @@ The remaining caches live and die within a single detection run:
 - **Purpose**: Cache parsed JSON/TOML content so manifests like `package.json`
   are parsed at most once per run
 
-#### 3. PatternMatcher Cache (Shared)
-
-- **Location**: `src/detection/pattern_matching.rs`
-- **Shared**: Single instance via `Arc<PatternMatcher>`
-- **Purpose**: Memoize glob pattern matching results
-- **Thread-safe**: Uses DashMap for concurrent access
+(Pattern matching itself is NOT cached: a DashMap memo was benchmarked and
+removed — a cache hit cost ~6× more than computing the match, and removal cut
+end-to-end detection ~70%. Don't reintroduce it without new numbers.)
 
 ### Configuration System
 
@@ -209,17 +204,9 @@ All types in `src/types/` organized by domain:
 
 ### 2. Shared PatternMatcher Pattern
 
-When adding new components that need pattern matching:
-
-```rust
-// In DetectionEngine::new() or similar
-let shared_pattern_matcher = Arc::new(PatternMatcher::new());
-
-// Share with components
-let component = Component::new(shared_pattern_matcher.clone());
-```
-
-This ensures cache hits across the entire pipeline.
+Pattern matching is a free function: `crate::patterns::matches_pattern`.
+There is no matcher object and no cache (a memo was benchmarked out — see
+Caching Architecture); components call the function directly.
 
 ### 3. Error Handling
 
@@ -314,7 +301,7 @@ For ecosystem-specific dependency matching:
 ### When optimizing
 
 1. **Benchmark first**: Use `cargo bench` to establish baseline
-2. **Profile**: Run with `cargo bench --bench profiling_benchmark`
+2. **Profile**: Run with `cargo bench --bench detection_benchmark`
 3. **Cache aggressively**: But measure cache overhead vs benefit
 4. **Prefer Arc over Clone**: For shared state across threads
 5. **Use DashMap**: For concurrent HashMap needs
@@ -324,8 +311,10 @@ For ecosystem-specific dependency matching:
 
 - Shell prompt scenario (warm cache hit): < 10ms wall including process
   spawn (~5ms measured; in-process cache lookup itself is microseconds)
-- Typical detection: < 10ms (currently 3-5ms)
-- Worst case (deep nesting): < 50ms (currently 20-30ms)
+- Cold detection: < 10ms wall including spawn (~5ms measured; in-process
+  detection is ~0.25ms per criterion benchmarks since the pattern-memo
+  removal cut it ~70%)
+- Worst case (deep nesting): < 50ms
 
 ## Project Structure Notes
 

@@ -4,7 +4,7 @@ use project_indicator::{
     cache::PersistentCache,
     config::TemplateGenerator,
     detection::DetectionEngine,
-    output::{OutputFormat, OutputFormatter},
+    output::{render, OutputFormat},
 };
 use std::fs;
 use std::process::Command;
@@ -42,8 +42,8 @@ fn test_cached_result_renders_identically() -> Result<(), Box<dyn std::error::Er
         .ok_or("expected cache hit")?;
 
     for format in [OutputFormat::Simple, OutputFormat::Json, OutputFormat::Full] {
-        let fresh_out = OutputFormatter::new(config.display.clone()).format(&fresh, format.clone());
-        let cached_out = OutputFormatter::new(display.clone()).format(&cached, format);
+        let fresh_out = render(&fresh, format.clone(), &config.display);
+        let cached_out = render(&cached, format, &display);
         assert_eq!(fresh_out, cached_out);
     }
     Ok(())
