@@ -202,30 +202,11 @@ fn test_config_defaults() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_wildcard_patterns() -> Result<(), Box<dyn std::error::Error>> {
-    let cpp_lang = Indicator::new(
-        "C++".to_string(),
-        vec![
-            "*.cpp".to_string(),
-            "*.hpp".to_string(),
-            "CMakeLists.txt".to_string(),
-        ],
-        "#00599C".to_string(),
-        "".to_string(),
-        1,
-        vec![],
-    );
-
-    let cpp_files = vec!["main.cpp".to_string(), "header.hpp".to_string()];
-    assert!(cpp_lang.matches_files(&cpp_files));
-
-    let cmake_files = vec!["CMakeLists.txt".to_string()];
-    assert!(cpp_lang.matches_files(&cmake_files));
-
-    let no_match_files = vec!["main.py".to_string(), "package.json".to_string()];
-    assert!(!cpp_lang.matches_files(&no_match_files));
-
-    let partial_files = vec!["src/main.cpp".to_string()];
-    assert!(cpp_lang.matches_files(&partial_files));
+    // The engine's single matcher; Indicator itself no longer matches files
+    let matcher = project_indicator::detection::pattern_matching::PatternMatcher::new();
+    assert!(matcher.matches_pattern("main.cpp", "*.cpp"));
+    assert!(matcher.matches_pattern("CMakeLists.txt", "CMakeLists.txt"));
+    assert!(!matcher.matches_pattern("main.py", "*.cpp"));
     Ok(())
 }
 

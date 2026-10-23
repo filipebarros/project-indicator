@@ -140,6 +140,22 @@ fn has_pyproject_dependency(toml_value: &toml::Value, dep_name: &str) -> bool {
     false
 }
 
+/// Check go.mod dependencies. The single-line form puts the `require`
+/// keyword before the module path; strip it so module paths anchor at line
+/// start like the indented block form, then reuse the text matcher.
+pub fn check_go_mod_dependencies(content: &str, dep_names: &[String]) -> Vec<String> {
+    let normalized: String = content
+        .lines()
+        .map(|line| {
+            line.trim_start()
+                .strip_prefix("require ")
+                .map_or(line, str::trim_start)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    check_text_dependencies(&normalized, dep_names)
+}
+
 /// Check text-based dependencies (Gemfile, requirements.txt)
 pub fn check_text_dependencies(content: &str, dep_names: &[String]) -> Vec<String> {
     let mut found_deps = Vec::with_capacity(dep_names.len());
@@ -291,10 +307,10 @@ pub fn check_gemfile_lock_dependencies(content: &str, gem_names: &[String]) -> V
     if let Some(specs_start) = specs_section {
         let specs_content = &content[specs_start..];
 
+        // Specs entries are always `    name (version)`; a dash variant would
+        // match prefix-named gems (rails- matching rails-html-sanitizer)
         for gem_name in gem_names {
-            if specs_content.contains(&format!("    {} (", gem_name))
-                || specs_content.contains(&format!("    {}-", gem_name))
-            {
+            if specs_content.contains(&format!("    {} (", gem_name)) {
                 found_deps.push(gem_name.to_string());
             }
         }
@@ -400,7 +416,14 @@ pub fn check_gradle_dependencies(content: &str, dep_names: &[String]) -> Vec<Str
     let mut found_deps = Vec::with_capacity(dep_names.len());
 
     for dep_name in dep_names {
-        if content.contains(&format!(":{}", dep_name))
+        // After `group:artifact`, the name ends at a version colon, a closing
+        // quote (unversioned), or a dash — the dash keeps family-prefix
+        // catalog entries (spring-boot → spring-boot-starter-web) matching
+        // while rejecting arbitrary substrings of longer artifact names
+        if content.contains(&format!(":{}:", dep_name))
+            || content.contains(&format!(":{}'", dep_name))
+            || content.contains(&format!(":{}\"", dep_name))
+            || content.contains(&format!(":{}-", dep_name))
             || content.contains(&format!("'{}'", dep_name))
             || content.contains(&format!("\"{}\"", dep_name))
             || content.contains(&format!("name: '{}'", dep_name))
@@ -576,6 +599,63 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_go_mod_matches_single_line_require() {
+        // `go mod tidy` writes a lone direct dep as a single-line require
+        let content =
+            "module example.com/app\n\ngo 1.22\n\nrequire github.com/gin-gonic/gin v1.9.1\n";
+        let deps = vec!["github.com/gin-gonic/gin".to_string()];
+        assert_eq!(check_go_mod_dependencies(content, &deps), deps);
+    }
+
+    #[test]
+    fn test_go_mod_matches_require_block() {
+        let content = "module x\n\nrequire (\n    github.com/gin-gonic/gin v1.9.1\n)\n";
+        let deps = vec!["github.com/gin-gonic/gin".to_string()];
+        assert_eq!(check_go_mod_dependencies(content, &deps), deps);
+    }
+
+    #[test]
+    fn test_text_dependency_does_not_apply_go_mod_grammar() {
+        // Only go.mod lines carry a `require` keyword; other text manifests
+        // must not treat such lines as dependency declarations
+        let content = "# notes\nrequire django\n";
+        assert!(check_text_dependencies(content, &["django".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn test_gradle_does_not_match_artifact_name_substring() {
+        let content = "dependencies {\n    implementation(\"org.example:ginseng:1.0\")\n}\n";
+        assert!(check_gradle_dependencies(content, &["gin".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn test_gradle_matches_artifact_with_terminators() {
+        // versioned, family-prefix, and unversioned (quote-terminated) forms
+        let content = "dependencies {\n    implementation(\"io.ktor:ktor-server-core:2.3.0\")\n    implementation 'org.springframework.boot:spring-boot-starter-web:3.0'\n    implementation(\"com.squareup.okhttp3:okhttp\")\n}\n";
+        let deps = vec![
+            "ktor-server-core".to_string(),
+            "spring-boot".to_string(),
+            "okhttp".to_string(),
+        ];
+        assert_eq!(check_gradle_dependencies(content, &deps), deps);
+    }
+
+    #[test]
+    fn test_gemfile_lock_does_not_match_prefix_named_gem() {
+        let content = "GEM\n  specs:\n    rails-html-sanitizer (1.4.4)\n";
+        assert!(check_gemfile_lock_dependencies(content, &["rails".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn test_gemfile_lock_matches_exact_gem() {
+        let content = "GEM\n  specs:\n    rails (7.0.4)\n";
+        assert_eq!(
+            check_gemfile_lock_dependencies(content, &["rails".to_string()]),
+            vec!["rails".to_string()]
+        );
+    }
 
     #[test]
     fn test_yarn_lock_does_not_match_substring_package() {

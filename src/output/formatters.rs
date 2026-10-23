@@ -1,4 +1,4 @@
-use crate::output::render::{DebugRenderer, FullRenderer, JsonRenderer, Render, SimpleRenderer};
+use crate::output::render::{render_debug, render_full, render_json, render_simple};
 use crate::types::{DetectionResult, DisplayConfig};
 #[cfg(test)]
 use serde::{Deserialize, Serialize};
@@ -36,10 +36,10 @@ impl OutputFormatter {
     }
     pub fn format(&self, result: &DetectionResult, format: OutputFormat) -> String {
         match format {
-            OutputFormat::Simple => SimpleRenderer.render(result, &self.display_config),
-            OutputFormat::Full => FullRenderer.render(result, &self.display_config),
-            OutputFormat::Json => JsonRenderer.render(result, &self.display_config),
-            OutputFormat::Debug => DebugRenderer.render(result, &self.display_config),
+            OutputFormat::Simple => render_simple(result, &self.display_config),
+            OutputFormat::Full => render_full(result, &self.display_config),
+            OutputFormat::Json => render_json(result, &self.display_config),
+            OutputFormat::Debug => render_debug(result, &self.display_config),
         }
     }
 }

@@ -3,8 +3,7 @@
 //! This module provides efficient file system scanning with:
 //! - Adaptive timeout management
 //! - Sequential vs parallel scanning based on project size
-//! - Priority file fast path
-//! - Early termination heuristics
+//! - A match cap to bound memory and scan time
 //! - GitIgnore support
 //!
 //! # Performance Optimizations
@@ -28,7 +27,7 @@
 //! // Setup pattern matching infrastructure
 //! let pattern_matcher = Arc::new(PatternMatcher::new());
 //! let patterns = Arc::new(vec!["*.rs".to_string(), "Cargo.toml".to_string()]);
-//! let pattern_processor = PatternProcessor::new(pattern_matcher, patterns, vec![]);
+//! let pattern_processor = PatternProcessor::new(pattern_matcher, patterns);
 //!
 //! // Create scanning engine with max depth of 3
 //! let engine = ScanningEngine::with_cache(pattern_processor, 3, None);

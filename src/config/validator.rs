@@ -14,21 +14,14 @@ fn simple_error(message: impl Into<String>) -> anyhow::Error {
     anyhow::anyhow!(message.into())
 }
 pub fn validate_config(config: &Config) -> Result<()> {
-    validate_version(&config.meta.version)?;
+    // No version gate: deny_unknown_fields enforces the schema structurally,
+    // and the detect path accepts (with a warning) any config that parses —
+    // validate must not reject a config detection is actively using
     validate_display_config(config)?;
     validate_languages(&config.indicators)?;
     validate_frameworks(&config.frameworks)?;
     validate_unique_language_names(&config.indicators)?;
 
-    Ok(())
-}
-fn validate_version(version: &str) -> Result<()> {
-    if !version.starts_with("3.") {
-        return Err(ConfigError::UnsupportedVersion {
-            version: version.to_string(),
-        }
-        .into());
-    }
     Ok(())
 }
 fn validate_display_config(config: &Config) -> Result<()> {
@@ -239,7 +232,10 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_invalid_version() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_validate_accepts_non_current_version() -> Result<(), Box<dyn std::error::Error>> {
+        // Detection accepts (with a parser warning) any config that parses;
+        // validate must agree instead of rejecting a config that is in use.
+        // deny_unknown_fields already guards real schema mismatches.
         let config = Config {
             meta: ConfigMeta {
                 version: "1.0".to_string(),
@@ -250,7 +246,7 @@ mod tests {
             indicators: vec![create_valid_indicator()],
         };
 
-        assert!(validate_config(&config).is_err());
+        assert!(validate_config(&config).is_ok());
         Ok(())
     }
 

@@ -1,43 +1,3 @@
-pub fn pattern_to_regex(pattern: &str) -> Option<String> {
-    if pattern.is_empty() {
-        return None;
-    }
-
-    if pattern.len() > 1024 {
-        return None;
-    }
-
-    if pattern
-        .chars()
-        .any(|c| c.is_control() && c != '\t' && c != '\n')
-    {
-        return None;
-    }
-
-    if !pattern.contains('*') {
-        return None;
-    }
-
-    let wildcard_count = pattern.matches('*').count();
-
-    if wildcard_count == 1 && (pattern.starts_with('*') || pattern.ends_with('*')) {
-        return None;
-    }
-
-    if wildcard_count > 1 {
-        let escaped = regex::escape(pattern);
-        let regex_pattern = escaped.replace(r"\*", ".*");
-        let final_pattern = format!("^{}$", regex_pattern);
-
-        if final_pattern.len() > 2048 {
-            return None;
-        }
-
-        Some(final_pattern)
-    } else {
-        None
-    }
-}
 pub fn simple_wildcard_match(text: &str, pattern: &str) -> bool {
     if !pattern.contains('*') {
         return text == pattern;
@@ -100,9 +60,16 @@ pub fn simple_wildcard_match(text: &str, pattern: &str) -> bool {
         first_part.len()
     };
 
-    for part in &parts[1..] {
+    let last_idx = parts.len() - 1;
+    for (i, part) in parts.iter().enumerate().skip(1) {
         if part.is_empty() {
             continue;
+        }
+
+        // A non-empty final part means the pattern doesn't end with '*':
+        // glob semantics require the text to END with it
+        if i == last_idx {
+            return text[search_start..].ends_with(part);
         }
 
         if let Some(pos) = text[search_start..].find(part) {
@@ -118,85 +85,6 @@ pub fn simple_wildcard_match(text: &str, pattern: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_pattern_to_regex_exact_matches() -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(pattern_to_regex("package.json"), None);
-        assert_eq!(pattern_to_regex("Cargo.toml"), None);
-        assert_eq!(pattern_to_regex("README.md"), None);
-        assert_eq!(pattern_to_regex(""), None);
-        Ok(())
-    }
-
-    #[test]
-    fn test_pattern_to_regex_input_validation() -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(pattern_to_regex(""), None);
-
-        let long_pattern = "a".repeat(1025);
-        assert_eq!(pattern_to_regex(&long_pattern), None);
-
-        let valid_long_pattern = format!(
-            "{}*{}*{}",
-            "a".repeat(300),
-            "b".repeat(300),
-            "c".repeat(300)
-        );
-        assert!(pattern_to_regex(&valid_long_pattern).is_some());
-
-        assert_eq!(pattern_to_regex("test\x00*file"), None);
-        assert_eq!(pattern_to_regex("test\x01*file"), None);
-        assert_eq!(pattern_to_regex("test\x1F*file"), None);
-
-        assert!(pattern_to_regex("test\t*file*bar").is_some());
-        assert!(pattern_to_regex("test\n*file*bar").is_some());
-
-        let pattern_causing_long_regex = format!("{}*{}", "a".repeat(500), "b".repeat(500));
-        let result = pattern_to_regex(&pattern_causing_long_regex);
-        if let Some(regex_str) = result {
-            assert!(regex_str.len() <= 2048);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_pattern_to_regex_simple_wildcards() -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(pattern_to_regex("*.rs"), None);
-        assert_eq!(pattern_to_regex("test*"), None);
-        assert_eq!(pattern_to_regex("*"), None);
-        Ok(())
-    }
-
-    #[test]
-    fn test_pattern_to_regex_complex_patterns() -> Result<(), Box<dyn std::error::Error>> {
-        let result = pattern_to_regex("*.test.*");
-        assert!(result.is_some());
-        assert_eq!(
-            result.ok_or("Failed to get regex for *.test.*")?,
-            "^.*\\.test\\..*$"
-        );
-
-        let result = pattern_to_regex("test*.*.log");
-        assert!(result.is_some());
-        assert_eq!(
-            result.ok_or("Failed to get regex for test*.*.log")?,
-            "^test.*\\..*\\.log$"
-        );
-
-        let result = pattern_to_regex("*foo*bar*");
-        assert!(result.is_some());
-        assert_eq!(
-            result.ok_or("Failed to get regex for *foo*bar*")?,
-            "^.*foo.*bar.*$"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_pattern_to_regex_middle_wildcards() -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(pattern_to_regex("test*.log"), None);
-        assert_eq!(pattern_to_regex("src*main"), None);
-        Ok(())
-    }
 
     #[test]
     fn test_simple_wildcard_match_exact() -> Result<(), Box<dyn std::error::Error>> {
@@ -316,29 +204,11 @@ mod tests {
 
     #[test]
     fn test_pattern_optimization_integration() -> Result<(), Box<dyn std::error::Error>> {
-        let simple_patterns = ["*.rs", "test*", "*", "test*.log"];
-        for pattern in &simple_patterns {
-            assert_eq!(
-                pattern_to_regex(pattern),
-                None,
-                "Pattern {} should use simple matching",
-                pattern
-            );
-        }
-
-        let complex_patterns = ["*.test.*", "*foo*bar*baz*"];
-        for pattern in &complex_patterns {
-            assert!(
-                pattern_to_regex(pattern).is_some(),
-                "Pattern {} should use regex",
-                pattern
-            );
-        }
-
         assert!(simple_wildcard_match("main.rs", "*.rs"));
         assert!(simple_wildcard_match("test_file", "test*"));
         assert!(simple_wildcard_match("anything", "*"));
         assert!(simple_wildcard_match("test_main.log", "test*.log"));
+        assert!(simple_wildcard_match("foo.test.js", "*.test.*"));
         Ok(())
     }
 
@@ -367,5 +237,12 @@ mod tests {
         assert!(simple_wildcard_match("component.spec.js", "*.spec.js"));
         assert!(!simple_wildcard_match("spec.js", "*.spec.js"));
         Ok(())
+    }
+
+    #[test]
+    fn test_multi_wildcard_trailing_literal_is_anchored() {
+        // Glob semantics: a pattern not ending in '*' must match to the end
+        assert!(!simple_wildcard_match("a-b-c", "*a*b"));
+        assert!(simple_wildcard_match("xa-b", "*a*b"));
     }
 }

@@ -94,6 +94,13 @@ impl PersistentCache {
             }
         }
 
+        // Touch the entry so the age-based GC treats actively used projects
+        // as fresh; best-effort, a hit must never fail
+        let _ = fs::File::options()
+            .write(true)
+            .open(self.entry_path(&dir))
+            .and_then(|f| f.set_modified(SystemTime::now()));
+
         Some((entry.result, entry.display))
     }
 
@@ -194,17 +201,31 @@ impl PersistentCache {
         let Ok(entries) = fs::read_dir(&self.base) else {
             return;
         };
-        let paths: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        let mut paths: Vec<(PathBuf, SystemTime)> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter_map(|p| mtime(&p).map(|t| (p, t)))
+            .collect();
         if paths.len() <= MAX_ENTRIES_BEFORE_GC {
             return;
         }
+
         let now = SystemTime::now();
-        for path in paths {
-            let expired = mtime(&path)
-                .and_then(|t| now.duration_since(t).ok())
-                .is_some_and(|age| age.as_secs() > GC_MAX_AGE_SECS);
+        paths.retain(|(path, t)| {
+            let expired = now
+                .duration_since(*t)
+                .is_ok_and(|age| age.as_secs() > GC_MAX_AGE_SECS);
             if expired {
-                let _ = fs::remove_file(&path);
+                let _ = fs::remove_file(path);
+            }
+            !expired
+        });
+
+        // Age alone frees nothing when the cap is reached by entries used
+        // within the horizon (hits refresh mtimes): evict oldest beyond cap
+        if paths.len() > MAX_ENTRIES_BEFORE_GC {
+            paths.sort_by_key(|(_, t)| *t);
+            for (path, _) in &paths[..paths.len() - MAX_ENTRIES_BEFORE_GC] {
+                let _ = fs::remove_file(path);
             }
         }
     }
@@ -224,6 +245,19 @@ fn mtime(path: &Path) -> Option<SystemTime> {
 fn collect_evidence(dir: &Path, result: &DetectionResult) -> BTreeSet<PathBuf> {
     let mut paths = BTreeSet::new();
 
+    // Scan and framework evidence is relative to the DISCOVERED project
+    // root, which can be an ancestor of `dir` (upward traversal). The
+    // root-discovery item is stored absolute by the engine; its parent is
+    // that root. No root discovery → the scan ran in `dir` itself.
+    let base = result
+        .evidence
+        .root_discovery
+        .first()
+        .map(|item| Path::new(&item.file_path))
+        .and_then(Path::parent)
+        .filter(|p| p.is_absolute())
+        .unwrap_or(dir);
+
     let items = result
         .evidence
         .indicator_evidence
@@ -242,7 +276,7 @@ fn collect_evidence(dir: &Path, result: &DetectionResult) -> BTreeSet<PathBuf> {
         let abs = if p.is_absolute() {
             p.to_path_buf()
         } else {
-            dir.join(p)
+            base.join(p)
         };
         paths.insert(abs);
     }
@@ -288,6 +322,87 @@ mod tests {
         fs::write(project.path().join("Cargo.toml"), "[package]")?;
         let cache = PersistentCache::at_base(cache_dir.path().join("results"));
         Ok((cache_dir, project, cache))
+    }
+
+    fn set_file_mtime(path: &Path, t: SystemTime) -> Result<(), Box<dyn std::error::Error>> {
+        fs::File::options()
+            .write(true)
+            .open(path)?
+            .set_modified(t)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_gc_evicts_oldest_beyond_cap() -> Result<(), Box<dyn std::error::Error>> {
+        let (cache_dir, project, cache) = setup()?;
+        let base = cache_dir.path().join("results");
+        fs::create_dir_all(&base)?;
+
+        // Fresh entries beyond the cap: age-based GC alone frees nothing
+        let old = SystemTime::now() - Duration::from_secs(3600);
+        for i in 0..MAX_ENTRIES_BEFORE_GC + 10 {
+            let p = base.join(format!("junk{i}.json"));
+            fs::write(&p, "x")?;
+            if i < 10 {
+                set_file_mtime(&p, old)?;
+            }
+        }
+
+        cache.store(
+            project.path(),
+            None,
+            &test_result("Cargo.toml"),
+            &DisplayConfig::default(),
+        );
+
+        let count = fs::read_dir(&base)?.count();
+        assert!(
+            count <= MAX_ENTRIES_BEFORE_GC,
+            "cache must not grow beyond the cap, got {count} entries"
+        );
+        assert!(
+            !base.join("junk0.json").exists(),
+            "the oldest entries must be evicted first"
+        );
+        assert!(
+            cache.load(project.path(), None).is_some(),
+            "the just-stored entry must survive eviction"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_hit_refreshes_entry_mtime() -> Result<(), Box<dyn std::error::Error>> {
+        let (cache_dir, project, cache) = setup()?;
+        cache.store(
+            project.path(),
+            None,
+            &test_result("Cargo.toml"),
+            &DisplayConfig::default(),
+        );
+
+        // Age the entry past the GC horizon, then hit it: a daily-used
+        // project's entry must not be evicted by the age sweep
+        let base = cache_dir.path().join("results");
+        let entry = fs::read_dir(&base)?
+            .filter_map(|e| e.ok())
+            .next()
+            .ok_or("entry file missing")?
+            .path();
+        set_file_mtime(
+            &entry,
+            SystemTime::now() - Duration::from_secs(GC_MAX_AGE_SECS + 60),
+        )?;
+
+        assert!(cache.load(project.path(), None).is_some());
+        let age = SystemTime::now()
+            .duration_since(mtime(&entry).ok_or("no mtime")?)?
+            .as_secs();
+        assert!(
+            age < 3600,
+            "a cache hit must refresh the entry mtime, age is {age}s"
+        );
+        Ok(())
     }
 
     #[test]

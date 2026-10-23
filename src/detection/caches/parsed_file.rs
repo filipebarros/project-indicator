@@ -1,7 +1,7 @@
 //! Per-run cache for file contents and parsed JSON/TOML values.
 //!
 //! Manifests like `package.json` are touched by several components during one
-//! detection run (fast path, framework detector, root indicators); this cache
+//! detection run (root discovery, framework detector); this cache
 //! ensures each file is read and parsed at most once per run. The cache lives
 //! for a single CLI invocation, so there is no eviction or memory budget.
 

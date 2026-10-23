@@ -58,12 +58,12 @@ mod tests {
         let config = config::Config::default();
         let detection = detection::DetectionEngine::new(vec![], vec![]);
         let output = output::formatters::OutputFormat::Simple;
-        let patterns_result = patterns::pattern_to_regex("*.rs");
+        let matches = patterns::simple_wildcard_match("main.rs", "*.rs");
         let performance = performance::FileSystemCache::default();
         let types = types::DetectionResult::new(None, vec![], 0.0);
 
         assert_eq!(config.indicators.len(), 0);
-        assert!(patterns_result.is_none());
+        assert!(matches);
         assert!(types.indicator.is_none());
         assert_eq!(types.confidence, 0.0);
 

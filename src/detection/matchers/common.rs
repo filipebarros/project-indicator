@@ -4,11 +4,12 @@ pub fn calculate_confidence(required: usize, matched: usize) -> f32 {
         return 0.0;
     }
     let base = (matched as f32 / required as f32) * 0.9;
-    if matched == required {
+    let confidence = if matched == required {
         base + 0.1
     } else {
         base
-    }
+    };
+    confidence.min(1.0)
 }
 
 pub fn calculate_dependency_confidence(required: &[String], matched: &[String]) -> f32 {
@@ -47,8 +48,9 @@ mod tests {
         let confidence = calculate_confidence(3, 3);
         assert_eq!(confidence, 1.0);
 
+        // More matches than required must not push confidence past 1.0
         let confidence = calculate_confidence(1, 2);
-        assert_eq!(confidence, 1.8);
+        assert_eq!(confidence, 1.0);
 
         let confidence = calculate_confidence(10, 7);
         assert_eq!(confidence, 0.63);

@@ -1,5 +1,5 @@
 use crate::detection::pattern_matching::PatternMatcher;
-use crate::types::{Indicator, MatchedFile};
+use crate::types::MatchedFile;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -10,18 +10,12 @@ pub struct PatternProcessor {
     unique_patterns: Arc<Vec<String>>,
     extension_filter: Arc<HashSet<String>>,
     exact_patterns: Arc<HashSet<String>>,
-    high_priority_files: Arc<HashSet<String>>,
 }
 
 impl PatternProcessor {
-    pub fn new(
-        pattern_matcher: Arc<PatternMatcher>,
-        patterns: Arc<Vec<String>>,
-        indicators: Vec<Arc<Indicator>>,
-    ) -> Self {
+    pub fn new(pattern_matcher: Arc<PatternMatcher>, patterns: Arc<Vec<String>>) -> Self {
         let mut extension_filter = HashSet::new();
         let mut exact_patterns = HashSet::new();
-        let mut high_priority_files = HashSet::new();
 
         for pattern in patterns.iter() {
             if pattern.contains('*') || pattern.contains('?') {
@@ -33,22 +27,11 @@ impl PatternProcessor {
             }
         }
 
-        for indicator in &indicators {
-            if indicator.priority <= 2 {
-                for file_pattern in &indicator.files {
-                    if !file_pattern.contains('*') && !file_pattern.contains('?') {
-                        high_priority_files.insert(file_pattern.clone());
-                    }
-                }
-            }
-        }
-
         Self {
             pattern_matcher,
             unique_patterns: patterns,
             extension_filter: Arc::new(extension_filter),
             exact_patterns: Arc::new(exact_patterns),
-            high_priority_files: Arc::new(high_priority_files),
         }
     }
 
@@ -69,10 +52,6 @@ impl PatternProcessor {
             .any(|pattern| self.pattern_matcher.matches_pattern(filename, pattern));
 
         should_scan
-    }
-
-    pub fn is_strong_evidence(&self, filename: &str) -> bool {
-        self.high_priority_files.contains(filename)
     }
 
     pub fn match_file_against_patterns(
@@ -98,10 +77,6 @@ impl PatternProcessor {
         None
     }
 
-    pub fn get_patterns(&self) -> &[String] {
-        &self.unique_patterns
-    }
-
     /// Returns an Arc clone of the patterns vector for efficient sharing across threads.
     ///
     /// Use this method when you need to share the patterns across multiple threads
@@ -113,9 +88,5 @@ impl PatternProcessor {
 
     pub fn get_exact_patterns(&self) -> &HashSet<String> {
         &self.exact_patterns
-    }
-
-    pub fn get_high_priority_files(&self) -> &HashSet<String> {
-        &self.high_priority_files
     }
 }

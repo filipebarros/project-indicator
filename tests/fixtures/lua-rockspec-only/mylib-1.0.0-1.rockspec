@@ -1,0 +1,2 @@
+package = "mylib"
+version = "1.0.0-1"

@@ -236,6 +236,26 @@ fn test_validate_hint_for_outranked_config() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+/// Omitting fields of [detection]/[display] must not discard the config:
+/// unknown keys fail loudly, missing keys take defaults.
+#[test]
+fn test_partial_sections_take_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = TempDir::new()?;
+    let config_file = temp_dir.path().join("config.toml");
+    fs::write(
+        &config_file,
+        "[detection]\nmax_depth = 2\n\n[display]\nmax_frameworks = 5\n\n[[indicators]]\nname = \"T\"\nfiles = [\"t.file\"]\ncolor = \"#FF0000\"\nicon = \"T\"\npriority = 1\n",
+    )?;
+
+    let config = Config::load_from_file(&config_file)?;
+    assert_eq!(config.detection.max_depth, 2);
+    assert_eq!(config.detection.max_upward_traversal, 10);
+    assert!(!config.detection.require_vcs_root);
+    assert_eq!(config.display.max_frameworks, 5);
+    assert!(config.display.show_frameworks);
+    Ok(())
+}
+
 #[test]
 fn test_removed_config_keys_fail_parse() -> Result<(), Box<dyn std::error::Error>> {
     // Removed schema keys must be rejected loudly, not silently ignored:

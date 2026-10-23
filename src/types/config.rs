@@ -50,17 +50,14 @@
 
 use serde::{Deserialize, Serialize};
 
+// Unknown keys fail loudly (deny_unknown_fields); OMITTED keys take the
+// Default value, so a partial [detection]/[display] section is valid
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub struct DetectionConfig {
     pub max_upward_traversal: usize,
     pub require_vcs_root: bool,
-    #[serde(default = "default_max_depth")]
     pub max_depth: usize,
-}
-
-fn default_max_depth() -> usize {
-    1
 }
 
 impl Default for DetectionConfig {
@@ -68,13 +65,13 @@ impl Default for DetectionConfig {
         Self {
             max_upward_traversal: 10,
             require_vcs_root: false,
-            max_depth: default_max_depth(),
+            max_depth: 1,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub struct DisplayConfig {
     pub show_frameworks: bool,
     pub max_frameworks: usize,

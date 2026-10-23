@@ -1,28 +1,20 @@
 use crate::types::{DetectionResult, DisplayConfig};
 
-pub trait Render {
-    fn render(&self, result: &DetectionResult, config: &DisplayConfig) -> String;
-}
-
-pub struct SimpleRenderer;
-
-impl Render for SimpleRenderer {
-    fn render(&self, result: &DetectionResult, _config: &DisplayConfig) -> String {
-        let icon = result.display_icon().unwrap_or("");
-        if icon.is_empty() {
-            return String::new();
-        }
-
-        // Color the icon with ANSI truecolor so prompts show the configured
-        // color. NO_COLOR (https://no-color.org) disables it.
-        if std::env::var_os("NO_COLOR").is_none() {
-            if let Some((r, g, b)) = result.display_color().and_then(hex_to_rgb) {
-                return format!("\x1b[38;2;{r};{g};{b}m{icon}\x1b[0m");
-            }
-        }
-
-        icon.into()
+pub fn render_simple(result: &DetectionResult, _config: &DisplayConfig) -> String {
+    let icon = result.display_icon().unwrap_or("");
+    if icon.is_empty() {
+        return String::new();
     }
+
+    // Color the icon with ANSI truecolor so prompts show the configured
+    // color. NO_COLOR (https://no-color.org) disables it.
+    if std::env::var_os("NO_COLOR").is_none() {
+        if let Some((r, g, b)) = result.display_color().and_then(hex_to_rgb) {
+            return format!("\x1b[38;2;{r};{g};{b}m{icon}\x1b[0m");
+        }
+    }
+
+    icon.into()
 }
 
 /// Parse a `#rrggbb` hex color into RGB components. Returns `None` for any
@@ -38,169 +30,152 @@ fn hex_to_rgb(color: &str) -> Option<(u8, u8, u8)> {
     Some((r, g, b))
 }
 
-pub struct FullRenderer;
+pub fn render_full(result: &DetectionResult, config: &DisplayConfig) -> String {
+    let mut components = Vec::new();
 
-impl Render for FullRenderer {
-    fn render(&self, result: &DetectionResult, config: &DisplayConfig) -> String {
-        let mut components = Vec::new();
+    if let Some(language) = &result.indicator {
+        components.push(format!("{}|{}", language.icon, language.color));
+    }
 
-        if let Some(language) = &result.indicator {
-            components.push(format!("{}|{}", language.icon, language.color));
-        }
+    if config.show_frameworks && !result.frameworks.is_empty() {
+        for framework_match in result.frameworks.iter().take(config.max_frameworks) {
+            let fw_icon = framework_match.framework.icon.as_deref().unwrap_or("");
+            let fw_color = framework_match.framework.color.as_deref().unwrap_or("");
 
-        if config.show_frameworks && !result.frameworks.is_empty() {
-            for framework_match in result.frameworks.iter().take(config.max_frameworks) {
-                let fw_icon = framework_match.framework.icon.as_deref().unwrap_or("");
-                let fw_color = framework_match.framework.color.as_deref().unwrap_or("");
-
-                if !fw_icon.is_empty() {
-                    components.push(format!("{}|{}", fw_icon, fw_color));
-                }
+            if !fw_icon.is_empty() {
+                components.push(format!("{}|{}", fw_icon, fw_color));
             }
         }
-
-        components.join("•")
     }
+
+    components.join("•")
 }
 
-pub struct JsonRenderer;
+pub fn render_json(result: &DetectionResult, config: &DisplayConfig) -> String {
+    use serde::{Deserialize, Serialize};
 
-impl Render for JsonRenderer {
-    fn render(&self, result: &DetectionResult, config: &DisplayConfig) -> String {
-        use serde::{Deserialize, Serialize};
+    #[derive(Debug, Serialize, Deserialize)]
+    struct JsonOutput {
+        indicator: Option<String>,
+        frameworks: Vec<String>,
+        icon: Option<String>,
+        color: Option<String>,
+        confidence: f32,
+        evidence: Vec<String>,
+    }
 
-        #[derive(Debug, Serialize, Deserialize)]
-        struct JsonOutput {
-            indicator: Option<String>,
-            frameworks: Vec<String>,
-            icon: Option<String>,
-            color: Option<String>,
-            confidence: f32,
-            evidence: Vec<String>,
-        }
+    let frameworks: Vec<&str> = result
+        .frameworks
+        .iter()
+        .take(config.max_frameworks)
+        .map(|f| f.framework.name.as_str())
+        .collect();
 
-        let frameworks: Vec<&str> = result
-            .frameworks
-            .iter()
-            .take(config.max_frameworks)
-            .map(|f| f.framework.name.as_str())
-            .collect();
+    let evidence: Vec<&str> = result
+        .frameworks
+        .iter()
+        .take(config.max_frameworks)
+        .flat_map(|f| f.evidence.iter().map(|s| s.as_str()))
+        .collect();
 
-        let evidence: Vec<&str> = result
-            .frameworks
-            .iter()
-            .flat_map(|f| f.evidence.iter().map(|s| s.as_str()))
-            .collect();
+    let safe_confidence = if result.confidence.is_finite() {
+        result.confidence
+    } else {
+        0.0
+    };
 
-        let safe_confidence = if result.confidence.is_finite() {
-            result.confidence
-        } else {
-            0.0
-        };
+    let json_output = JsonOutput {
+        indicator: result.indicator.as_ref().map(|l| l.name.clone()),
+        frameworks: frameworks.into_iter().map(String::from).collect(),
+        icon: result.display_icon().map(String::from),
+        color: result.display_color().map(String::from),
+        confidence: safe_confidence,
+        evidence: evidence.into_iter().map(String::from).collect(),
+    };
 
-        let json_output = JsonOutput {
-            indicator: result.indicator.as_ref().map(|l| l.name.clone()),
-            frameworks: frameworks.into_iter().map(String::from).collect(),
-            icon: result.display_icon().map(String::from),
-            color: result.display_color().map(String::from),
-            confidence: safe_confidence,
-            evidence: evidence.into_iter().map(String::from).collect(),
-        };
-
-        serde_json::to_string(&json_output).unwrap_or_else(|e| {
+    serde_json::to_string(&json_output).unwrap_or_else(|e| {
             eprintln!("Warning: JSON serialization failed: {}", e);
             r#"{"indicator":null,"frameworks":[],"icon":null,"color":null,"confidence":0.0,"evidence":["serialization_error"]}"#.to_string()
         })
-    }
 }
 
-pub struct DebugRenderer;
+pub fn render_debug(result: &DetectionResult, _config: &DisplayConfig) -> String {
+    let mut debug_info = Vec::new();
 
-impl Render for DebugRenderer {
-    fn render(&self, result: &DetectionResult, _config: &DisplayConfig) -> String {
-        let mut debug_info = Vec::new();
+    if let Some(language) = &result.indicator {
+        debug_info.push(format!(
+            "Project: {} (priority: {})",
+            language.name, language.priority
+        ));
+    }
 
-        if let Some(language) = &result.indicator {
+    if !result.frameworks.is_empty() {
+        debug_info.push("Frameworks:".to_string());
+        for framework_match in &result.frameworks {
             debug_info.push(format!(
-                "Project: {} (priority: {})",
-                language.name, language.priority
+                "  - {} (confidence: {:.2}, priority: {}, evidence: {:?})",
+                framework_match.framework.name,
+                framework_match.confidence,
+                framework_match.framework.priority,
+                framework_match.evidence
             ));
         }
-
-        if !result.frameworks.is_empty() {
-            debug_info.push("Frameworks:".to_string());
-            for framework_match in &result.frameworks {
-                debug_info.push(format!(
-                    "  - {} (confidence: {:.2}, priority: {}, evidence: {:?})",
-                    framework_match.framework.name,
-                    framework_match.confidence,
-                    framework_match.framework.priority,
-                    framework_match.evidence
-                ));
-            }
-        }
-
-        debug_info.push(format!("Overall confidence: {:.2}", result.confidence));
-
-        debug_info.push("\n=== DETECTION EVIDENCE ===".to_string());
-
-        if !result.evidence.indicator_evidence.is_empty() {
-            debug_info.push("Indicator Evidence:".to_string());
-            for evidence in &result.evidence.indicator_evidence {
-                debug_info.push(format!(
-                    "  • {} -> {} (weight: {:.2}, pattern: {})",
-                    evidence.file_path,
-                    evidence.description,
-                    evidence.weight,
-                    evidence.pattern_matched
-                ));
-            }
-        }
-
-        if !result.evidence.framework_evidence.is_empty() {
-            debug_info.push("Framework Evidence:".to_string());
-            for evidence in &result.evidence.framework_evidence {
-                debug_info.push(format!(
-                    "  • {} -> {} (weight: {:.2}, pattern: {})",
-                    evidence.file_path,
-                    evidence.description,
-                    evidence.weight,
-                    evidence.pattern_matched
-                ));
-            }
-        }
-
-        if !result.evidence.root_discovery.is_empty() {
-            debug_info.push("Root Discovery Evidence:".to_string());
-            for evidence in &result.evidence.root_discovery {
-                debug_info.push(format!(
-                    "  • {} -> {} (weight: {:.2})",
-                    evidence.file_path, evidence.description, evidence.weight
-                ));
-            }
-        }
-
-        if !result.evidence.confidence_factors.is_empty() {
-            debug_info.push("Confidence Calculation:".to_string());
-            for factor in &result.evidence.confidence_factors {
-                debug_info.push(format!(
-                    "  • {}: {:.2} × {:.2} = {:.2} ({})",
-                    factor.factor_type,
-                    factor.value,
-                    factor.weight,
-                    factor.value * factor.weight,
-                    factor.description
-                ));
-            }
-        }
-
-        debug_info.push(format!(
-            "\nScan Metrics: {} files scanned in {}ms",
-            result.evidence.files_scanned, result.evidence.total_scan_time_ms
-        ));
-
-        debug_info.join("\n")
     }
+
+    debug_info.push(format!("Overall confidence: {:.2}", result.confidence));
+
+    debug_info.push("\n=== DETECTION EVIDENCE ===".to_string());
+
+    if !result.evidence.indicator_evidence.is_empty() {
+        debug_info.push("Indicator Evidence:".to_string());
+        for evidence in &result.evidence.indicator_evidence {
+            debug_info.push(format!(
+                "  • {} -> {} (weight: {:.2}, pattern: {})",
+                evidence.file_path, evidence.description, evidence.weight, evidence.pattern_matched
+            ));
+        }
+    }
+
+    if !result.evidence.framework_evidence.is_empty() {
+        debug_info.push("Framework Evidence:".to_string());
+        for evidence in &result.evidence.framework_evidence {
+            debug_info.push(format!(
+                "  • {} -> {} (weight: {:.2}, pattern: {})",
+                evidence.file_path, evidence.description, evidence.weight, evidence.pattern_matched
+            ));
+        }
+    }
+
+    if !result.evidence.root_discovery.is_empty() {
+        debug_info.push("Root Discovery Evidence:".to_string());
+        for evidence in &result.evidence.root_discovery {
+            debug_info.push(format!(
+                "  • {} -> {} (weight: {:.2})",
+                evidence.file_path, evidence.description, evidence.weight
+            ));
+        }
+    }
+
+    if !result.evidence.confidence_factors.is_empty() {
+        debug_info.push("Confidence Calculation:".to_string());
+        for factor in &result.evidence.confidence_factors {
+            debug_info.push(format!(
+                "  • {}: {:.2} × {:.2} = {:.2} ({})",
+                factor.factor_type,
+                factor.value,
+                factor.weight,
+                factor.value * factor.weight,
+                factor.description
+            ));
+        }
+    }
+
+    debug_info.push(format!(
+        "\nScan Metrics: {} files scanned in {}ms",
+        result.evidence.files_scanned, result.evidence.total_scan_time_ms
+    ));
+
+    debug_info.join("\n")
 }
 
 #[cfg(test)]
@@ -239,13 +214,12 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_renderer_colors_the_icon() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_render_simple_colors_the_icon() -> Result<(), Box<dyn std::error::Error>> {
         let result = create_test_result();
         let config = DisplayConfig::default();
-        let renderer = SimpleRenderer;
 
         // create_test_result: React framework, icon ⚛, color #61DAFB
-        let output = renderer.render(&result, &config);
+        let output = render_simple(&result, &config);
         assert_eq!(output, "\x1b[38;2;97;218;251m⚛\x1b[0m");
         Ok(())
     }
@@ -260,24 +234,56 @@ mod tests {
     }
 
     #[test]
-    fn test_json_renderer() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_render_json() -> Result<(), Box<dyn std::error::Error>> {
         let result = create_test_result();
         let config = DisplayConfig::default();
-        let renderer = JsonRenderer;
 
-        let output = renderer.render(&result, &config);
+        let output = render_json(&result, &config);
         assert!(output.contains("TypeScript"));
         assert!(output.contains("React"));
         Ok(())
     }
 
     #[test]
-    fn test_debug_renderer() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_json_evidence_respects_framework_truncation() -> Result<(), Box<dyn std::error::Error>>
+    {
+        // Evidence must only cite frameworks the JSON actually lists
+        let mut result = create_test_result();
+        result.frameworks.push(FrameworkMatch {
+            framework: Framework {
+                name: "Vite".to_string(),
+                ecosystems: vec![],
+                detection: DetectionType::Dependencies {
+                    dependencies: vec!["vite".to_string()],
+                },
+                icon: None,
+                color: None,
+                priority: 2,
+                root_indicators: vec![],
+            },
+            confidence: 0.9,
+            evidence: vec!["vite.config.js".to_string()],
+        });
+        let config = DisplayConfig {
+            show_frameworks: true,
+            max_frameworks: 1,
+        };
+
+        let output = render_json(&result, &config);
+        assert!(output.contains("package.json"));
+        assert!(
+            !output.contains("vite.config.js"),
+            "evidence cites a truncated framework: {output}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_render_debug() -> Result<(), Box<dyn std::error::Error>> {
         let result = create_test_result();
         let config = DisplayConfig::default();
-        let renderer = DebugRenderer;
 
-        let output = renderer.render(&result, &config);
+        let output = render_debug(&result, &config);
         assert!(output.contains("Project: TypeScript"));
         assert!(output.contains("React"));
         assert!(output.contains("confidence"));

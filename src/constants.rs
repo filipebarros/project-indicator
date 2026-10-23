@@ -14,7 +14,6 @@ pub const SETUP_PY: &str = "setup.py";
 pub const POM_XML: &str = "pom.xml";
 pub const BUILD_GRADLE: &str = "build.gradle";
 pub const BUILD_GRADLE_KTS: &str = "build.gradle.kts";
-pub const SETTINGS_GRADLE_KTS: &str = "settings.gradle.kts";
 pub const PIPFILE: &str = "Pipfile";
 pub const PACKAGES_CONFIG: &str = "packages.config";
 pub const PACKAGE_SWIFT: &str = "Package.swift";
