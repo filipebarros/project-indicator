@@ -4,8 +4,7 @@ use crate::performance::FileSystemCache;
 use crate::types::MatchedFile;
 use crate::Result;
 use std::path::Path;
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Maximum matches before the scan stops collecting.
 ///
@@ -19,21 +18,6 @@ use std::sync::{Arc, Mutex};
 /// - Memory savings: ~3KB per pattern at limit
 /// - Accuracy: No measurable impact on detection quality
 const DEFAULT_MAX_MATCHES_PER_PATTERN: usize = 15;
-
-/// Project size threshold for switching from sequential to parallel scanning.
-///
-/// **Why 50?**
-/// - Sequential scan overhead: ~100µs (negligible)
-/// - Parallel scan overhead: ~500µs (thread spawning)
-/// - Break-even point: ~50 files where parallel provides 2x speedup
-/// - Below threshold: Sequential avoids thread overhead
-/// - Above threshold: Parallel provides significant speedup
-///
-/// **Performance Characteristics:**
-/// - < 50 files: Sequential faster (no thread overhead)
-/// - 50-500 files: Parallel 2-3x faster
-/// - > 500 files: Parallel with the match cap and timeout critical
-const SMALL_PROJECT_THRESHOLD: usize = 50;
 
 /// Extreme directory size threshold for safety checks.
 ///
@@ -56,7 +40,6 @@ pub struct ScanningEngine {
     file_cache: Option<Arc<FileSystemCache>>,
 
     max_matches_per_pattern: usize,
-    small_project_threshold: usize,
     extreme_size_threshold: usize,
 }
 
@@ -72,7 +55,6 @@ impl ScanningEngine {
             max_depth,
             file_cache,
             max_matches_per_pattern: DEFAULT_MAX_MATCHES_PER_PATTERN,
-            small_project_threshold: SMALL_PROJECT_THRESHOLD,
             extreme_size_threshold: EXTREME_SIZE_THRESHOLD,
         }
     }
@@ -102,13 +84,18 @@ impl ScanningEngine {
         matches
     }
 
+    /// Exact-name patterns present as files in the scan root, in sorted order
+    fn root_manifest_matches(&self, path: &Path) -> Vec<MatchedFile> {
+        let mut names: Vec<&String> = self.pattern_processor.get_exact_patterns().iter().collect();
+        names.sort();
+        self.check_root_files(path, names)
+    }
+
     /// Full directory scan with an adaptive timeout
     ///
     /// This method chooses between sequential and parallel scanning based on the
     /// estimated directory size to optimize performance:
     ///
-    /// - Small projects (< 50 files): Sequential scan avoids thread spawning overhead
-    /// - Large projects (>= 50 files): Parallel scan leverages multiple cores
     pub fn scan(&self, path: &Path) -> Result<Vec<MatchedFile>> {
         log::trace!("Starting scan for path: {}", path.display());
         let traverser = FileSystemTraverser::new(self.max_depth);
@@ -125,24 +112,10 @@ impl ScanningEngine {
             );
             // Root-level manifests are still cheap to check, so an oversized
             // project root (e.g. a big monorepo) is not reported as empty
-            return Ok(self.check_root_files(path, self.pattern_processor.get_exact_patterns()));
+            return Ok(self.root_manifest_matches(path));
         }
 
-        if estimated_size < self.small_project_threshold {
-            log::debug!(
-                "Using sequential scan (estimated {} files < {} threshold)",
-                estimated_size,
-                self.small_project_threshold
-            );
-            return self.scan_sequential(path, &traverser, estimated_size);
-        }
-
-        log::debug!(
-            "Using parallel scan (estimated {} files >= {} threshold)",
-            estimated_size,
-            self.small_project_threshold
-        );
-        self.scan_parallel(path, &traverser, estimated_size)
+        self.scan_sequential(path, &traverser, estimated_size)
     }
 
     /// Shared per-entry pre-filter for both scan strategies.
@@ -186,14 +159,17 @@ impl ScanningEngine {
     ) -> Result<Vec<MatchedFile>> {
         let scan_start = std::time::Instant::now();
         let timeout_mgr = TimeoutManager::new(estimated_size);
-        let mut matched_files =
-            Vec::with_capacity(estimated_size.min(self.max_matches_per_pattern));
+        // Exact-name manifests at the root are always kept, whatever the
+        // match cap does to the walk below — a busy directory must never
+        // crowd out Cargo.toml / package.json
+        let mut matched_files = self.root_manifest_matches(path);
+        let root_count = matched_files.len();
         let patterns = self.pattern_processor.get_patterns_arc();
 
         let walker = traverser.build_walker(path);
 
         for result in walker.build() {
-            if matched_files.len() >= self.max_matches_per_pattern {
+            if matched_files.len() - root_count >= self.max_matches_per_pattern {
                 log::debug!(
                     "Sequential scan: max matches ({}) reached",
                     self.max_matches_per_pattern
@@ -218,7 +194,12 @@ impl ScanningEngine {
                 self.pattern_processor
                     .match_file_against_patterns(entry.path(), path, &patterns)
             {
-                matched_files.push(file_match);
+                if !matched_files
+                    .iter()
+                    .any(|m| m.relative_path == file_match.relative_path)
+                {
+                    matched_files.push(file_match);
+                }
             }
         }
 
@@ -231,100 +212,6 @@ impl ScanningEngine {
         );
 
         Ok(matched_files)
-    }
-
-    /// Parallel scan for larger projects
-    ///
-    /// Uses multiple threads to scan large directories efficiently.
-    /// Patterns are shared via Arc to avoid expensive cloning in each worker thread.
-    fn scan_parallel(
-        &self,
-        path: &Path,
-        traverser: &FileSystemTraverser,
-        estimated_size: usize,
-    ) -> Result<Vec<MatchedFile>> {
-        let scan_start = std::time::Instant::now();
-        let matched_files = Arc::new(Mutex::new(Vec::with_capacity(self.max_matches_per_pattern)));
-        let should_quit = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        // One shared timeout manager so the timeout is evaluated globally,
-        // not per worker thread
-        let timeout_mgr = Arc::new(TimeoutManager::new(estimated_size));
-
-        let patterns = self.pattern_processor.get_patterns_arc();
-
-        let walker = traverser.build_walker(path);
-
-        walker.build_parallel().run(|| {
-            let matched_files = Arc::clone(&matched_files);
-            let should_quit = Arc::clone(&should_quit);
-            let timeout_mgr = Arc::clone(&timeout_mgr);
-            let pattern_processor = self.pattern_processor.clone();
-            let base_path = path.to_path_buf();
-            let patterns = Arc::clone(&patterns);
-
-            Box::new(move |result| {
-                // Optimization: Check atomic quit flag before acquiring lock
-                if should_quit.load(Ordering::Relaxed) {
-                    return ignore::WalkState::Quit;
-                }
-
-                if timeout_mgr.should_stop() {
-                    return ignore::WalkState::Quit;
-                }
-
-                let entry = match result {
-                    Ok(entry) => entry,
-                    Err(_) => return ignore::WalkState::Continue,
-                };
-
-                if !Self::prefilter_entry(&pattern_processor, &timeout_mgr, &entry) {
-                    return ignore::WalkState::Continue;
-                }
-
-                if let Some(file_match) = pattern_processor.match_file_against_patterns(
-                    entry.path(),
-                    &base_path,
-                    &patterns,
-                ) {
-                    if let Ok(mut files) = matched_files.lock() {
-                        files.push(file_match);
-
-                        if files.len() >= self.max_matches_per_pattern {
-                            log::trace!(
-                                "Parallel scan: max matches ({}) reached",
-                                self.max_matches_per_pattern
-                            );
-                            should_quit.store(true, Ordering::Relaxed);
-                            return ignore::WalkState::Quit;
-                        }
-                    }
-                }
-
-                ignore::WalkState::Continue
-            })
-        });
-
-        // Try to unwrap Arc to avoid cloning if we're the only owner
-        let files = match Arc::try_unwrap(matched_files) {
-            Ok(mutex) => mutex
-                .into_inner()
-                .map_err(|e| anyhow::anyhow!("Failed to acquire lock: {}", e))?,
-            Err(arc) => {
-                // Still have other Arc references, must clone
-                arc.lock()
-                    .map_err(|e| anyhow::anyhow!("Failed to acquire lock: {}", e))?
-                    .clone()
-            }
-        };
-
-        let elapsed = scan_start.elapsed().as_millis();
-        log::debug!(
-            "Parallel scan complete: {} matches in {}ms",
-            files.len(),
-            elapsed
-        );
-
-        Ok(files)
     }
 }
 
@@ -611,6 +498,44 @@ mod tests {
         // The important thing is that the function doesn't panic
         let _ = matches;
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_busy_directory_scan_is_deterministic_and_keeps_root_manifest() -> Result<()> {
+        // 60 matching sources + a root manifest: the match cap must never
+        // crowd the manifest out, and repeated scans must agree
+        let patterns = Arc::new(vec![
+            "*.js".to_string(),
+            "*.rs".to_string(),
+            "Cargo.toml".to_string(),
+        ]);
+        let engine = ScanningEngine::with_cache(PatternProcessor::new(patterns), 1, None);
+
+        let temp_dir = TempDir::new()?;
+        let root = temp_dir.path();
+        for i in 0..60 {
+            fs::write(root.join(format!("file_{i:02}.js")), "x")?;
+        }
+        for i in 0..3 {
+            fs::write(root.join(format!("m{i}.rs")), "x")?;
+        }
+        fs::write(root.join("Cargo.toml"), "[package]")?;
+
+        let first = engine.scan(root)?;
+        assert!(
+            first.iter().any(|m| m.filename == "Cargo.toml"),
+            "root manifest must survive the match cap"
+        );
+        for _ in 0..20 {
+            let again = engine.scan(root)?;
+            let names = |v: &[MatchedFile]| {
+                v.iter()
+                    .map(|m| m.relative_path.clone())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(names(&first), names(&again), "scan results must be stable");
+        }
         Ok(())
     }
 }

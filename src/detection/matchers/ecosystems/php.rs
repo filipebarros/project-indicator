@@ -19,8 +19,10 @@ pub fn check_php_ecosystem<P: AsRef<Path>>(
         if !composer_deps.is_empty() {
             found_deps.extend(composer_deps);
             evidence.push(COMPOSER_JSON.to_owned());
-            return Ok((found_deps, evidence));
         }
+        // The manifest is authoritative; composer.lock lists transitive
+        // packages too, so it is only a fallback without a manifest
+        return Ok((found_deps, evidence));
     }
 
     let composer_lock_path = path.as_ref().join(COMPOSER_LOCK);

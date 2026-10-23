@@ -1,0 +1,7 @@
+[[package]]
+name = "tonic"
+version = "0.12.0"
+
+[[package]]
+name = "axum"
+version = "0.7.0"

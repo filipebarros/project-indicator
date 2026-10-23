@@ -29,11 +29,15 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("bun-ts-noreact", "Bun", &[]),
     ("cpp", "C++", &[]),
     ("csharp-aspnet", "C#", &["ASP.NET Core"]),
+    // A bare Web SDK project (the modern template) has no PackageReference
+    ("csharp-web-sdk-only", "C#", &["ASP.NET Core"]),
     ("csharp-global-json-only", "C#", &[]),
     ("dart-analysis-options-only", "Dart", &[]),
     ("dart-flutter", "Dart", &["Flutter"]),
     ("deno", "Deno", &[]),
     ("deno-fresh", "Deno", &["Fresh"]),
+    // Fresh 2 declares jsr:@fresh/core instead of the $fresh/ alias
+    ("deno-fresh2", "Deno", &["Fresh"]),
     ("deno-hono", "Deno", &["Hono"]),
     ("deno-json-and-jsonc", "Deno", &[]),
     ("deno-jsonc-bare", "Deno", &[]),
@@ -44,6 +48,15 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("deno-ts-react", "Deno", &["React"]),
     ("elixir", "Elixir", &["Phoenix"]),
     ("elixir-formatter-only", "Elixir", &[]),
+    ("go-echo", "Go", &["Echo"]),
+    ("go-fiber", "Go", &["Fiber"]),
+    ("js-astro", "JavaScript", &["Astro"]),
+    ("js-solid", "JavaScript", &["SolidJS"]),
+    ("php-symfony", "PHP", &["Symfony"]),
+    ("python-flask", "Python", &["Flask"]),
+    ("rust-actix", "Rust", &["Actix Web"]),
+    ("rust-rocket", "Rust", &["Rocket"]),
+    ("ts-nestjs", "TypeScript", &["NestJS"]),
     ("gleam", "Gleam", &[]),
     ("gleam-with-package-json", "Gleam", &[]),
     ("go", "Go", &[]),
@@ -56,6 +69,8 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("js-runtime-config-only", "JavaScript", &[]),
     ("js-react", "JavaScript", &["React"]),
     // One stray .gleam file must not override a real JavaScript project
+    // vite appears only transitively in the lockfile (vitest depends on it)
+    ("js-transitive-lock", "JavaScript", &[]),
     ("js-stray-gleam", "JavaScript", &["React"]),
     ("js-svelte", "JavaScript", &["Svelte", "Vite"]),
     ("js-vue-plain", "JavaScript", &["Vue"]),
@@ -83,6 +98,16 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("odin-sources-only", "Odin", &[]),
     ("php-laravel", "PHP", &["Laravel"]),
     ("php-phpunit-only", "PHP", &[]),
+    // PyPI names are case-insensitive: "Django==4.2" is Django
+    // Makefile is generic build glue, not evidence of C++
+    ("makefile-only", "<none>", &[]),
+    ("makefile-with-lone-source", "<none>", &[]),
+    // A Python backend with JS tooling (Tailwind etc.) stays Python, with or
+    // without a JS lockfile beside it
+    ("python-pyproject-with-js-tooling", "Python", &["Django"]),
+    ("python-pyproject-with-pnpm-lock", "Python", &["Django"]),
+    ("python-with-makefile", "Python", &["Flask"]),
+    ("python-django-capitalized", "Python", &["Django"]),
     ("python-django", "Python", &["Django"]),
     // A pyenv version pin alone, with zero other Python evidence, is a
     // genuinely weak signal — no confident guess is the honest behavior,
@@ -93,12 +118,19 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("ruby-version-only", "Ruby", &[]),
     ("rust", "Rust", &[]),
     // *.v is also a Verilog extension; a stray .v must not outrank Cargo.toml
+    // axum appears only transitively in Cargo.lock (tonic depends on it)
+    ("rust-transitive-lock", "Rust", &[]),
+    ("rust-workspace-deps", "Rust", &["Axum"]),
     ("rust-stray-v", "Rust", &[]),
     ("rust-toolchain-only", "Rust", &[]),
     ("rust-axum", "Rust", &["Axum"]),
     ("scala-akka", "Scala", &["Akka HTTP"]),
+    // akka-actor alone is Akka, not Akka HTTP
+    ("scala-akka-actor-only", "Scala", &[]),
     ("swift", "Swift", &["Vapor"]),
     ("swift-package-resolved-only", "Swift", &[]),
+    // Tauri keeps its config in src-tauri/ under a JavaScript-rooted project
+    ("tauri-js", "JavaScript", &["Tauri"]),
     ("terraform", "Terraform", &[]),
     ("ts-angular", "TypeScript", &["Angular"]),
     ("ts-nextjs", "TypeScript", &["React", "Next.js"]),

@@ -39,9 +39,8 @@ pub fn elixir_frameworks() -> Vec<Framework> {
         Some(nerd_icon("e860")),
         Some("#ff6600"),
         1,
-        vec![
-            root_indicator("lib/*_web", 0.9, IndicatorContext::FrameworkRoot),
-            root_indicator("assets/", 0.8, IndicatorContext::FrameworkRoot),
-        ],
+        // (No path-style root indicators: matching is by bare filename, so
+        // `lib/*_web` or `assets/` could never match)
+        vec![],
     )]
 }

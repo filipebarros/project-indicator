@@ -19,8 +19,11 @@ pub fn check_rust_ecosystem<P: AsRef<Path>>(
         if !cargo_deps.is_empty() {
             found_deps.extend(cargo_deps);
             evidence.push(CARGO_TOML.to_owned());
-            return Ok((found_deps, evidence));
         }
+        // The manifest is authoritative: Cargo.lock also lists transitive
+        // crates (tonic pulls in axum), so it is only a fallback when
+        // there is no manifest
+        return Ok((found_deps, evidence));
     }
 
     let cargo_lock_path = path.as_ref().join(CARGO_LOCK);

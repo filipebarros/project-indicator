@@ -150,6 +150,12 @@ fn imports_match(imports: &serde_json::Map<String, serde_json::Value>, dep: &str
 
         value.as_str().is_some_and(|v| {
             if let Some(rest) = v.strip_prefix("jsr:@") {
+                // `@scope/name` dependency: scope and package must both match
+                if let Some(scoped) = dep.strip_prefix('@') {
+                    return rest.split_once('/').is_some_and(|(scope, tail)| {
+                        scoped.split_once('/') == Some((scope, package_name(tail)))
+                    });
+                }
                 return rest
                     .split_once('/')
                     .is_some_and(|(_, tail)| package_name(tail) == dep);
@@ -240,5 +246,14 @@ mod tests {
         };
         assert_eq!(v["u"], "http://x//y");
         assert_eq!(v["a"][0], 1);
+    }
+
+    #[test]
+    fn test_scoped_dependency_matches_jsr_scope_and_name() {
+        // Aliasless: the specifier alone identifies @fresh/core
+        let json = r#"{"imports": {"x": "jsr:@fresh/core@^2.0.0"}}"#;
+        assert_eq!(check(json, &["@fresh/core"]), vec!["@fresh/core"]);
+        let other = r#"{"imports": {"x": "jsr:@fresh/plugin-tailwind@1"}}"#;
+        assert!(check(other, &["@fresh/core"]).is_empty());
     }
 }

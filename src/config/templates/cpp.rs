@@ -26,7 +26,8 @@ pub fn create_cpp_indicator() -> Indicator {
         vec![],
         vec![
             root_indicator("CMakeLists.txt", 0.95, IndicatorContext::BuildSystem),
-            root_indicator("Makefile", 0.9, IndicatorContext::BuildSystem),
+            // Generic build glue shared by every ecosystem: a weak hint at most
+            root_indicator("Makefile", 0.25, IndicatorContext::BuildSystem),
         ],
     )
 }

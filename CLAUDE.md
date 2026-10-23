@@ -312,8 +312,8 @@ For ecosystem-specific dependency matching:
 - Shell prompt scenario (warm cache hit): < 10ms wall including process
   spawn (~5ms measured; in-process cache lookup itself is microseconds)
 - Cold detection: < 10ms wall including spawn (~5ms measured; in-process
-  detection is ~0.25ms per criterion benchmarks since the pattern-memo
-  removal cut it ~70%)
+  detection is ~0.4ms for a cold engine, ~0.23ms warm, per the criterion
+  benchmarks — the pattern-memo removal cut it ~70%)
 - Worst case (deep nesting): < 50ms
 
 ## Project Structure Notes

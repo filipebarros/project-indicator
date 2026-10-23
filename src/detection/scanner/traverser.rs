@@ -45,7 +45,10 @@ impl FileSystemTraverser {
             // makes real root-indicator files invisible to detection.
             .git_global(false)
             .require_git(false) // Work without .git directory
-            .hidden(false); // Include hidden files/dirs
+            .hidden(false) // Include hidden files/dirs
+            // Stable traversal order: the match cap truncates the walk, so
+            // order decides which files survive
+            .sort_by_file_name(|a, b| a.cmp(b));
         builder
     }
 

@@ -43,9 +43,11 @@ impl ConfigParser {
         paths
     }
     fn xdg_config_dir() -> Option<PathBuf> {
+        // Per the XDG spec a relative value is invalid and ignored
         std::env::var("XDG_CONFIG_HOME")
             .ok()
             .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
             .or_else(|| dirs::home_dir().map(|home| home.join(".config")))
     }
     /// The config file `load_default` would read, without parsing it.

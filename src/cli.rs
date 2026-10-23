@@ -58,7 +58,7 @@ pub enum ConfigAction {
         force: bool,
         #[arg(
             long,
-            help = "Specify config file path (default: system config directory)"
+            help = "Specify config file path (default: $XDG_CONFIG_HOME/project-indicator/config.toml, or ~/.config/...)"
         )]
         path: Option<String>,
     },

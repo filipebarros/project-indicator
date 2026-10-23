@@ -55,6 +55,22 @@ pub fn rust_frameworks() -> Vec<Framework> {
         rust_framework("Axum", "axum", "#7c3aed", 1),
         rust_framework("Actix Web", "actix-web", "#000000", 1),
         rust_framework("Rocket", "rocket", "#d33847", 1),
-        rust_framework("Tauri", "tauri", "#24c8db", 2),
+        // Every Tauri app has a tauri.conf.json — at the root or in
+        // src-tauri/ — which is more reliable than the root Cargo.toml
+        // (the dependency lives in src-tauri/ for JS-rooted projects).
+        // Npm too, so JavaScript-rooted projects surface it.
+        simple_framework(
+            "Tauri",
+            vec![Ecosystem::Cargo, Ecosystem::Npm],
+            DetectionType::FileExists {
+                files: vec![
+                    "tauri.conf.json".to_string(),
+                    "src-tauri/tauri.conf.json".to_string(),
+                ],
+            },
+            None,
+            Some("#24c8db"),
+            2,
+        ),
     ]
 }

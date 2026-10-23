@@ -259,7 +259,10 @@ jobs:
           target
         key: ${{ runner.os }}-cargo-stable-${{ hashFiles('**/Cargo.lock') }}
 
+    # Windows runs the full suite in test-windows; this job adds the
+    # release-binary smoke steps below
     - name: Run core tests
+      if: runner.os != 'Windows'
       run: cargo test --lib --bins
 
     - name: Test OS-specific functionality
