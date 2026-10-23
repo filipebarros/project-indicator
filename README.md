@@ -22,7 +22,7 @@ Project Indicator is a high-performance replacement for shell-based project dete
 - 🔧 **CLI**: Configuration and cache management, plus a full-evidence debug format
 - 🧠 **Advanced Detection**: Confidence-based scoring with weighted root indicators
 - 🔧 **Configuration Templates**: Pre-built templates for different development environments
-- 🐚 **Shell Integration**: Ready-to-use integration scripts for Bash, Zsh, and Fish
+- 🐚 **Shell Integration**: Ready-to-use hooks for Bash, Zsh, Fish and PowerShell (plus Starship and tmux snippets)
 
 ## Quick Start
 
@@ -92,6 +92,7 @@ project-indicator [OPTIONS] [PATH]
 
 **Options:**
 - `--format <FORMAT>` - Output format: simple (default), full, json, debug
+- `--no-cache` - Skip the persistent result cache for this invocation
 - `--max-depth <N>` - Maximum scan depth (default: 1)
 - `-v, --verbose` - Enable verbose logging
 
@@ -240,78 +241,53 @@ Run `project-indicator config validate` to see the exact error, or
 
 ## Shell Integration
 
-Project Indicator includes optimized shell integration scripts:
-
-### Fish
-
-```fish
-# Install
-curl -o ~/.config/fish/functions/project-indicator.fish \
-  https://raw.githubusercontent.com/filipebarros/project-indicator/main/shell-integration/project-indicator.fish
-
-# Add to right prompt (config.fish)
-function fish_right_prompt
-    fish_right_prompt_project_indicator
-end
-
-# Helpers
-project_info                          # Show project info
-project_indicator_clear_cache         # Clear cache
-project_indicator_config ttl 600      # Set TTL
-project_indicator_config status       # Show status
-```
-
-### Zsh
-
-```zsh
-# Install
-curl -o ~/.project-indicator.zsh \
-  https://raw.githubusercontent.com/filipebarros/project-indicator/main/shell-integration/project-indicator.zsh
-echo 'source ~/.project-indicator.zsh' >> ~/.zshrc
-
-# Add to right prompt
-export RPS1='$(project_indicator_rprompt)'
-
-# Helpers (same as Fish)
-```
-
-### Bash
+Thin prompt hooks for **fish, zsh, bash and PowerShell** live in
+[`shell-integration/`](shell-integration/README.md) (plus Starship and tmux
+snippets). Each hook just calls `project-indicator` and prints its output;
+caching is done by the binary itself.
 
 ```bash
-# Install
-curl -o ~/.project-indicator.bash \
-  https://raw.githubusercontent.com/filipebarros/project-indicator/main/shell-integration/project-indicator.bash
-echo 'source ~/.project-indicator.bash' >> ~/.bashrc
-
-# Add to PS1
-export PS1='\u@\h:\w$(project_indicator_prompt)\$ '
-
-# Helpers (same as Fish)
+shell-integration/install.sh fish   # or zsh | bash
 ```
+
+PowerShell: dot-source `shell-integration/project-indicator.ps1` from your
+`$PROFILE`. See the [integration README](shell-integration/README.md) for
+details.
 
 ## Supported Languages & Frameworks
 
-| Language   | Icon | Frameworks Detected |
-|------------|------|---------------------|
-| Rust       |    | Rocket, Actix, Axum, Tauri |
-| JavaScript |    | React, Next.js, Vue, Nuxt, Svelte, SvelteKit |
-| TypeScript | 󰛦   | React, Next.js, Vue, Angular, NestJS |
-| Python     |    | Django, Flask, FastAPI, Poetry |
-| Go         |    | Gin, Echo, Fiber, Buffalo |
-| Java       |    | Spring Boot, Maven, Gradle |
-| PHP        |    | Laravel, Symfony, CodeIgniter |
-| Ruby       |    | Rails, Sinatra, Jekyll |
-| C#         |    | .NET, ASP.NET |
-| Swift      |    | SwiftUI, Vapor |
-| Kotlin     |    | Ktor, Spring |
-| Scala      |    | Play, Akka |
-| Elixir     |    | Phoenix |
-| Dart       |    | Flutter |
-| C++        |    | CMake, Conan |
-| Zig        |    | Build system support |
-| Lua        |    | LuaRocks, Love2D |
-| Julia      |    | Package ecosystem |
-| R          |    | Shiny, RMarkdown |
+26 languages and 40 frameworks in the built-in `full` template. A framework is
+shown for every language that shares one of its package ecosystems (the
+JavaScript-family languages share the npm framework set).
+
+| Language   | Frameworks Detected |
+|------------|---------------------|
+| Bun        | React, Vue, Angular, Svelte, SolidJS, Hono, Next.js, Astro, NestJS, Vite |
+| C#         | ASP.NET Core, Xamarin |
+| C++        | — |
+| Dart       | Flutter |
+| Deno       | Fresh, Oak, Hono, plus the npm set (React, Vue, Svelte, …) |
+| Elixir     | Phoenix |
+| Gleam      | — |
+| Go         | Gin, Echo, Fiber |
+| Java       | Spring Boot |
+| JavaScript | React, Vue, Angular, Svelte, SolidJS, Hono, Next.js, Astro, NestJS, Vite |
+| Julia      | — |
+| Kotlin     | Spring Boot, Ktor, Android |
+| Lua        | LÖVE |
+| Nix        | — |
+| Odin       | — |
+| PHP        | Laravel, Symfony, CodeIgniter, Yii |
+| Python     | Django, Flask, FastAPI, Tornado, Pyramid, Sanic |
+| R          | — |
+| Ruby       | Rails |
+| Rust       | Axum, Actix Web, Rocket, Tauri |
+| Scala      | Akka HTTP |
+| Swift      | Vapor |
+| Terraform  | — |
+| TypeScript | React, Vue, Angular, Svelte, SolidJS, Hono, Next.js, Astro, NestJS, Vite |
+| V          | — |
+| Zig        | — |
 
 ## Advanced Features
 

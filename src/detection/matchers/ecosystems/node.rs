@@ -17,7 +17,9 @@ pub fn check_node_ecosystem<P: AsRef<Path>>(
     let mut evidence = Vec::new();
 
     let package_json_path = path.as_ref().join(PACKAGE_JSON);
+    let mut has_manifest = false;
     if let Some(json_value) = parsed_cache.get_json_value(&package_json_path)? {
+        has_manifest = true;
         let package_deps = check_json_dependencies(&json_value, dependencies);
         if !package_deps.is_empty() {
             found_deps.extend(package_deps);
@@ -26,8 +28,12 @@ pub fn check_node_ecosystem<P: AsRef<Path>>(
         }
     }
 
+    // package.json is authoritative: lockfiles also list transitive packages
+    // (vitest pulls in vite), so they are only a fallback without a manifest
     let package_lock_path = path.as_ref().join(PACKAGE_LOCK_JSON);
-    if let Some(json_value) = parsed_cache.get_json_value(&package_lock_path)? {
+    if has_manifest {
+        // fall through to the Deno-imports check below
+    } else if let Some(json_value) = parsed_cache.get_json_value(&package_lock_path)? {
         let lock_deps = check_package_lock_dependencies(&json_value, dependencies);
         if !lock_deps.is_empty() {
             found_deps.extend(lock_deps);

@@ -62,7 +62,8 @@ impl RootIndicatorEngine {
             self.config.max_upward_traversal
         );
 
-        while levels < self.config.max_upward_traversal {
+        // `levels` counts ancestors above the start dir: N means N levels up
+        while levels <= self.config.max_upward_traversal {
             log::trace!("Checking for project root at: {}", current.display());
 
             if vcs_pending.is_some() {
@@ -191,10 +192,15 @@ impl RootIndicatorEngine {
                         .get_or_insert_with(|| {
                             std::fs::read_dir(path)
                                 .map(|entries| {
-                                    entries
+                                    let mut names: Vec<String> = entries
                                         .filter_map(|e| e.ok())
+                                        // files only (follows symlinks), not dirs
+                                        .filter(|e| e.path().is_file())
                                         .filter_map(|e| e.file_name().into_string().ok())
-                                        .collect()
+                                        .collect();
+                                    // stable choice among several matches
+                                    names.sort();
+                                    names
                                 })
                                 .unwrap_or_default()
                         })
@@ -310,7 +316,8 @@ impl RootIndicatorEngine {
                 .partial_cmp(&b.certainty)
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then(a.specificity.cmp(&b.specificity))
-                .then(a.indicator.priority.cmp(&b.indicator.priority))
+                // lower priority number wins, as everywhere else
+                .then(b.indicator.priority.cmp(&a.indicator.priority))
         })
     }
 
@@ -333,7 +340,10 @@ impl RootIndicatorEngine {
 
     fn is_valid_python_project(&self, path: &Path) -> Result<bool> {
         if let Ok(content) = std::fs::read_to_string(path) {
-            Ok(content.contains("[tool.poetry]")
+            // [project] is the PEP 621 table: a pyproject that declares a
+            // project is Python even without a build-system section
+            Ok(content.contains("[project]")
+                || content.contains("[tool.poetry]")
                 || content.contains("[build-system]")
                 || content.contains("requires-python"))
         } else {
@@ -712,6 +722,84 @@ mod tests {
 
         let (_, found) = result.ok_or("expected root discovery on deno.json")?;
         assert_eq!(found.indicator.name, "Deno");
+        Ok(())
+    }
+
+    fn engine_for(indicators: Vec<Indicator>, config: DetectionConfig) -> RootIndicatorEngine {
+        RootIndicatorEngine::from_parts(indicators.into_iter().map(Arc::new).collect(), config)
+    }
+
+    #[test]
+    fn test_max_upward_traversal_counts_levels_above_start(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mk = |n| {
+            engine_for(
+                vec![create_test_indicator_with_indicators(
+                    "Rust",
+                    vec![("Cargo.toml", 0.95)],
+                )],
+                DetectionConfig {
+                    max_upward_traversal: n,
+                    ..Default::default()
+                },
+            )
+        };
+        let temp_dir = TempDir::new()?;
+        let start = temp_dir.path().join("a").join("b");
+        fs::create_dir_all(&start)?;
+        fs::write(
+            temp_dir.path().join("Cargo.toml"),
+            "[package]\nname = \"t\"",
+        )?;
+        let cache = Arc::new(FileSystemCache::new());
+
+        // Root is 2 levels above `start`
+        assert!(mk(2).find_project_root(&start, &cache)?.is_some());
+        assert!(mk(1).find_project_root(&start, &cache)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_shared_root_pattern_tie_prefers_lower_priority_number(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Two indicators claim the same root file with equal certainty:
+        // everywhere else in the crate the LOWER priority number wins
+        let mut high = create_test_indicator_with_indicators("Late", vec![("shared.lock", 0.8)]);
+        high.priority = 9;
+        let mut low = create_test_indicator_with_indicators("Early", vec![("shared.lock", 0.8)]);
+        low.priority = 2;
+        let engine = engine_for(vec![high, low], DetectionConfig::default());
+
+        let temp_dir = TempDir::new()?;
+        fs::write(temp_dir.path().join("shared.lock"), "")?;
+        let cache = Arc::new(FileSystemCache::new());
+        let found = engine.find_project_root(temp_dir.path(), &cache)?;
+        assert_eq!(
+            found.map(|(_, f)| f.indicator.name.clone()),
+            Some("Early".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_wildcard_root_match_is_deterministic_and_files_only(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let engine = engine_for(
+            vec![create_test_indicator_with_indicators(
+                "C#",
+                vec![("*.csproj", 0.95)],
+            )],
+            DetectionConfig::default(),
+        );
+        let temp_dir = TempDir::new()?;
+        // A DIRECTORY named like the pattern must not count; of several
+        // matching files the alphabetically first is reported
+        fs::create_dir(temp_dir.path().join("0dir.csproj"))?;
+        fs::write(temp_dir.path().join("B.csproj"), "")?;
+        fs::write(temp_dir.path().join("A.csproj"), "")?;
+        let cache = Arc::new(FileSystemCache::new());
+        let found = engine.find_project_root(temp_dir.path(), &cache)?;
+        assert_eq!(found.map(|(_, f)| f.pattern), Some("A.csproj".to_string()));
         Ok(())
     }
 }

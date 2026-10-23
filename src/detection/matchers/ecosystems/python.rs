@@ -1,5 +1,5 @@
 use super::helpers::{
-    check_poetry_lock_dependencies, check_pyproject_dependencies, check_text_dependencies,
+    check_poetry_lock_dependencies, check_pyproject_dependencies, check_python_text_dependencies,
     try_config_file_deps,
 };
 use crate::constants::{PIPFILE, POETRY_LOCK, PYPROJECT_TOML, REQUIREMENTS_TXT};
@@ -31,7 +31,7 @@ pub fn check_python_ecosystem<P: AsRef<Path>>(
         &path,
         REQUIREMENTS_TXT,
         dependencies,
-        check_text_dependencies,
+        check_python_text_dependencies,
         &mut found_deps,
         &mut evidence,
     )? {
@@ -43,10 +43,19 @@ pub fn check_python_ecosystem<P: AsRef<Path>>(
         &path,
         PIPFILE,
         dependencies,
-        check_text_dependencies,
+        check_python_text_dependencies,
         &mut found_deps,
         &mut evidence,
     )? {
+        return Ok((found_deps, evidence));
+    }
+
+    // Manifests are authoritative; poetry.lock lists transitive packages
+    // too, so it is only a fallback when no manifest exists
+    if [PYPROJECT_TOML, REQUIREMENTS_TXT, PIPFILE]
+        .iter()
+        .any(|m| path.as_ref().join(m).is_file())
+    {
         return Ok((found_deps, evidence));
     }
 

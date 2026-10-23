@@ -25,8 +25,10 @@ fn run() -> Result<()> {
     } else {
         log::LevelFilter::Warn
     };
-    env_logger::Builder::from_default_env()
+    // -v sets the default level; RUST_LOG, when present, takes precedence
+    env_logger::Builder::new()
         .filter_level(level)
+        .parse_default_env()
         .init();
 
     match cli.command {

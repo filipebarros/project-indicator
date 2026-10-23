@@ -5,6 +5,18 @@ use project_indicator::{
 };
 use std::env;
 
+/// Split `$EDITOR` into program and arguments (`code --wait` → `code`,
+/// `["--wait"]`). A value that is itself an existing file — a path that
+/// contains spaces — is taken whole as the program.
+fn split_editor(editor: &str) -> (String, Vec<String>) {
+    if std::path::Path::new(editor).is_file() {
+        return (editor.to_string(), Vec::new());
+    }
+    let mut parts = editor.split_whitespace().map(str::to_string);
+    let program = parts.next().unwrap_or_else(|| editor.to_string());
+    (program, parts.collect())
+}
+
 /// Validates the EDITOR environment variable for security
 fn validate_editor(editor: &str) -> Result<()> {
     if editor.contains(';') || editor.contains('&') || editor.contains('|') {
@@ -39,8 +51,6 @@ fn validate_editor(editor: &str) -> Result<()> {
         .unwrap_or(base_cmd);
 
     if !KNOWN_EDITORS.contains(&base_name) {
-        log::warn!("⚠️  Unknown editor '{}'. Proceeding with caution.", editor);
-        log::warn!("💡 Recommended editors: {}", KNOWN_EDITORS.join(", "));
         println!("⚠️  Warning: Using unknown editor '{}'", editor);
         println!("💡 Recommended: vim, nvim, emacs, nano, code, subl");
     }
@@ -194,7 +204,9 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             if let Ok(editor) = env::var("EDITOR") {
                 validate_editor(&editor)?;
 
-                std::process::Command::new(&editor)
+                let (program, editor_args) = split_editor(&editor);
+                std::process::Command::new(&program)
+                    .args(&editor_args)
                     .arg(&config_path)
                     .status()
                     .map_err(|e| anyhow::anyhow!("Failed to open editor: {}", e))?;
@@ -214,6 +226,13 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             } else {
                 Config::get_config_path()?
             };
+
+            if config_path.is_dir() {
+                anyhow::bail!(
+                    "--path must be a file, but {} is a directory",
+                    config_path.display()
+                );
+            }
 
             if config_path.exists() && !force {
                 println!(
@@ -263,5 +282,28 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             println!("💡 Run 'project-indicator config validate' to verify your configuration");
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_editor;
+
+    #[test]
+    fn test_editor_with_arguments_is_split() {
+        assert_eq!(
+            split_editor("code --wait"),
+            ("code".to_string(), vec!["--wait".to_string()])
+        );
+        assert_eq!(split_editor("vim"), ("vim".to_string(), vec![]));
+    }
+
+    #[test]
+    fn test_editor_path_with_spaces_is_kept_whole() {
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let spaced = dir.path().join("my ed");
+        std::fs::write(&spaced, "").unwrap_or_else(|e| panic!("write: {e}"));
+        let spaced = spaced.to_string_lossy().to_string();
+        assert_eq!(split_editor(&spaced), (spaced.clone(), vec![]));
     }
 }

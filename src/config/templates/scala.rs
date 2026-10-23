@@ -30,11 +30,8 @@ pub fn scala_frameworks() -> Vec<Framework> {
         "Akka HTTP",
         vec![Ecosystem::Sbt],
         DetectionType::Dependencies {
-            dependencies: vec![
-                "akka-http".to_string(),
-                "akka-stream".to_string(),
-                "akka-actor".to_string(),
-            ],
+            // akka-actor / akka-stream alone are Akka, not Akka HTTP
+            dependencies: vec!["akka-http".to_string()],
         },
         Some(nerd_icon("e708")),
         Some("#0b5394"),

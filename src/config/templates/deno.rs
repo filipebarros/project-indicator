@@ -41,13 +41,13 @@ pub fn create_deno_indicator() -> Indicator {
 
 pub fn deno_frameworks() -> Vec<Framework> {
     vec![
-        // Fresh projects always carry fresh.config.ts; cheaper and more
-        // reliable than parsing the imports map for $fresh/
+        // Fresh 1 imports via the `$fresh/` alias, Fresh 2 via
+        // `jsr:@fresh/core`; both are imports-map entries
         simple_framework(
             "Fresh",
             vec![Ecosystem::Deno],
-            DetectionType::FileExists {
-                files: vec!["fresh.config.ts".to_string()],
+            DetectionType::Dependencies {
+                dependencies: vec!["fresh".to_string(), "@fresh/core".to_string()],
             },
             None,
             Some("#FFDB1E"),

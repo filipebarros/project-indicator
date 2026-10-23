@@ -33,6 +33,9 @@ struct CacheEntry {
     binary_version: String,
     config: Option<(PathBuf, SystemTime)>,
     dir_mtime: SystemTime,
+    /// Ancestor directories root discovery walked through, with mtimes: a
+    /// new manifest in any of them can change the result
+    ancestors: Vec<(PathBuf, SystemTime)>,
     evidence: Vec<(PathBuf, SystemTime)>,
     result: DetectionResult,
     display: DisplayConfig,
@@ -88,7 +91,7 @@ impl PersistentCache {
             return None;
         }
 
-        for (path, stored) in &entry.evidence {
+        for (path, stored) in entry.ancestors.iter().chain(&entry.evidence) {
             if mtime(path)? != *stored {
                 return None;
             }
@@ -147,11 +150,17 @@ impl PersistentCache {
             .filter_map(|p| mtime(&p).map(|t| (p, t)))
             .collect();
 
+        let ancestors = ancestor_chain(&dir, result)
+            .into_iter()
+            .filter_map(|p| mtime(&p).map(|t| (p, t)))
+            .collect();
+
         let entry = CacheEntry {
             dir: dir.clone(),
             binary_version: env!("CARGO_PKG_VERSION").to_string(),
             config,
             dir_mtime,
+            ancestors,
             evidence,
             result: result.clone(),
             display: display.clone(),
@@ -239,6 +248,43 @@ fn mtime(path: &Path) -> Option<SystemTime> {
     fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
+/// Upward-traversal depth assumed when no root was found (matches the
+/// default `max_upward_traversal`)
+const NO_ROOT_ANCESTOR_DEPTH: usize = 10;
+
+/// Directories above `dir` that root discovery consulted: up to and including
+/// the discovered root (the parent of the absolute root-discovery item), or a
+/// bounded number of ancestors when no root was found.
+fn ancestor_chain(dir: &Path, result: &DetectionResult) -> Vec<PathBuf> {
+    let root = result
+        .evidence
+        .root_discovery
+        .first()
+        .map(|item| Path::new(&item.file_path))
+        .and_then(Path::parent)
+        .filter(|p| p.is_absolute());
+
+    // Root found in `dir` itself: nothing above it was consulted
+    if root == Some(dir) {
+        return Vec::new();
+    }
+
+    // Root discovery never enters boundary directories (home, filesystem
+    // root), so their churn must not invalidate entries
+    let home = dirs::home_dir();
+    let mut chain = Vec::new();
+    for ancestor in dir.ancestors().skip(1) {
+        if ancestor.parent().is_none() || home.as_deref() == Some(ancestor) {
+            break;
+        }
+        chain.push(ancestor.to_path_buf());
+        if root == Some(ancestor) || (root.is_none() && chain.len() >= NO_ROOT_ANCESTOR_DEPTH) {
+            break;
+        }
+    }
+    chain
+}
+
 /// Absolute paths of every file that influenced the result: language,
 /// framework, and root-discovery evidence items plus per-framework evidence
 /// file names. Relative paths are resolved against the project directory.
@@ -316,6 +362,24 @@ mod tests {
         result
     }
 
+    /// A realistic result: root discovery found the project at `dir` itself
+    fn rooted(mut result: DetectionResult, dir: &Path) -> DetectionResult {
+        result
+            .evidence
+            .root_discovery
+            .push(crate::types::EvidenceItem::new(
+                crate::types::EvidenceType::RootIndicator,
+                canonical(dir)
+                    .join("Cargo.toml")
+                    .to_string_lossy()
+                    .to_string(),
+                "Cargo.toml".to_string(),
+                0.95,
+                "root".to_string(),
+            ));
+        result
+    }
+
     fn setup() -> Result<(TempDir, TempDir, PersistentCache), Box<dyn std::error::Error>> {
         let cache_dir = TempDir::new()?;
         let project = TempDir::new()?;
@@ -351,7 +415,7 @@ mod tests {
         cache.store(
             project.path(),
             None,
-            &test_result("Cargo.toml"),
+            &rooted(test_result("Cargo.toml"), project.path()),
             &DisplayConfig::default(),
         );
 
@@ -377,7 +441,7 @@ mod tests {
         cache.store(
             project.path(),
             None,
-            &test_result("Cargo.toml"),
+            &rooted(test_result("Cargo.toml"), project.path()),
             &DisplayConfig::default(),
         );
 
@@ -408,7 +472,7 @@ mod tests {
     #[test]
     fn test_store_then_load_hits() -> Result<(), Box<dyn std::error::Error>> {
         let (_c, project, cache) = setup()?;
-        let result = test_result("Cargo.toml");
+        let result = rooted(test_result("Cargo.toml"), project.path());
         cache.store(project.path(), None, &result, &DisplayConfig::default());
 
         let (loaded, display) = cache
@@ -422,7 +486,7 @@ mod tests {
     #[test]
     fn test_touched_evidence_file_invalidates() -> Result<(), Box<dyn std::error::Error>> {
         let (_c, project, cache) = setup()?;
-        let result = test_result("Cargo.toml");
+        let result = rooted(test_result("Cargo.toml"), project.path());
         cache.store(project.path(), None, &result, &DisplayConfig::default());
 
         sleep(Duration::from_millis(20));
@@ -435,7 +499,7 @@ mod tests {
     #[test]
     fn test_new_root_file_invalidates_via_dir_mtime() -> Result<(), Box<dyn std::error::Error>> {
         let (_c, project, cache) = setup()?;
-        let result = test_result("Cargo.toml");
+        let result = rooted(test_result("Cargo.toml"), project.path());
         cache.store(project.path(), None, &result, &DisplayConfig::default());
 
         sleep(Duration::from_millis(20));
@@ -452,7 +516,7 @@ mod tests {
         let config_path = config_dir.path().join("config.toml");
         fs::write(&config_path, "[meta]\nversion = \"2.0\"")?;
 
-        let result = test_result("Cargo.toml");
+        let result = rooted(test_result("Cargo.toml"), project.path());
         cache.store(
             project.path(),
             Some(&config_path),
@@ -476,7 +540,7 @@ mod tests {
         let config_path = config_dir.path().join("config.toml");
         fs::write(&config_path, "x")?;
 
-        let result = test_result("Cargo.toml");
+        let result = rooted(test_result("Cargo.toml"), project.path());
         cache.store(project.path(), None, &result, &DisplayConfig::default());
 
         // Cached without a config; now one exists → miss
@@ -487,7 +551,7 @@ mod tests {
     #[test]
     fn test_corrupt_entry_is_a_miss() -> Result<(), Box<dyn std::error::Error>> {
         let (_c, project, cache) = setup()?;
-        let result = test_result("Cargo.toml");
+        let result = rooted(test_result("Cargo.toml"), project.path());
         cache.store(project.path(), None, &result, &DisplayConfig::default());
 
         let entry_path = cache.entry_path(&canonical(project.path()));
@@ -500,7 +564,7 @@ mod tests {
     #[test]
     fn test_version_mismatch_is_a_miss() -> Result<(), Box<dyn std::error::Error>> {
         let (_c, project, cache) = setup()?;
-        let result = test_result("Cargo.toml");
+        let result = rooted(test_result("Cargo.toml"), project.path());
         cache.store(project.path(), None, &result, &DisplayConfig::default());
 
         let entry_path = cache.entry_path(&canonical(project.path()));
@@ -515,7 +579,7 @@ mod tests {
     #[test]
     fn test_clear_and_stats() -> Result<(), Box<dyn std::error::Error>> {
         let (_c, project, cache) = setup()?;
-        let result = test_result("Cargo.toml");
+        let result = rooted(test_result("Cargo.toml"), project.path());
         cache.store(project.path(), None, &result, &DisplayConfig::default());
 
         let (count, bytes) = cache.stats()?;
@@ -525,6 +589,65 @@ mod tests {
         cache.clear()?;
         let (count, _) = cache.stats()?;
         assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_new_manifest_in_ancestor_invalidates_no_result(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (_c, project, cache) = setup()?;
+        let sub = project.path().join("a").join("b");
+        fs::create_dir_all(&sub)?;
+        // Cached against `sub`; evidence file doesn't matter here
+        cache.store(
+            &sub,
+            None,
+            &test_result("Cargo.toml"),
+            &DisplayConfig::default(),
+        );
+        // (No is_some() precondition: with no root found the chain reaches the
+        // shared system temp dir, whose mtime parallel tests churn.)
+
+        // A change in an ANCESTOR (root discovery walks up) must invalidate
+        std::thread::sleep(Duration::from_millis(20));
+        fs::write(project.path().join("a").join("package.json"), "{}")?;
+        assert!(
+            cache.load(&sub, None).is_none(),
+            "ancestor change must miss"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_ancestor_chain_stops_at_discovered_root() -> Result<(), Box<dyn std::error::Error>> {
+        let (_c, project, cache) = setup()?;
+        let root = project.path().join("root");
+        let sub = root.join("x").join("y");
+        fs::create_dir_all(&sub)?;
+        let mut result = test_result("Cargo.toml");
+        result
+            .evidence
+            .root_discovery
+            .push(crate::types::EvidenceItem::new(
+                crate::types::EvidenceType::RootIndicator,
+                canonical(&root)
+                    .join("Cargo.toml")
+                    .to_string_lossy()
+                    .to_string(),
+                "Cargo.toml".to_string(),
+                0.95,
+                "root".to_string(),
+            ));
+        cache.store(&sub, None, &result, &DisplayConfig::default());
+
+        // Above the root: irrelevant to the result, must NOT invalidate
+        std::thread::sleep(Duration::from_millis(20));
+        fs::write(project.path().join("unrelated.txt"), "x")?;
+        assert!(cache.load(&sub, None).is_some());
+
+        // At the root (a new go.mod could change the winner): must invalidate
+        fs::write(root.join("go.mod"), "module x")?;
+        assert!(cache.load(&sub, None).is_none());
         Ok(())
     }
 }

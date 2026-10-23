@@ -284,7 +284,13 @@ fn benchmark_indicator_strength(c: &mut Criterion) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-/// Benchmark framework detection overhead
+/// Warm engine vs the CLI's real cold start.
+///
+/// `DetectionEngine` owns its per-run caches and never clears them, so every
+/// bench above that loops `detect()` on ONE engine measures warm-engine time
+/// after the first iteration. The CLI builds a fresh engine per process (or
+/// skips the engine entirely on a persistent-cache hit), so
+/// `cold_engine_detection` is the number that corresponds to a cold prompt.
 fn benchmark_cache_effectiveness(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
@@ -296,7 +302,20 @@ fn benchmark_cache_effectiveness(c: &mut Criterion) -> Result<(), Box<dyn std::e
 
     let config = TemplateGenerator::generate_template(Some("full"))
         .map_err(|e| format!("Failed to generate template: {}", e))?;
-    let engine = DetectionEngine::new(config.indicators, config.frameworks);
+    let engine = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
+
+    // Fresh engine per iteration (setup excluded): what one CLI run pays
+    c.bench_function("cold_engine_detection", |b| {
+        b.iter_batched(
+            || DetectionEngine::new(config.indicators.clone(), config.frameworks.clone()),
+            |engine| {
+                if let Err(e) = engine.detect(black_box(temp_dir.path())) {
+                    eprintln!("Detection failed: {}", e);
+                }
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
 
     c.bench_function("repeated_detection_with_cache", |b| {
         b.iter(|| {

@@ -128,28 +128,19 @@ impl IndicatorResolver {
         indicators: &[Arc<Indicator>],
         candidates: Vec<(usize, f32)>,
     ) -> usize {
-        let high_confidence: Vec<_> = candidates
+        // Reasonably confident candidates (>= 0.5) compete on score, with
+        // priority only breaking ties; below that the evidence is too thin
+        // to rank by score, so the declared priority decides
+        let confident: Vec<_> = candidates
             .iter()
-            .filter(|(_, score)| *score >= 0.8)
-            .cloned()
-            .collect();
-        let medium_confidence: Vec<_> = candidates
-            .iter()
-            .filter(|(_, score)| *score >= 0.5 && *score < 0.8)
-            .cloned()
-            .collect();
-        let low_confidence: Vec<_> = candidates
-            .iter()
-            .filter(|(_, score)| *score < 0.5)
+            .filter(|(_, score)| *score >= 0.5)
             .cloned()
             .collect();
 
-        if !high_confidence.is_empty() {
-            self.resolve_by_score(indicators, high_confidence)
-        } else if !medium_confidence.is_empty() {
-            self.resolve_by_priority_then_score(indicators, medium_confidence)
+        if !confident.is_empty() {
+            self.resolve_by_score(indicators, confident)
         } else {
-            self.resolve_by_priority(indicators, low_confidence)
+            self.resolve_by_priority(indicators, candidates)
         }
     }
 
@@ -172,28 +163,6 @@ impl IndicatorResolver {
             })
             .map(|(idx, _)| *idx)
             .unwrap_or(candidates[0].0)
-    }
-
-    fn resolve_by_priority_then_score(
-        &self,
-        indicators: &[Arc<Indicator>],
-        candidates: Vec<(usize, f32)>,
-    ) -> usize {
-        let mut best_candidate = &candidates[0];
-
-        for candidate in &candidates[1..] {
-            let current_indicator = &indicators[best_candidate.0];
-            let candidate_indicator = &indicators[candidate.0];
-
-            if candidate_indicator.priority < current_indicator.priority
-                || (candidate_indicator.priority == current_indicator.priority
-                    && candidate.1 > best_candidate.1)
-            {
-                best_candidate = candidate;
-            }
-        }
-
-        best_candidate.0
     }
 
     fn resolve_by_priority(
@@ -424,44 +393,6 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_by_priority_then_score_priority_wins() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let resolver = IndicatorResolver::new();
-        let indicators = vec![
-            Arc::new(create_test_indicator_with_priority(
-                "Higher Priority",
-                vec!["*.a"],
-                1,
-            )),
-            Arc::new(create_test_indicator_with_priority(
-                "Lower Priority",
-                vec!["*.b"],
-                2,
-            )),
-        ];
-        let candidates = vec![(0, 0.5), (1, 0.79)];
-
-        let result = resolver.resolve_by_priority_then_score(&indicators, candidates);
-        assert_eq!(result, 0, "Lower priority number wins regardless of score");
-        Ok(())
-    }
-
-    #[test]
-    fn test_resolve_by_priority_then_score_tie_broken_by_score(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let resolver = IndicatorResolver::new();
-        let indicators = vec![
-            Arc::new(create_test_indicator_with_priority("A", vec!["*.a"], 2)),
-            Arc::new(create_test_indicator_with_priority("B", vec!["*.b"], 2)),
-        ];
-        let candidates = vec![(0, 0.6), (1, 0.7)];
-
-        let result = resolver.resolve_by_priority_then_score(&indicators, candidates);
-        assert_eq!(result, 1, "Equal priority: higher score wins");
-        Ok(())
-    }
-
-    #[test]
     fn test_confidence_tiers_high_confidence() -> Result<(), Box<dyn std::error::Error>> {
         let resolver = IndicatorResolver::new();
         let indicators = vec![
@@ -498,6 +429,23 @@ mod tests {
 
         let result = resolver.resolve_by_confidence_tiers(&indicators, candidates);
         assert!(result == 0 || result == 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_medium_tier_prefers_higher_score_over_priority(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let resolver = IndicatorResolver::new();
+        let indicators = vec![
+            Arc::new(create_test_indicator_with_priority("Early", vec!["*.a"], 1)),
+            Arc::new(create_test_indicator_with_priority("Late", vec!["*.b"], 2)),
+        ];
+        // Both in the medium tier; 0.79 vs 0.51 must not lose to priority
+        let result = resolver.resolve_by_confidence_tiers(&indicators, vec![(0, 0.51), (1, 0.79)]);
+        assert_eq!(result, 1);
+        // Equal scores fall back to priority
+        let result = resolver.resolve_by_confidence_tiers(&indicators, vec![(0, 0.6), (1, 0.6)]);
+        assert_eq!(result, 0);
         Ok(())
     }
 

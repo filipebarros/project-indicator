@@ -69,29 +69,10 @@ pub fn simple_wildcard_match(text: &str, pattern: &str) -> bool {
                 return text.starts_with(prefix);
             }
 
-            let prefix_len = prefix.len();
-            let suffix_len = suffix.len();
-            let text_len = text.len();
-
-            if !text.starts_with(prefix) || !text.ends_with(suffix) {
-                return false;
-            }
-
-            let prefix_end = prefix_len;
-            let suffix_start = text_len - suffix_len;
-
-            if prefix_end <= suffix_start {
-                return true;
-            }
-
-            let overlap_len = prefix_end - suffix_start;
-            if overlap_len <= suffix_len && overlap_len <= prefix_len {
-                let prefix_overlap = &prefix[prefix_len - overlap_len..];
-                let suffix_overlap = &suffix[..overlap_len];
-                return prefix_overlap == suffix_overlap;
-            }
-
-            return false;
+            // Prefix and suffix must not overlap in the text
+            return text.len() >= prefix.len() + suffix.len()
+                && text.starts_with(prefix)
+                && text.ends_with(suffix);
         }
     }
 
@@ -228,17 +209,20 @@ mod tests {
 
     #[test]
     fn test_simple_wildcard_match_overlapping_patterns() -> Result<(), Box<dyn std::error::Error>> {
-        assert!(simple_wildcard_match("test", "test*t"));
-        assert!(simple_wildcard_match("hello", "hello*o"));
-        assert!(simple_wildcard_match("abc", "ab*bc"));
-        assert!(simple_wildcard_match("abcd", "abc*cd"));
+        // Glob semantics: prefix and suffix must not overlap in the text
+        // ("test" is not "test" + "" + "t")
+        assert!(!simple_wildcard_match("test", "test*t"));
+        assert!(!simple_wildcard_match("hello", "hello*o"));
+        assert!(!simple_wildcard_match("abc", "ab*bc"));
+        assert!(!simple_wildcard_match("abcd", "abc*cd"));
+        assert!(!simple_wildcard_match("test", "test*st"));
+        assert!(!simple_wildcard_match("test", "test*test"));
+        assert!(!simple_wildcard_match("aa", "aa*aa"));
+        assert!(simple_wildcard_match("testt", "test*t"));
+        assert!(simple_wildcard_match("aaaa", "aa*aa"));
 
-        assert!(simple_wildcard_match("test", "test*st"));
         assert!(!simple_wildcard_match("abc", "abc*def"));
         assert!(!simple_wildcard_match("hello", "hell*world"));
-
-        assert!(simple_wildcard_match("test", "test*test"));
-        assert!(simple_wildcard_match("aa", "aa*aa"));
 
         assert!(!simple_wildcard_match("ab", "abc*abc"));
         assert!(simple_wildcard_match("abcabc", "abc*abc"));
@@ -331,5 +315,14 @@ mod tests {
         // Glob semantics: a pattern not ending in '*' must match to the end
         assert!(!simple_wildcard_match("a-b-c", "*a*b"));
         assert!(simple_wildcard_match("xa-b", "*a*b"));
+    }
+
+    #[test]
+    fn test_single_wildcard_requires_room_for_prefix_and_suffix() {
+        // "abc" cannot be prefix "ab" + suffix "bc" without overlapping
+        assert!(!simple_wildcard_match("abc", "ab*bc"));
+        assert!(!simple_wildcard_match("a", "a*a"));
+        assert!(simple_wildcard_match("abbc", "ab*bc"));
+        assert!(simple_wildcard_match("aa", "a*a"));
     }
 }

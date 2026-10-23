@@ -2,33 +2,33 @@ use std::collections::HashSet;
 
 /// Check TOML dependencies (Cargo.toml, pyproject.toml)
 pub fn check_toml_dependencies(toml_value: &toml::Value, dep_names: &[String]) -> Vec<String> {
-    let mut found_deps = Vec::with_capacity(dep_names.len());
+    let mut available_deps: HashSet<&String> = HashSet::new();
 
-    let mut available_deps = HashSet::new();
-
-    if let Some(deps) = toml_value.get("dependencies").and_then(|v| v.as_table()) {
-        available_deps.extend(deps.keys());
+    add_dependency_sections(toml_value, &mut available_deps);
+    // Cargo workspaces: [workspace.dependencies] / [workspace.dev-dependencies]
+    if let Some(workspace) = toml_value.get("workspace") {
+        add_dependency_sections(workspace, &mut available_deps);
     }
-    if let Some(dev_deps) = toml_value
-        .get("dev-dependencies")
-        .and_then(|v| v.as_table())
-    {
-        available_deps.extend(dev_deps.keys());
-    }
-    if let Some(build_deps) = toml_value
-        .get("build-dependencies")
-        .and_then(|v| v.as_table())
-    {
-        available_deps.extend(build_deps.keys());
-    }
-
-    for dep_name in dep_names {
-        if available_deps.contains(dep_name) {
-            found_deps.push(dep_name.to_string());
+    // Platform-specific: [target.'cfg(unix)'.dependencies]
+    if let Some(targets) = toml_value.get("target").and_then(|v| v.as_table()) {
+        for target in targets.values() {
+            add_dependency_sections(target, &mut available_deps);
         }
     }
 
-    found_deps
+    dep_names
+        .iter()
+        .filter(|dep| available_deps.contains(dep))
+        .cloned()
+        .collect()
+}
+
+fn add_dependency_sections<'a>(parent: &'a toml::Value, into: &mut HashSet<&'a String>) {
+    for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        if let Some(table) = parent.get(section).and_then(|v| v.as_table()) {
+            into.extend(table.keys());
+        }
+    }
 }
 
 /// Check JSON dependencies (package.json, composer.json)
@@ -48,6 +48,12 @@ pub fn check_json_dependencies(
         .and_then(|v| v.as_object())
     {
         available_deps.extend(dev_deps.keys());
+    }
+    if let Some(optional_deps) = json_value
+        .get("optionalDependencies")
+        .and_then(|v| v.as_object())
+    {
+        available_deps.extend(optional_deps.keys());
     }
     if let Some(peer_deps) = json_value
         .get("peerDependencies")
@@ -84,24 +90,57 @@ pub fn check_pyproject_dependencies(toml_value: &toml::Value, dep_names: &[Strin
     found_deps
 }
 
-/// Checks a single `project.dependencies`/`optional-dependencies` array for
-/// a dependency matching `dep_name`, anchored at a name boundary (exact
-/// match or followed by a version specifier).
+/// PEP 503 name normalisation: case-insensitive, `_` `.` `-` equivalent.
+fn normalize_py_name(name: &str) -> String {
+    name.to_ascii_lowercase().replace(['_', '.'], "-")
+}
+
+/// The requirement's package name when `line` (a PEP 508 requirement or a
+/// Pipfile `name = ...` entry) names `dep_name`. The name is the leading run
+/// of name characters and must END at a requirement boundary — end of line,
+/// extras, a version specifier, a marker, or whitespace — so look-alikes
+/// (`django-extensions`) never match.
+fn python_requirement_names(line: &str, dep_name: &str) -> bool {
+    let line = line.trim();
+    let end = line
+        .find(|c: char| !(c.is_ascii_alphanumeric() || "._-".contains(c)))
+        .unwrap_or(line.len());
+    let (name, rest) = line.split_at(end);
+    let boundary = rest
+        .trim_start()
+        .chars()
+        .next()
+        .is_none_or(|c| "[=<>!~;@(".contains(c));
+    !name.is_empty() && boundary && normalize_py_name(name) == normalize_py_name(dep_name)
+}
+
+/// Checks a single `project.dependencies`/`optional-dependencies`/
+/// `dependency-groups` array for a requirement naming `dep_name`.
 fn deps_array_matches(deps: &toml::Value, dep_name: &str) -> bool {
     let Some(deps_array) = deps.as_array() else {
         return false;
     };
 
     deps_array.iter().any(|dep| {
-        dep.as_str().is_some_and(|dep_str| {
-            dep_str.starts_with(dep_name)
-                && (dep_str == dep_name
-                    || dep_str
-                        .chars()
-                        .nth(dep_name.len())
-                        .is_some_and(|c| ">=<!=~".contains(c)))
-        })
+        dep.as_str()
+            .is_some_and(|d| python_requirement_names(d, dep_name))
     })
+}
+
+/// requirements.txt / Pipfile matching with Python name semantics
+pub fn check_python_text_dependencies(content: &str, dep_names: &[String]) -> Vec<String> {
+    dep_names
+        .iter()
+        .filter(|dep| {
+            content.lines().any(|line| {
+                let line = line.trim();
+                !line.starts_with('#')
+                    && !line.starts_with('-')
+                    && python_requirement_names(line, dep)
+            })
+        })
+        .cloned()
+        .collect()
 }
 
 fn has_pyproject_dependency(toml_value: &toml::Value, dep_name: &str) -> bool {
@@ -123,12 +162,27 @@ fn has_pyproject_dependency(toml_value: &toml::Value, dep_name: &str) -> bool {
         }
     }
 
+    if let Some(groups) = toml_value
+        .get("dependency-groups")
+        .and_then(|g| g.as_table())
+    {
+        if groups
+            .values()
+            .any(|deps| deps_array_matches(deps, dep_name))
+        {
+            return true;
+        }
+    }
+
     if let Some(tool) = toml_value.get("tool") {
         if let Some(tool_table) = tool.as_table() {
             for (_, tool_section) in tool_table {
                 if let Some(deps) = tool_section.get("dependencies") {
                     if let Some(deps_table) = deps.as_table() {
-                        if deps_table.contains_key(dep_name) {
+                        if deps_table
+                            .keys()
+                            .any(|k| normalize_py_name(k) == normalize_py_name(dep_name))
+                        {
                             return true;
                         }
                     }
@@ -146,6 +200,8 @@ fn has_pyproject_dependency(toml_value: &toml::Value, dep_name: &str) -> bool {
 pub fn check_go_mod_dependencies(content: &str, dep_names: &[String]) -> Vec<String> {
     let normalized: String = content
         .lines()
+        // `// indirect` requirements are transitive, not declared dependencies
+        .filter(|line| !line.contains("// indirect"))
         .map(|line| {
             line.trim_start()
                 .strip_prefix("require ")
@@ -347,19 +403,19 @@ pub fn check_cargo_lock_dependencies(content: &str, dep_names: &[String]) -> Vec
     found_deps
 }
 
-/// Check build.sbt dependencies
+/// Check build.sbt dependencies: the artifact is the quoted string right
+/// after a `%` / `%%` operator (`"group" %% "artifact" % "version"`).
 pub fn check_sbt_dependencies(content: &str, dep_names: &[String]) -> Vec<String> {
-    let mut found_deps = Vec::with_capacity(dep_names.len());
-
-    for dep_name in dep_names {
-        if content.contains(&format!("\"{}\"", dep_name))
-            || content.contains(&format!("'{}'", dep_name))
-        {
-            found_deps.push(dep_name.to_string());
-        }
-    }
-
-    found_deps
+    dep_names
+        .iter()
+        .filter(|dep| {
+            ["%", "%%"].iter().any(|op| {
+                content.contains(&format!("{op} \"{dep}\""))
+                    || content.contains(&format!("{op}\"{dep}\""))
+            })
+        })
+        .cloned()
+        .collect()
 }
 
 /// Check pubspec.yaml dependencies
@@ -402,7 +458,6 @@ pub fn check_pom_xml_dependencies(content: &str, dep_names: &[String]) -> Vec<St
     for dep_name in dep_names {
         if content.contains(&format!("<artifactId>{}</artifactId>", dep_name))
             || content.contains(&format!("<artifactId>{}-", dep_name))
-            || content.contains(&format!(">{}<", dep_name))
         {
             found_deps.push(dep_name.to_string());
         }
@@ -424,8 +479,6 @@ pub fn check_gradle_dependencies(content: &str, dep_names: &[String]) -> Vec<Str
             || content.contains(&format!(":{}'", dep_name))
             || content.contains(&format!(":{}\"", dep_name))
             || content.contains(&format!(":{}-", dep_name))
-            || content.contains(&format!("'{}'", dep_name))
-            || content.contains(&format!("\"{}\"", dep_name))
             || content.contains(&format!("name: '{}'", dep_name))
             || content.contains(&format!("name: \"{}\"", dep_name))
         {
@@ -440,8 +493,13 @@ pub fn check_gradle_dependencies(content: &str, dep_names: &[String]) -> Vec<Str
 pub fn check_csproj_dependencies(content: &str, package_names: &[String]) -> Vec<String> {
     let mut found_deps = Vec::with_capacity(package_names.len());
 
+    // The Web SDK implicitly references the ASP.NET Core shared framework, so
+    // a bare `<Project Sdk="Microsoft.NET.Sdk.Web">` has no PackageReference
+    let web_sdk = content.contains("Sdk=\"Microsoft.NET.Sdk.Web\"");
+
     for package_name in package_names {
-        if content.contains(&format!("Include=\"{}\"", package_name))
+        if (web_sdk && package_name == "Microsoft.AspNetCore.App")
+            || content.contains(&format!("Include=\"{}\"", package_name))
             || content.contains(&format!("Include='{}'", package_name))
             || content.contains(&format!(">{}<", package_name))
         {
@@ -467,39 +525,52 @@ pub fn check_packages_config_dependencies(content: &str, package_names: &[String
     found_deps
 }
 
-/// Check Package.swift dependencies (Swift Package Manager)
+/// Check Package.swift dependencies (Swift Package Manager). Only
+/// `.package(...)` and `.product(...)` declarations count — a target merely
+/// NAMED like the dependency is not a dependency.
 pub fn check_swift_package_dependencies(content: &str, dep_names: &[String]) -> Vec<String> {
-    let mut found_deps = Vec::with_capacity(dep_names.len());
+    let declarations: Vec<&str> = content
+        .match_indices(".package(")
+        .chain(content.match_indices(".product("))
+        .map(|(i, _)| {
+            let rest = &content[i..];
+            &rest[..rest.find(')').map_or(rest.len(), |end| end + 1)]
+        })
+        .collect();
 
-    for dep_name in dep_names {
-        // Match patterns like: .package(url: "https://github.com/vapor/vapor.git", ...)
-        // or .package(name: "Vapor", ...)
-        if content.contains(&format!("/{}.git", dep_name))
-            || content.contains(&format!("name: \"{}\"", dep_name))
-            || content.contains(&format!("name: '{}'", dep_name))
-            || content.contains(&format!("\"{}\"", dep_name))
-        {
-            found_deps.push(dep_name.to_string());
-        }
-    }
-
-    found_deps
+    dep_names
+        .iter()
+        .filter(|dep| {
+            declarations.iter().any(|decl| {
+                decl.contains(&format!("/{dep}.git\""))
+                    || decl.contains(&format!("/{dep}\""))
+                    || decl.contains(&format!("name: \"{dep}\""))
+                    || decl.contains(&format!("name: '{dep}'"))
+            })
+        })
+        .cloned()
+        .collect()
 }
 
 /// Check mix.exs dependencies (Elixir)
 pub fn check_mix_dependencies(content: &str, dep_names: &[String]) -> Vec<String> {
-    let mut found_deps = Vec::with_capacity(dep_names.len());
-
-    for dep_name in dep_names {
-        // Match patterns like: {:phoenix, "~> 1.7"} or {:phoenix, github: "phoenixframework/phoenix"}
-        if content.contains(&format!("{{:{}", dep_name))
-            || content.contains(&format!("{{:\"{}\"", dep_name))
-        {
-            found_deps.push(dep_name.to_string());
-        }
-    }
-
-    found_deps
+    dep_names
+        .iter()
+        .filter(|dep| {
+            // {:phoenix, "~> 1.7"} / {:"phoenix", ...}: the atom must END
+            // after the name (not `{:phoenix_pubsub`)
+            ["{:", "{:\""].iter().any(|open| {
+                let needle = format!("{open}{dep}");
+                content.match_indices(&needle).any(|(i, _)| {
+                    content[i + needle.len()..]
+                        .chars()
+                        .next()
+                        .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+                })
+            })
+        })
+        .cloned()
+        .collect()
 }
 
 /// Check .rockspec dependencies
@@ -731,6 +802,132 @@ mod tests {
         assert_eq!(
             check_poetry_lock_dependencies(content, &deps),
             vec!["django".to_string()]
+        );
+    }
+
+    fn d(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn test_python_requirements_are_case_and_separator_insensitive() {
+        let content = "Django==4.2\nFlask\nFastAPI[standard]>=0.100\nflask_cors ~= 3.0 ; python_version > '3'\n";
+        assert_eq!(
+            check_python_text_dependencies(
+                content,
+                &d(&["django", "flask", "fastapi", "flask-cors"])
+            ),
+            d(&["django", "flask", "fastapi", "flask-cors"])
+        );
+    }
+
+    #[test]
+    fn test_python_requirements_reject_lookalikes_and_comments() {
+        let content = "django-extensions==3.0\n# flask\n-r base.txt\nflasky==1\n";
+        assert!(check_python_text_dependencies(content, &d(&["django", "flask"])).is_empty());
+    }
+
+    #[test]
+    fn test_pyproject_extras_spaces_case_and_dependency_groups() {
+        let toml: toml::Value = toml::from_str(
+            "[project]\ndependencies = [\"fastapi[standard]>=0.100\", \"Django>=4\", \"flask ~= 3.0\"]\n\n[dependency-groups]\ndev = [\"pytest>=8\"]\n",
+        )
+        .unwrap_or_else(|e| panic!("toml: {e}"));
+        assert_eq!(
+            check_pyproject_dependencies(
+                &toml,
+                &d(&["fastapi", "django", "flask", "pytest", "fast"])
+            ),
+            d(&["fastapi", "django", "flask", "pytest"])
+        );
+    }
+
+    #[test]
+    fn test_mix_rejects_dep_name_prefixes() {
+        let content = "defp deps do\n  [{:phoenix_pubsub, \"~> 2.0\"}, {:ecto, \"~> 3\"}]\nend";
+        assert!(check_mix_dependencies(content, &d(&["phoenix"])).is_empty());
+        let real = "[{:phoenix, \"~> 1.7\"}]";
+        assert_eq!(
+            check_mix_dependencies(real, &d(&["phoenix"])),
+            d(&["phoenix"])
+        );
+    }
+
+    #[test]
+    fn test_swift_only_package_declarations_count() {
+        let target_only =
+            "let package = Package(name: \"app\", targets: [.executableTarget(name: \"vapor\")])";
+        assert!(check_swift_package_dependencies(target_only, &d(&["vapor"])).is_empty());
+        for real in [
+            ".package(url: \"https://github.com/vapor/vapor.git\", from: \"4.0.0\")",
+            ".package(url: \"https://github.com/vapor/vapor\", from: \"4.0.0\")",
+        ] {
+            assert_eq!(
+                check_swift_package_dependencies(real, &d(&["vapor"])),
+                d(&["vapor"])
+            );
+        }
+    }
+
+    #[test]
+    fn test_pom_ignores_non_artifact_element_text() {
+        let name_only = "<project><name>spring-boot-starter</name></project>";
+        assert!(check_pom_xml_dependencies(name_only, &d(&["spring-boot-starter"])).is_empty());
+        let real = "<dependency><artifactId>spring-boot-starter</artifactId></dependency>";
+        assert_eq!(
+            check_pom_xml_dependencies(real, &d(&["spring-boot-starter"])),
+            d(&["spring-boot-starter"])
+        );
+    }
+
+    #[test]
+    fn test_sbt_matches_artifact_position_only() {
+        let content =
+            "libraryDependencies += \"com.example\" %% \"play\" % \"2.9\"\nname := \"akka-http\"";
+        assert_eq!(check_sbt_dependencies(content, &d(&["play"])), d(&["play"]));
+        assert!(check_sbt_dependencies(content, &d(&["akka-http"])).is_empty());
+    }
+
+    #[test]
+    fn test_go_mod_ignores_indirect_requirements() {
+        let content = "module x\n\nrequire (\n\tgithub.com/gin-gonic/gin v1.9.1 // indirect\n\tgithub.com/labstack/echo/v4 v4.11.0\n)\n";
+        assert!(check_go_mod_dependencies(content, &d(&["github.com/gin-gonic/gin"])).is_empty());
+        assert_eq!(
+            check_go_mod_dependencies(content, &d(&["github.com/labstack/echo/v4"])),
+            d(&["github.com/labstack/echo/v4"])
+        );
+    }
+
+    #[test]
+    fn test_gradle_ignores_bare_quoted_strings() {
+        let content =
+            "rootProject.name = \"gin\"\ndependencies { implementation(\"io.gin:gin:1.0\") }";
+        // the project name alone must not count; the real coordinate does
+        assert!(check_gradle_dependencies("rootProject.name = \"gin\"", &d(&["gin"])).is_empty());
+        assert_eq!(
+            check_gradle_dependencies(content, &d(&["gin"])),
+            d(&["gin"])
+        );
+    }
+
+    #[test]
+    fn test_toml_workspace_and_target_dependencies() {
+        let toml: toml::Value = toml::from_str(
+            "[workspace.dependencies]\naxum = \"0.7\"\n\n[target.'cfg(unix)'.dependencies]\nrocket = \"0.5\"\n\n[workspace.dev-dependencies]\nactix-web = \"4\"\n",
+        )
+        .unwrap_or_else(|e| panic!("toml: {e}"));
+        assert_eq!(
+            check_toml_dependencies(&toml, &d(&["axum", "rocket", "actix-web", "tonic"])),
+            d(&["axum", "rocket", "actix-web"])
+        );
+    }
+
+    #[test]
+    fn test_json_optional_dependencies() {
+        let json: serde_json::Value = serde_json::json!({"optionalDependencies": {"react": "18"}});
+        assert_eq!(
+            check_json_dependencies(&json, &d(&["react"])),
+            d(&["react"])
         );
     }
 }
