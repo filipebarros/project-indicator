@@ -163,7 +163,7 @@ end-to-end detection ~70%. Don't reintroduce it without new numbers.)
 
 ### Configuration System
 
-**Template-based**: 23 indicator templates (`src/config/templates/`) plus a
+**Template-based**: 26 indicator templates (`src/config/templates/`) plus a
 single ecosystem-keyed framework catalog (`src/config/templates/frameworks.rs`)
 
 - Each indicator module (e.g., `rust.rs`, `deno.rs`) defines file patterns,

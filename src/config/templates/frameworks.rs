@@ -4,6 +4,7 @@
 
 use super::csharp::csharp_frameworks;
 use super::dart::dart_frameworks;
+use super::deno::deno_frameworks;
 use super::elixir::elixir_frameworks;
 use super::go::go_frameworks;
 use super::java::java_frameworks;
@@ -47,6 +48,7 @@ pub fn framework_catalog() -> Vec<Framework> {
     catalog.extend(ruby_frameworks());
     catalog.extend(swift_frameworks());
     catalog.extend(dart_frameworks());
+    catalog.extend(deno_frameworks());
     catalog.extend(elixir_frameworks());
     catalog.extend(scala_frameworks());
     catalog.extend(lua_frameworks());

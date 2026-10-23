@@ -5,6 +5,7 @@ pub mod dart;
 pub mod deno;
 pub mod elixir;
 pub mod frameworks;
+pub mod gleam;
 pub mod go;
 pub mod java;
 pub mod javascript;
@@ -12,6 +13,7 @@ pub mod julia;
 pub mod kotlin;
 pub mod lua;
 pub mod nix;
+pub mod odin;
 pub mod php;
 pub mod python;
 pub mod r;
@@ -21,6 +23,7 @@ pub mod scala;
 pub mod swift;
 pub mod terraform;
 pub mod typescript;
+pub mod v;
 pub mod zig;
 
 pub mod shared;
@@ -37,6 +40,7 @@ use dart::create_dart_indicator;
 use deno::create_deno_indicator;
 use elixir::create_elixir_indicator;
 use frameworks::framework_catalog;
+use gleam::create_gleam_indicator;
 use go::create_go_indicator;
 use java::create_java_indicator;
 use javascript::create_javascript_indicator;
@@ -44,6 +48,7 @@ use julia::create_julia_indicator;
 use kotlin::create_kotlin_indicator;
 use lua::create_lua_indicator;
 use nix::create_nix_indicator;
+use odin::create_odin_indicator;
 use php::create_php_indicator;
 use python::create_python_indicator;
 use r::create_r_indicator;
@@ -53,6 +58,7 @@ use scala::create_scala_indicator;
 use swift::create_swift_indicator;
 use terraform::create_terraform_indicator;
 use typescript::create_typescript_indicator;
+use v::create_v_indicator;
 use zig::create_zig_indicator;
 
 pub struct ConfigTemplate {
@@ -166,6 +172,9 @@ pub fn create_full_template() -> ConfigTemplate {
         create_kotlin_indicator(),
         create_dart_indicator(),
         create_elixir_indicator(),
+        create_gleam_indicator(),
+        create_odin_indicator(),
+        create_v_indicator(),
         create_zig_indicator(),
         create_r_indicator(),
         create_julia_indicator(),

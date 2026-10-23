@@ -308,6 +308,7 @@ mod windows_placeholder_tests {
 
 /// A symlinked source file must be visible to the full scan, not just root
 /// discovery (which stats through symlinks and always saw them).
+#[cfg(unix)]
 #[test]
 fn test_scan_detects_symlinked_file() -> Result<(), Box<dyn std::error::Error>> {
     use project_indicator::detection::DetectionEngine;

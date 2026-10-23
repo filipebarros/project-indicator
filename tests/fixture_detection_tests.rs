@@ -33,12 +33,19 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("dart-analysis-options-only", "Dart", &[]),
     ("dart-flutter", "Dart", &["Flutter"]),
     ("deno", "Deno", &[]),
+    ("deno-fresh", "Deno", &["Fresh"]),
+    ("deno-hono", "Deno", &["Hono"]),
     ("deno-json-and-jsonc", "Deno", &[]),
     ("deno-jsonc-bare", "Deno", &[]),
+    ("deno-jsonc-comments", "Deno", &["Oak"]),
+    ("deno-jsr-scope-only", "Deno", &[]),
+    ("deno-oak", "Deno", &["Oak"]),
     ("deno-react", "Deno", &["React"]),
     ("deno-ts-react", "Deno", &["React"]),
     ("elixir", "Elixir", &["Phoenix"]),
     ("elixir-formatter-only", "Elixir", &[]),
+    ("gleam", "Gleam", &[]),
+    ("gleam-with-package-json", "Gleam", &[]),
     ("go", "Go", &[]),
     ("go-work-only", "Go", &[]),
     ("go-gin", "Go", &["Gin"]),
@@ -48,6 +55,8 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("js-plain-nodep", "JavaScript", &[]),
     ("js-runtime-config-only", "JavaScript", &[]),
     ("js-react", "JavaScript", &["React"]),
+    // One stray .gleam file must not override a real JavaScript project
+    ("js-stray-gleam", "JavaScript", &["React"]),
     ("js-svelte", "JavaScript", &["Svelte", "Vite"]),
     ("js-vue-plain", "JavaScript", &["Vue"]),
     ("jvm-gradle-groovy-kotlin-src", "Kotlin", &[]),
@@ -68,6 +77,10 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     // Real rockspecs are named <name>-<version>.rockspec
     ("lua-rockspec-only", "Lua", &[]),
     ("nix", "Nix", &[]),
+    ("odin", "Odin", &[]),
+    // ols.json (the Odin language-server config) alone is deliberately enough
+    ("odin-ols-only", "Odin", &[]),
+    ("odin-sources-only", "Odin", &[]),
     ("php-laravel", "PHP", &["Laravel"]),
     ("php-phpunit-only", "PHP", &[]),
     ("python-django", "Python", &["Django"]),
@@ -79,6 +92,8 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("ruby-rails", "Ruby", &["Rails"]),
     ("ruby-version-only", "Ruby", &[]),
     ("rust", "Rust", &[]),
+    // *.v is also a Verilog extension; a stray .v must not outrank Cargo.toml
+    ("rust-stray-v", "Rust", &[]),
     ("rust-toolchain-only", "Rust", &[]),
     ("rust-axum", "Rust", &["Axum"]),
     ("scala-akka", "Scala", &["Akka HTTP"]),
@@ -89,6 +104,7 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("ts-nextjs", "TypeScript", &["React", "Next.js"]),
     ("ts-no-tsconfig", "TypeScript", &[]),
     ("ts-with-tsconfig", "TypeScript", &[]),
+    ("v", "V", &[]),
 ];
 
 fn copy_dir(src: &Path, dst: &Path) -> Result<(), Box<dyn std::error::Error>> {

@@ -57,8 +57,9 @@ pub fn check_node_ecosystem<P: AsRef<Path>>(
     // (e.g. "react": "npm:react@18.2.0")
     if found_deps.is_empty() {
         for deno_manifest in ["deno.json", "deno.jsonc"] {
-            let deno_path = path.as_ref().join(deno_manifest);
-            if let Some(json_value) = parsed_cache.get_json_value(&deno_path)? {
+            if let Some(json_value) =
+                super::deno::read_deno_config(path.as_ref(), deno_manifest, parsed_cache)?
+            {
                 let deno_deps = check_deno_import_dependencies(&json_value, dependencies);
                 if !deno_deps.is_empty() {
                     found_deps.extend(deno_deps);

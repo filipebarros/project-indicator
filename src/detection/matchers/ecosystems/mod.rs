@@ -1,6 +1,7 @@
 mod helpers;
 
 mod dart;
+mod deno;
 mod dotnet;
 mod elixir;
 mod go;
@@ -15,6 +16,7 @@ mod scala;
 mod swift;
 
 pub use dart::check_dart_ecosystem;
+pub use deno::check_deno_ecosystem;
 pub use dotnet::check_dotnet_ecosystem;
 pub use elixir::check_elixir_ecosystem;
 pub use go::check_go_ecosystem;

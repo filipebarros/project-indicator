@@ -98,6 +98,7 @@ fn test_binary_end_to_end_cache_behavior() -> Result<(), Box<dyn std::error::Err
         Command::new(env!("CARGO_BIN_EXE_project-indicator"))
             .args(&args)
             .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
             .env("XDG_CACHE_HOME", &cache_home)
             .env("XDG_CONFIG_HOME", home.path().join("xdg-config"))
             .output()
@@ -149,6 +150,7 @@ fn test_subdir_invocation_invalidates_on_root_evidence_change(
         Command::new(env!("CARGO_BIN_EXE_project-indicator"))
             .args([subdir.to_str().unwrap_or("."), "--format", "json"])
             .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
             .env("XDG_CACHE_HOME", home.path().join("xdg-cache"))
             .env("XDG_CONFIG_HOME", home.path().join("xdg-config"))
             .output()
@@ -193,6 +195,7 @@ fn test_unparsable_config_soft_fallback() -> Result<(), Box<dyn std::error::Erro
     let output = Command::new(env!("CARGO_BIN_EXE_project-indicator"))
         .args([project.path().to_str().unwrap_or("."), "--format", "json"])
         .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
         .env("XDG_CACHE_HOME", home.path().join("xdg-cache"))
         .env("XDG_CONFIG_HOME", home.path().join("xdg-config"))
         .output()?;

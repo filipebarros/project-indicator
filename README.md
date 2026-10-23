@@ -15,8 +15,8 @@ Project Indicator is a high-performance replacement for shell-based project dete
 
 ## Features
 
-- 🔍 **Multi-language Detection**: Supports 23 languages and toolchains (Rust, JavaScript/TypeScript, Python, Go, Deno, Bun, Terraform, Nix, and more)
-- 🏗️ **Framework Recognition**: Detects 37 popular frameworks like React, Svelte, Axum, Django, Gin, Spring Boot, Laravel, Rails
+- 🔍 **Multi-language Detection**: Supports 26 languages and toolchains (Rust, JavaScript/TypeScript, Python, Go, Deno, Bun, Gleam, Terraform, Nix, and more)
+- 🏗️ **Framework Recognition**: Detects 40 popular frameworks like React, Svelte, Axum, Django, Gin, Spring Boot, Laravel, Rails, Fresh
 - ⚡ **Blazing Performance**: 3-5ms typical detection
 - 🎨 **Multiple Output Formats**: Simple, Full, JSON, and Debug formats
 - 🔧 **CLI**: Configuration and cache management, plus a full-evidence debug format
@@ -48,7 +48,7 @@ chmod +x /usr/local/bin/project-indicator
 
 #### Build from Source
 
-**Prerequisites**: Rust 1.80+ (install from [rustup.rs](https://rustup.rs/))
+**Prerequisites**: Rust 1.88+ (install from [rustup.rs](https://rustup.rs/))
 
 ```bash
 git clone https://github.com/filipebarros/project-indicator.git

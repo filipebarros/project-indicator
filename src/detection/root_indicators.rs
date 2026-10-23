@@ -127,7 +127,8 @@ impl RootIndicatorEngine {
     }
 
     /// Check if a directory is a boundary that we shouldn't traverse past or
-    /// scan from: home directory, /Users, /home, system directories
+    /// scan from: home directory, any filesystem root (`/`, `C:\`, …), and
+    /// per-OS system directories
     pub fn is_boundary_directory(&self, path: &Path) -> bool {
         if let Some(ref home) = self.cached_home_dir {
             if path == home {
@@ -135,12 +136,21 @@ impl RootIndicatorEngine {
             }
         }
 
-        // Optimize: check most common ones first and avoid string conversion if possible
-        if path.as_os_str() == "/" {
+        // Any filesystem root: "/" on Unix, drive roots (C:\, D:\) on Windows
+        if path.parent().is_none() {
             return true;
         }
 
         let path_str = path.to_string_lossy();
+
+        #[cfg(windows)]
+        if matches!(
+            path_str.as_ref(),
+            r"C:\Windows" | r"C:\Program Files" | r"C:\Program Files (x86)" | r"C:\Users"
+        ) {
+            return true;
+        }
+
         matches!(
             path_str.as_ref(),
             "/Users" | "/home" | "/root" | "/System" | "/Library" | "/Applications"
@@ -633,6 +643,14 @@ mod tests {
 
         if let Some(home) = dirs::home_dir() {
             assert!(engine.is_boundary_directory(&home));
+        }
+
+        #[cfg(windows)]
+        {
+            assert!(engine.is_boundary_directory(Path::new(r"C:\")));
+            assert!(engine.is_boundary_directory(Path::new(r"C:\Windows")));
+            assert!(engine.is_boundary_directory(Path::new(r"C:\Users")));
+            assert!(!engine.is_boundary_directory(Path::new(r"C:\code")));
         }
 
         assert!(engine.is_boundary_directory(Path::new("/")));
