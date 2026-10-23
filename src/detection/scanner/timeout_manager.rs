@@ -1,9 +1,4 @@
-//! Timeout and early termination management
-//!
-//! This module provides adaptive timeout calculation and early termination
-//! heuristics for efficient file scanning.
-//!
-//! # Adaptive Timeouts
+//! Adaptive scan timeout management
 //!
 //! Timeouts scale with directory size:
 //! - 0-50 files: 100ms
@@ -11,15 +6,9 @@
 //! - 201-1000 files: 500ms
 //! - 1000+ files: 1000ms
 //!
-//! # Early Termination
-//!
-//! Scanning stops early when:
-//! - 3+ high-priority files found (strong evidence)
-//! - 15+ total files scanned (sufficient sample)
-//!
 //! All operations are thread-safe using atomic types.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -27,7 +16,6 @@ pub struct TimeoutManager {
     start_time: Instant,
     timeout_duration: Duration,
     files_scanned: Arc<AtomicUsize>,
-    should_terminate: Arc<AtomicBool>,
 }
 
 impl TimeoutManager {
@@ -38,7 +26,6 @@ impl TimeoutManager {
             start_time: Instant::now(),
             timeout_duration,
             files_scanned: Arc::new(AtomicUsize::new(0)),
-            should_terminate: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -52,41 +39,14 @@ impl TimeoutManager {
         }
     }
 
-    /// Check if scanning should stop (timeout or early termination)
+    /// Check if scanning should stop (wall-clock timeout exceeded)
     pub fn should_stop(&self) -> bool {
-        self.should_terminate.load(Ordering::Relaxed)
-            || self.start_time.elapsed() >= self.timeout_duration
+        self.start_time.elapsed() >= self.timeout_duration
     }
 
     /// Record that a file was scanned
     pub fn record_file_scanned(&self) {
         self.files_scanned.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Check early termination heuristics and set termination flag if met
-    /// Returns true if early termination was triggered
-    pub fn check_early_termination(&self, high_priority_count: usize) -> bool {
-        let scanned = self.files_scanned.load(Ordering::Relaxed);
-
-        if high_priority_count >= 3 {
-            log::trace!(
-                "Early termination: strong evidence (high_priority={}, threshold=3)",
-                high_priority_count
-            );
-            self.should_terminate.store(true, Ordering::Relaxed);
-            return true;
-        }
-
-        if scanned >= 15 {
-            log::trace!(
-                "Early termination: file count limit (scanned={}, threshold=15)",
-                scanned
-            );
-            self.should_terminate.store(true, Ordering::Relaxed);
-            return true;
-        }
-
-        false
     }
 
     pub fn files_scanned(&self) -> usize {
@@ -121,29 +81,6 @@ mod tests {
     fn test_adaptive_timeout_very_large_dir() {
         let mgr = TimeoutManager::new(2000);
         assert_eq!(mgr.timeout_duration, Duration::from_millis(1000));
-    }
-
-    #[test]
-    fn test_early_termination_strong_evidence() {
-        let mgr = TimeoutManager::new(100);
-        assert!(!mgr.should_stop());
-
-        let terminated = mgr.check_early_termination(3);
-        assert!(terminated);
-        assert!(mgr.should_stop());
-    }
-
-    #[test]
-    fn test_early_termination_file_count() {
-        let mgr = TimeoutManager::new(100);
-
-        for _ in 0..15 {
-            mgr.record_file_scanned();
-        }
-
-        let terminated = mgr.check_early_termination(0);
-        assert!(terminated);
-        assert!(mgr.should_stop());
     }
 
     #[test]

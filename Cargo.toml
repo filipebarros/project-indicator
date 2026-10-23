@@ -2,6 +2,7 @@
 name = "project-indicator"
 version = "4.3.2"
 edition = "2021"
+rust-version = "1.80"
 authors = ["Filipe Barros <afbarros@me.com>"]
 description = "Fast project type and framework detection for shell prompts"
 license = "MIT"
@@ -16,7 +17,6 @@ toml = "1.1"
 serde_json = "1.0"
 
 ignore = "0.4"
-regex = "1.12.4"
 
 anyhow = "1.0"
 

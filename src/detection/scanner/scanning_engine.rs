@@ -4,16 +4,15 @@ use crate::performance::FileSystemCache;
 use crate::types::MatchedFile;
 use crate::Result;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-/// Maximum matches per pattern before early termination.
+/// Maximum matches before the scan stops collecting.
 ///
 /// **Why 15?**
 /// - 99th percentile of projects need <10 matches for accurate detection
 /// - 15 provides 50% safety margin
 /// - Prevents memory exhaustion in large monorepos
-/// - Early termination still allows confident language detection
 ///
 /// **Performance Impact:**
 /// - Reduces scan time by 40-60% for large projects
@@ -33,7 +32,7 @@ const DEFAULT_MAX_MATCHES_PER_PATTERN: usize = 15;
 /// **Performance Characteristics:**
 /// - < 50 files: Sequential faster (no thread overhead)
 /// - 50-500 files: Parallel 2-3x faster
-/// - > 500 files: Parallel with early termination critical
+/// - > 500 files: Parallel with the match cap and timeout critical
 const SMALL_PROJECT_THRESHOLD: usize = 50;
 
 /// Extreme directory size threshold for safety checks.
@@ -78,34 +77,6 @@ impl ScanningEngine {
         }
     }
 
-    /// Execute full scan with priority file fast path
-    pub fn scan(&self, path: &Path) -> Result<Vec<MatchedFile>> {
-        log::trace!("Starting scan for path: {}", path.display());
-
-        if let Some(priority_matches) = self.check_priority_files(path)? {
-            log::debug!(
-                "Priority fast path successful: found {} matches in root",
-                priority_matches.len()
-            );
-            return Ok(priority_matches);
-        }
-
-        log::debug!("No priority files found, proceeding with full directory scan");
-
-        self.scan_with_timeout(path)
-    }
-
-    /// Fast path: check only high-priority files in root
-    fn check_priority_files(&self, path: &Path) -> Result<Option<Vec<MatchedFile>>> {
-        let matches = self.check_root_files(path, self.pattern_processor.get_high_priority_files());
-
-        if matches.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(matches))
-        }
-    }
-
     /// Check a set of exact (non-glob) filenames in the scan root
     fn check_root_files<'a>(
         &self,
@@ -131,16 +102,15 @@ impl ScanningEngine {
         matches
     }
 
-    /// Full directory scan with adaptive timeout and early termination
+    /// Full directory scan with an adaptive timeout
     ///
     /// This method chooses between sequential and parallel scanning based on the
     /// estimated directory size to optimize performance:
     ///
     /// - Small projects (< 50 files): Sequential scan avoids thread spawning overhead
     /// - Large projects (>= 50 files): Parallel scan leverages multiple cores
-    ///
-    /// Both paths use adaptive timeouts and early termination for consistent performance.
-    fn scan_with_timeout(&self, path: &Path) -> Result<Vec<MatchedFile>> {
+    pub fn scan(&self, path: &Path) -> Result<Vec<MatchedFile>> {
+        log::trace!("Starting scan for path: {}", path.display());
         let traverser = FileSystemTraverser::new(self.max_depth);
         let estimated_size = traverser.estimate_directory_size(path);
 
@@ -177,34 +147,34 @@ impl ScanningEngine {
 
     /// Shared per-entry pre-filter for both scan strategies.
     ///
-    /// Returns `Some(is_strong_evidence)` when the entry is a file whose name
-    /// passes the pattern pre-filter (and records it with the timeout
-    /// manager); `None` when the entry should be skipped.
+    /// Returns `true` when the entry is a file whose name passes the pattern
+    /// pre-filter (and records it with the timeout manager).
     fn prefilter_entry(
         pattern_processor: &PatternProcessor,
         timeout_mgr: &TimeoutManager,
         entry: &ignore::DirEntry,
-    ) -> Option<bool> {
+    ) -> bool {
         // Check file type first before any string operations. Symlinks are
         // resolved to their targets so a symlinked manifest counts as a file
-        // (matching the root fast path, which stats through symlinks);
-        // broken links resolve to nothing and are skipped.
+        // (matching the extreme-size root check, which stats through
+        // symlinks); broken links resolve to nothing and are skipped.
         let is_file = entry
             .file_type()
             .is_some_and(|ft| ft.is_file() || (ft.is_symlink() && entry.path().is_file()));
         if !is_file {
-            return None;
+            return false;
         }
 
-        let filename = entry.file_name().to_str()?;
+        let Some(filename) = entry.file_name().to_str() else {
+            return false;
+        };
 
         if !pattern_processor.should_scan_file(filename) {
-            return None;
+            return false;
         }
 
         timeout_mgr.record_file_scanned();
-
-        Some(pattern_processor.is_strong_evidence(filename))
+        true
     }
 
     /// Sequential scan for small projects (avoids thread spawning overhead)
@@ -218,8 +188,7 @@ impl ScanningEngine {
         let timeout_mgr = TimeoutManager::new(estimated_size);
         let mut matched_files =
             Vec::with_capacity(estimated_size.min(self.max_matches_per_pattern));
-        let mut high_priority_count = 0;
-        let patterns = self.pattern_processor.get_patterns();
+        let patterns = self.pattern_processor.get_patterns_arc();
 
         let walker = traverser.build_walker(path);
 
@@ -241,46 +210,15 @@ impl ScanningEngine {
                 Err(_) => continue,
             };
 
-            let is_strong =
-                match Self::prefilter_entry(&self.pattern_processor, &timeout_mgr, &entry) {
-                    Some(is_strong) => is_strong,
-                    None => continue,
-                };
-
-            if is_strong {
-                high_priority_count += 1;
-
-                if high_priority_count >= 3 && matched_files.len() >= 3 {
-                    log::debug!(
-                        "Sequential scan: sufficient strong evidence ({}), early exit",
-                        high_priority_count
-                    );
-                    // Still do the pattern match for this file before exiting
-                    if let Some(file_match) = self.pattern_processor.match_file_against_patterns(
-                        entry.path(),
-                        path,
-                        patterns,
-                    ) {
-                        matched_files.push(file_match);
-                    }
-                    break;
-                }
+            if !Self::prefilter_entry(&self.pattern_processor, &timeout_mgr, &entry) {
+                continue;
             }
 
             if let Some(file_match) =
                 self.pattern_processor
-                    .match_file_against_patterns(entry.path(), path, patterns)
+                    .match_file_against_patterns(entry.path(), path, &patterns)
             {
                 matched_files.push(file_match);
-
-                if is_strong && timeout_mgr.check_early_termination(high_priority_count) {
-                    log::debug!(
-                        "Sequential scan: early termination triggered (high_priority={}, scanned={})",
-                        high_priority_count,
-                        timeout_mgr.files_scanned()
-                    );
-                    break;
-                }
             }
         }
 
@@ -307,11 +245,9 @@ impl ScanningEngine {
     ) -> Result<Vec<MatchedFile>> {
         let scan_start = std::time::Instant::now();
         let matched_files = Arc::new(Mutex::new(Vec::with_capacity(self.max_matches_per_pattern)));
-        let high_priority_count = Arc::new(AtomicUsize::new(0));
-        let total_matches = Arc::new(AtomicUsize::new(0));
         let should_quit = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        // One shared timeout manager so file counts and early-termination
-        // heuristics are evaluated globally, not per worker thread
+        // One shared timeout manager so the timeout is evaluated globally,
+        // not per worker thread
         let timeout_mgr = Arc::new(TimeoutManager::new(estimated_size));
 
         let patterns = self.pattern_processor.get_patterns_arc();
@@ -320,8 +256,6 @@ impl ScanningEngine {
 
         walker.build_parallel().run(|| {
             let matched_files = Arc::clone(&matched_files);
-            let high_priority_count = Arc::clone(&high_priority_count);
-            let total_matches = Arc::clone(&total_matches);
             let should_quit = Arc::clone(&should_quit);
             let timeout_mgr = Arc::clone(&timeout_mgr);
             let pattern_processor = self.pattern_processor.clone();
@@ -343,24 +277,8 @@ impl ScanningEngine {
                     Err(_) => return ignore::WalkState::Continue,
                 };
 
-                let is_strong =
-                    match Self::prefilter_entry(&pattern_processor, &timeout_mgr, &entry) {
-                        Some(is_strong) => is_strong,
-                        None => return ignore::WalkState::Continue,
-                    };
-
-                if is_strong {
-                    let hp_count = high_priority_count.fetch_add(1, Ordering::Relaxed) + 1;
-
-                    // Check this BEFORE pattern matching to save work
-                    if hp_count >= 3 && total_matches.load(Ordering::Relaxed) >= 3 {
-                        log::trace!(
-                            "Parallel scan: sufficient strong evidence ({}), signaling quit",
-                            hp_count
-                        );
-                        should_quit.store(true, Ordering::Relaxed);
-                        return ignore::WalkState::Quit;
-                    }
+                if !Self::prefilter_entry(&pattern_processor, &timeout_mgr, &entry) {
+                    return ignore::WalkState::Continue;
                 }
 
                 if let Some(file_match) = pattern_processor.match_file_against_patterns(
@@ -370,28 +288,14 @@ impl ScanningEngine {
                 ) {
                     if let Ok(mut files) = matched_files.lock() {
                         files.push(file_match);
-                        let count = files.len();
-                        total_matches.store(count, Ordering::Relaxed);
 
-                        if count >= self.max_matches_per_pattern {
+                        if files.len() >= self.max_matches_per_pattern {
                             log::trace!(
                                 "Parallel scan: max matches ({}) reached",
                                 self.max_matches_per_pattern
                             );
                             should_quit.store(true, Ordering::Relaxed);
                             return ignore::WalkState::Quit;
-                        }
-
-                        if is_strong {
-                            let hp_count = high_priority_count.load(Ordering::Relaxed);
-                            if timeout_mgr.check_early_termination(hp_count) {
-                                log::trace!(
-                                    "Parallel scan: early termination triggered (high_priority={})",
-                                    hp_count
-                                );
-                                should_quit.store(true, Ordering::Relaxed);
-                                return ignore::WalkState::Quit;
-                            }
                         }
                     }
                 }
@@ -429,7 +333,6 @@ mod tests {
     use super::*;
     use crate::detection::pattern_matching::PatternMatcher;
     use crate::test_utils::create_test_rust_project;
-    use crate::types::{Indicator, IndicatorContext, RootIndicator};
     use std::fs;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -441,24 +344,8 @@ mod tests {
             "*.js".to_string(),
         ]);
 
-        let rust_lang = Indicator::with_root_indicators(
-            "Rust".to_string(),
-            vec!["*.rs".to_string(), "Cargo.toml".to_string()],
-            "#dea584".to_string(),
-            "".to_string(),
-            1,
-            vec![],
-            vec![RootIndicator {
-                pattern: "Cargo.toml".to_string(),
-                weight: 0.95,
-                context: IndicatorContext::LanguageRoot,
-                alternative_group: None,
-            }],
-        );
-
         let pattern_matcher = Arc::new(PatternMatcher::new());
-        let pattern_processor =
-            PatternProcessor::new(pattern_matcher, patterns, vec![Arc::new(rust_lang)]);
+        let pattern_processor = PatternProcessor::new(pattern_matcher, patterns);
 
         ScanningEngine::with_cache(pattern_processor, 3, None)
     }
@@ -467,22 +354,6 @@ mod tests {
     fn test_engine_creation() {
         let engine = create_test_engine();
         assert_eq!(engine.max_depth, 3);
-    }
-
-    #[test]
-    fn test_priority_file_fast_path() -> Result<()> {
-        let engine = create_test_engine();
-        let temp_dir = create_test_rust_project().map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        let matches = engine.check_priority_files(temp_dir.path())?;
-        assert!(matches.is_some());
-
-        if let Some(files) = matches {
-            assert!(!files.is_empty());
-            assert!(files.iter().any(|f| f.filename == "Cargo.toml"));
-        }
-
-        Ok(())
     }
 
     #[test]
@@ -532,19 +403,8 @@ mod tests {
     #[test]
     fn test_engine_with_cache() -> Result<()> {
         let patterns = Arc::new(vec!["*.rs".to_string(), "Cargo.toml".to_string()]);
-        let rust_lang = Indicator::with_root_indicators(
-            "Rust".to_string(),
-            vec!["*.rs".to_string(), "Cargo.toml".to_string()],
-            "#dea584".to_string(),
-            "".to_string(),
-            1,
-            vec![],
-            vec![],
-        );
-
         let pattern_matcher = Arc::new(PatternMatcher::new());
-        let pattern_processor =
-            PatternProcessor::new(pattern_matcher, patterns, vec![Arc::new(rust_lang)]);
+        let pattern_processor = PatternProcessor::new(pattern_matcher, patterns);
 
         let file_cache = Arc::new(FileSystemCache::new());
         let engine = ScanningEngine::with_cache(pattern_processor, 3, Some(file_cache));
@@ -557,47 +417,12 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_with_timeout() -> Result<()> {
-        let engine = create_test_engine();
-        let temp_dir = create_test_rust_project().map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        let matches = engine.scan_with_timeout(temp_dir.path())?;
-        assert!(!matches.is_empty());
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_scan_with_timeout_no_matches() -> Result<()> {
-        let engine = create_test_engine();
-        let temp_dir = TempDir::new()?;
-
-        fs::write(temp_dir.path().join("readme.txt"), "text")?;
-
-        let matches = engine.scan_with_timeout(temp_dir.path())?;
-        assert!(matches.is_empty());
-
-        Ok(())
-    }
-
-    #[test]
     fn test_oversized_directory_still_detects_root_manifests() -> Result<()> {
         let patterns = Arc::new(vec!["special.config".to_string(), "*.xyz".to_string()]);
-        // Priority > 2 keeps this language out of the high-priority fast path,
-        // so detection must survive the extreme-size bailout
-        let lang = Indicator::with_root_indicators(
-            "Special".to_string(),
-            vec!["special.config".to_string(), "*.xyz".to_string()],
-            "#000000".to_string(),
-            "S".to_string(),
-            5,
-            vec![],
-            vec![],
-        );
-
+        // Detection must survive the extreme-size bailout via the root
+        // exact-pattern check
         let pattern_matcher = Arc::new(PatternMatcher::new());
-        let pattern_processor =
-            PatternProcessor::new(pattern_matcher, patterns, vec![Arc::new(lang)]);
+        let pattern_processor = PatternProcessor::new(pattern_matcher, patterns);
         let engine = ScanningEngine::with_cache(pattern_processor, 3, None);
 
         let temp_dir = TempDir::new()?;
@@ -614,21 +439,10 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_with_timeout_timeout_exceeded() -> Result<()> {
+    fn test_scan_timeout_exceeded() -> Result<()> {
         let patterns = Arc::new(vec!["*.rs".to_string()]);
-        let rust_lang = Indicator::with_root_indicators(
-            "Rust".to_string(),
-            vec!["*.rs".to_string()],
-            "#dea584".to_string(),
-            "".to_string(),
-            1,
-            vec![],
-            vec![],
-        );
-
         let pattern_matcher = Arc::new(PatternMatcher::new());
-        let pattern_processor =
-            PatternProcessor::new(pattern_matcher, patterns, vec![Arc::new(rust_lang)]);
+        let pattern_processor = PatternProcessor::new(pattern_matcher, patterns);
 
         let engine = ScanningEngine::with_cache(pattern_processor, 1, None); // Very low depth to trigger timeout
 
@@ -640,7 +454,7 @@ mod tests {
             fs::write(root.join(format!("file_{}.rs", i)), "// rust file")?;
         }
 
-        let matches = engine.scan_with_timeout(root)?;
+        let matches = engine.scan(root)?;
         // Should still return some matches even if timeout occurred
         assert!(!matches.is_empty());
 
@@ -648,30 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_with_timeout_early_termination() -> Result<()> {
-        let engine = create_test_engine();
-        let temp_dir = create_test_rust_project().map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        let matches = engine.scan_with_timeout(temp_dir.path())?;
-        // Early termination may result in empty matches, just verify function completes
-        let _ = matches;
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_scan_with_timeout_strong_evidence() -> Result<()> {
-        let engine = create_test_engine();
-        let temp_dir = create_test_rust_project().map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        let matches = engine.scan_with_timeout(temp_dir.path())?;
-        assert!(!matches.is_empty());
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_scan_with_timeout_file_count_limit() -> Result<()> {
+    fn test_scan_file_count_limit() -> Result<()> {
         let engine = create_test_engine();
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
@@ -681,7 +472,7 @@ mod tests {
             fs::write(root.join(format!("file_{}.rs", i)), "// rust file")?;
         }
 
-        let matches = engine.scan_with_timeout(root)?;
+        let matches = engine.scan(root)?;
         // Should return matches but potentially limited by file count
         assert!(!matches.is_empty());
 
@@ -689,13 +480,13 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_with_timeout_concurrent_access() -> Result<()> {
+    fn test_scan_concurrent_access() -> Result<()> {
         let engine = create_test_engine();
         let temp_dir = create_test_rust_project().map_err(|e| anyhow::anyhow!("{}", e))?;
 
         // Test that multiple sequential scans work (avoiding lifetime issues)
         for _ in 0..4 {
-            let matches = engine.scan_with_timeout(temp_dir.path())?;
+            let matches = engine.scan(temp_dir.path())?;
             assert!(!matches.is_empty());
         }
 
@@ -703,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_with_timeout_adaptive_timeout() -> Result<()> {
+    fn test_scan_adaptive_timeout() -> Result<()> {
         let engine = create_test_engine();
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
@@ -712,7 +503,7 @@ mod tests {
         fs::create_dir(&src)?;
         fs::write(src.join("lib.rs"), "// lib")?;
 
-        let matches = engine.scan_with_timeout(root)?;
+        let matches = engine.scan(root)?;
         // Adaptive timeout may result in empty matches, just verify function completes
         let _ = matches;
 
@@ -720,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_with_timeout_medium_directory() -> Result<()> {
+    fn test_scan_medium_directory() -> Result<()> {
         let engine = create_test_engine();
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
@@ -731,14 +522,14 @@ mod tests {
             fs::write(dir.join("lib.rs"), "// lib")?;
         }
 
-        let matches = engine.scan_with_timeout(root)?;
+        let matches = engine.scan(root)?;
         assert!(!matches.is_empty());
 
         Ok(())
     }
 
     #[test]
-    fn test_scan_with_timeout_large_directory() -> Result<()> {
+    fn test_scan_large_directory() -> Result<()> {
         let engine = create_test_engine();
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
@@ -749,14 +540,14 @@ mod tests {
             fs::write(dir.join("lib.rs"), "// lib")?;
         }
 
-        let matches = engine.scan_with_timeout(root)?;
+        let matches = engine.scan(root)?;
         assert!(!matches.is_empty());
 
         Ok(())
     }
 
     #[test]
-    fn test_scan_with_timeout_very_large_directory() -> Result<()> {
+    fn test_scan_very_large_directory() -> Result<()> {
         let engine = create_test_engine();
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
@@ -767,31 +558,31 @@ mod tests {
             fs::write(dir.join("lib.rs"), "// lib")?;
         }
 
-        let matches = engine.scan_with_timeout(root)?;
+        let matches = engine.scan(root)?;
         assert!(!matches.is_empty());
 
         Ok(())
     }
 
     #[test]
-    fn test_scan_with_timeout_timeout_not_exceeded_immediately() -> Result<()> {
+    fn test_scan_timeout_not_exceeded_immediately() -> Result<()> {
         let engine = create_test_engine();
         let temp_dir = create_test_rust_project().map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        let matches = engine.scan_with_timeout(temp_dir.path())?;
+        let matches = engine.scan(temp_dir.path())?;
         assert!(!matches.is_empty());
 
         Ok(())
     }
 
     #[test]
-    fn test_scan_with_timeout_file_counter_thread_safe() -> Result<()> {
+    fn test_scan_file_counter_thread_safe() -> Result<()> {
         let engine = create_test_engine();
         let temp_dir = create_test_rust_project().map_err(|e| anyhow::anyhow!("{}", e))?;
 
         // Test that file counter works correctly with multiple sequential scans
         for _ in 0..4 {
-            let matches = engine.scan_with_timeout(temp_dir.path())?;
+            let matches = engine.scan(temp_dir.path())?;
             // File counter should work without panicking, results may vary
             let _ = matches;
         }
@@ -800,21 +591,10 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_with_timeout_timeout_exceeded_scenario() -> Result<()> {
+    fn test_scan_timeout_exceeded_scenario() -> Result<()> {
         let patterns = Arc::new(vec!["*.rs".to_string()]);
-        let rust_lang = Indicator::with_root_indicators(
-            "Rust".to_string(),
-            vec!["*.rs".to_string()],
-            "#dea584".to_string(),
-            "".to_string(),
-            1,
-            vec![],
-            vec![],
-        );
-
         let pattern_matcher = Arc::new(PatternMatcher::new());
-        let pattern_processor =
-            PatternProcessor::new(pattern_matcher, patterns, vec![Arc::new(rust_lang)]);
+        let pattern_processor = PatternProcessor::new(pattern_matcher, patterns);
 
         let engine = ScanningEngine::with_cache(pattern_processor, 1, None);
 
@@ -832,7 +612,7 @@ mod tests {
             }
         }
 
-        let matches = engine.scan_with_timeout(root)?;
+        let matches = engine.scan(root)?;
         // Should return some matches even if timeout occurred, but may be empty due to timeout
         // The important thing is that the function doesn't panic
         let _ = matches;

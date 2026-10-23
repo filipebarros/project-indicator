@@ -8,7 +8,11 @@ use std::path::PathBuf;
 pub struct Cli {
     pub path: Option<PathBuf>,
 
-    #[arg(long, default_value = "simple")]
+    #[arg(
+        long,
+        default_value = "simple",
+        help = "Output format: simple, full, json, debug"
+    )]
     pub format: String,
 
     #[arg(long, help = "Maximum depth to scan directories (default: 1)")]
@@ -26,6 +30,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Inspect, validate, or generate the configuration file
     Config {
         #[command(subcommand)]
         action: ConfigAction,
@@ -39,9 +44,13 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum ConfigAction {
+    /// Parse the active config file and report the exact error if any
     Validate,
+    /// Open the default config file in $EDITOR
     Edit,
+    /// List config file locations and the active configuration
     Show,
+    /// Write a config file from a built-in template
     Init {
         #[arg(long, help = "Use a specific template")]
         template: Option<String>,

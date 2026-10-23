@@ -306,8 +306,8 @@ mod windows_placeholder_tests {
     }
 }
 
-/// A symlinked source file must be visible to the full scan, not just the
-/// root fast path (which stats through symlinks and always saw them).
+/// A symlinked source file must be visible to the full scan, not just root
+/// discovery (which stats through symlinks and always saw them).
 #[test]
 fn test_scan_detects_symlinked_file() -> Result<(), Box<dyn std::error::Error>> {
     use project_indicator::detection::DetectionEngine;
@@ -321,7 +321,7 @@ fn test_scan_detects_symlinked_file() -> Result<(), Box<dyn std::error::Error>> 
     std::os::unix::fs::symlink(&real_file, project.path().join("linked.rs"))?;
 
     // Glob-only language with no root indicators, so detection must go
-    // through the full scan rather than the exact-name fast path
+    // through the full scan rather than upward root discovery
     let language = Indicator::new(
         "Rust".to_string(),
         vec!["*.rs".to_string()],

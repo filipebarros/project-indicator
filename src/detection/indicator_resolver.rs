@@ -38,7 +38,7 @@ impl IndicatorResolver {
 
                 for file in matched_files {
                     for pattern in &indicator.files {
-                        if simple_wildcard_match(pattern, &file.filename) {
+                        if simple_wildcard_match(&file.filename, pattern) {
                             let item = if pattern.contains("*.") {
                                 EvidenceItem::indicator_file(
                                     file.relative_path.clone(),
@@ -147,7 +147,7 @@ impl IndicatorResolver {
         if !high_confidence.is_empty() {
             self.resolve_by_score(indicators, high_confidence)
         } else if !medium_confidence.is_empty() {
-            self.resolve_by_priority_with_score_override(indicators, medium_confidence)
+            self.resolve_by_priority_then_score(indicators, medium_confidence)
         } else {
             self.resolve_by_priority(indicators, low_confidence)
         }
@@ -174,7 +174,7 @@ impl IndicatorResolver {
             .unwrap_or(candidates[0].0)
     }
 
-    fn resolve_by_priority_with_score_override(
+    fn resolve_by_priority_then_score(
         &self,
         indicators: &[Arc<Indicator>],
         candidates: Vec<(usize, f32)>,
@@ -185,15 +185,9 @@ impl IndicatorResolver {
             let current_indicator = &indicators[best_candidate.0];
             let candidate_indicator = &indicators[candidate.0];
 
-            if candidate_indicator.priority < current_indicator.priority {
-                best_candidate = candidate;
-            } else if candidate_indicator.priority == current_indicator.priority.saturating_add(1) {
-                let score_diff = candidate.1 - best_candidate.1;
-                if score_diff > 0.4 {
-                    best_candidate = candidate;
-                }
-            } else if candidate_indicator.priority == current_indicator.priority
-                && candidate.1 > best_candidate.1
+            if candidate_indicator.priority < current_indicator.priority
+                || (candidate_indicator.priority == current_indicator.priority
+                    && candidate.1 > best_candidate.1)
             {
                 best_candidate = candidate;
             }
@@ -430,7 +424,8 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_by_priority_with_score_override() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_resolve_by_priority_then_score_priority_wins() -> Result<(), Box<dyn std::error::Error>>
+    {
         let resolver = IndicatorResolver::new();
         let indicators = vec![
             Arc::new(create_test_indicator_with_priority(
@@ -444,35 +439,25 @@ mod tests {
                 2,
             )),
         ];
-        let candidates = vec![(0, 0.5), (1, 0.95)];
+        let candidates = vec![(0, 0.5), (1, 0.79)];
 
-        let result = resolver.resolve_by_priority_with_score_override(&indicators, candidates);
-        assert_eq!(
-            result, 1,
-            "Score should override priority when difference >0.4"
-        );
+        let result = resolver.resolve_by_priority_then_score(&indicators, candidates);
+        assert_eq!(result, 0, "Lower priority number wins regardless of score");
         Ok(())
     }
 
     #[test]
-    fn test_resolve_by_priority_with_score_no_override() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_resolve_by_priority_then_score_tie_broken_by_score(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let resolver = IndicatorResolver::new();
         let indicators = vec![
-            Arc::new(create_test_indicator_with_priority(
-                "Higher Priority",
-                vec!["*.a"],
-                1,
-            )),
-            Arc::new(create_test_indicator_with_priority(
-                "Lower Priority",
-                vec!["*.b"],
-                2,
-            )),
+            Arc::new(create_test_indicator_with_priority("A", vec!["*.a"], 2)),
+            Arc::new(create_test_indicator_with_priority("B", vec!["*.b"], 2)),
         ];
-        let candidates = vec![(0, 0.6), (1, 0.8)];
+        let candidates = vec![(0, 0.6), (1, 0.7)];
 
-        let result = resolver.resolve_by_priority_with_score_override(&indicators, candidates);
-        assert_eq!(result, 0, "Priority should win when score difference <0.4");
+        let result = resolver.resolve_by_priority_then_score(&indicators, candidates);
+        assert_eq!(result, 1, "Equal priority: higher score wins");
         Ok(())
     }
 
@@ -513,6 +498,38 @@ mod tests {
 
         let result = resolver.resolve_by_confidence_tiers(&indicators, candidates);
         assert!(result == 0 || result == 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_wildcard_matched_files_recorded_as_evidence() -> Result<(), Box<dyn std::error::Error>>
+    {
+        // Files matched via glob patterns must appear in indicator evidence:
+        // the persistent cache builds its mtime-invalidation set from it
+        let resolver = IndicatorResolver::new();
+        let indicators = vec![Arc::new(create_test_indicator_with_priority(
+            "Rust",
+            vec!["*.rs"],
+            5,
+        ))];
+        let files = vec![create_test_file("main.rs", "main.rs")];
+        let mut evidence = DetectionEvidence::new();
+
+        let result = resolver.detect_indicator_with_conflict_resolution_and_evidence(
+            &indicators,
+            &files,
+            &mut evidence,
+        );
+
+        assert!(result.is_some());
+        assert!(
+            evidence
+                .indicator_evidence
+                .iter()
+                .any(|e| e.file_path.contains("main.rs")),
+            "glob-matched file must be recorded as evidence, got: {:?}",
+            evidence.indicator_evidence
+        );
         Ok(())
     }
 

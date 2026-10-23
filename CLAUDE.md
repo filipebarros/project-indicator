@@ -126,7 +126,7 @@ The detection flow follows this path:
 
 7. **OutputFormatter** (`src/output/`) - Result rendering
    - Multiple formats: simple, full, json, debug
-   - Renderer pattern for extensibility
+   - One render function per format
 
 ### Caching Architecture
 
@@ -150,7 +150,8 @@ The remaining caches live and die within a single detection run:
 
 - **Location**: `src/detection/caches/file_system.rs` + `src/performance.rs`
 - **Purpose**: Memoize file existence checks and metadata (size, modified time)
-  so the fast path, scanner, and framework detector don't repeat `stat` calls
+  so root discovery, the scanner, and the framework detector don't repeat
+  `stat` calls
 
 #### 2. ParsedFileCache (Per-detection run)
 
@@ -230,7 +231,7 @@ This ensures cache hits across the entire pipeline.
 ### 4. Performance Considerations
 
 - **Cache key design**: Use `PathBuf` with `Borrow<Path>` trait to avoid allocations
-- **Early termination**: Check confidence scores; stop scanning when threshold met
+- **Bound the scan**: The match cap and adaptive timeout keep worst-case scans cheap
 - **Memory limits**: File size limits prevent memory exhaustion (1MB per file)
 
 ### 5. Testing Requirements
@@ -288,18 +289,15 @@ simple_framework(
 
 ## Adding New Output Format
 
-1. Create renderer: `src/output/render.rs`
+1. Add a render function in `src/output/render.rs`:
 
 ```rust
-pub struct MyRenderer;
-impl Render for MyRenderer {
-    fn render(&self, result: &DetectionResult, config: &DisplayConfig) -> String {
-        // Implementation
-    }
+pub fn render_mine(result: &DetectionResult, config: &DisplayConfig) -> String {
+    // Implementation
 }
 ```
 
-2. Add to `OutputFormat` enum: `src/output/formatters.rs`
+2. Add an `OutputFormat` variant and match arm: `src/output/formatters.rs`
 3. Update CLI help and documentation
 
 ## Adding New Detection Strategy
@@ -324,7 +322,8 @@ For ecosystem-specific dependency matching:
 
 ### Performance targets
 
-- Shell prompt scenario: < 10µs (currently ~3µs)
+- Shell prompt scenario (warm cache hit): < 10ms wall including process
+  spawn (~5ms measured; in-process cache lookup itself is microseconds)
 - Typical detection: < 10ms (currently 3-5ms)
 - Worst case (deep nesting): < 50ms (currently 20-30ms)
 

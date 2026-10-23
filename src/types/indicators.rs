@@ -1,7 +1,8 @@
-//! Project and root indicator types with pattern matching capabilities.
+//! Project and root indicator types.
 //!
-//! This module defines the core types for language detection and project root discovery,
-//! including optimized pattern matching with regex compilation and caching.
+//! This module defines the core types for language detection and project
+//! root discovery. Pattern matching itself lives in the detection engine
+//! (`PatternMatcher`), which matches file basenames against these patterns.
 //!
 //! # Overview
 //!
@@ -21,15 +22,6 @@
 //! - **Priority** - For conflict resolution when multiple languages match
 //! - **Visual identity** - Icon and color for display
 //!
-//! ## Pattern Matching
-//!
-//! The module uses sophisticated pattern matching with:
-//!
-//! - **Wildcard support** - `*.rs`, `*.py`, `src/**/*.ts`
-//! - **Exact matches** - `Cargo.toml`, `package.json`
-//! - **Regex compilation** - Patterns are compiled once and cached in `OnceLock`
-//! - **Performance optimization** - Thread-safe lazy compilation
-//!
 //! ## Example: Defining a Language
 //!
 //! ```rust
@@ -43,13 +35,7 @@
 //!     1,
 //!     vec![Ecosystem::Npm],
 //! );
-//!
-//! // Test pattern matching
-//! let files = vec![
-//!     "src/App.tsx".to_string(),
-//!     "tsconfig.json".to_string(),
-//! ];
-//! assert!(typescript.matches_files(&files));
+//! assert_eq!(typescript.priority, 1);
 //! ```
 //!
 //! # Root Indicators
@@ -86,41 +72,9 @@
 //! // Context determines base priority
 //! assert_eq!(cargo_indicator.context.base_priority(), 0.9);
 //! ```
-//!
-//! # Pattern Compilation & Caching
-//!
-//! For performance, patterns are compiled once and cached:
-//!
-//! ```rust
-//! use project_indicator::types::Indicator;
-//!
-//! let rust = Indicator::new(
-//!     "Rust".to_string(),
-//!     vec!["*.rs".to_string(), "Cargo.toml".to_string()],
-//!     "#DEA584".to_string(),
-//!     "".to_string(),
-//!     1,
-//!     vec![],
-//! );
-//!
-//! // First call compiles patterns and caches them
-//! assert!(rust.matches_files(&["main.rs".to_string()]));
-//!
-//! // Subsequent calls use cached compiled patterns
-//! assert!(rust.matches_files(&["lib.rs".to_string()]));
-//! ```
-//!
-//! The `OnceLock<HashMap<String, Option<Regex>>>` ensures:
-//! - Patterns are compiled exactly once
-//! - Thread-safe access without locks after initialization
-//! - Zero runtime overhead after first compilation
 
-use crate::patterns::{pattern_to_regex, simple_wildcard_match};
 use crate::types::Ecosystem;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::OnceLock;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum IndicatorContext {
@@ -165,7 +119,7 @@ pub struct RootIndicator {
     pub alternative_group: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Indicator {
     pub name: String,
@@ -177,20 +131,6 @@ pub struct Indicator {
     pub ecosystems: Vec<Ecosystem>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub root_indicators: Vec<RootIndicator>,
-    #[serde(skip)]
-    compiled_patterns: OnceLock<HashMap<String, Option<Regex>>>,
-}
-
-impl PartialEq for Indicator {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-            && self.files == other.files
-            && self.color == other.color
-            && self.icon == other.icon
-            && self.priority == other.priority
-            && self.ecosystems == other.ecosystems
-            && self.root_indicators == other.root_indicators
-    }
 }
 
 impl Default for Indicator {
@@ -203,7 +143,6 @@ impl Default for Indicator {
             priority: 1,
             ecosystems: Vec::new(),
             root_indicators: Vec::new(),
-            compiled_patterns: OnceLock::new(),
         }
     }
 }
@@ -217,16 +156,7 @@ impl Indicator {
         priority: u8,
         ecosystems: Vec<Ecosystem>,
     ) -> Self {
-        Self {
-            name,
-            files,
-            color,
-            icon,
-            priority,
-            ecosystems,
-            root_indicators: Vec::new(),
-            compiled_patterns: OnceLock::new(),
-        }
+        Self::with_root_indicators(name, files, color, icon, priority, ecosystems, Vec::new())
     }
 
     pub fn with_root_indicators(
@@ -246,36 +176,6 @@ impl Indicator {
             priority,
             ecosystems,
             root_indicators,
-            compiled_patterns: OnceLock::new(),
         }
-    }
-    fn get_compiled_patterns(&self) -> &HashMap<String, Option<Regex>> {
-        self.compiled_patterns.get_or_init(|| {
-            let mut patterns = HashMap::new();
-            for pattern in &self.files {
-                let regex_opt = if pattern.contains('*') {
-                    pattern_to_regex(pattern).and_then(|s| Regex::new(&s).ok())
-                } else {
-                    None
-                };
-                patterns.insert(pattern.clone(), regex_opt);
-            }
-            patterns
-        })
-    }
-    pub fn matches_files(&self, files: &[String]) -> bool {
-        let compiled_patterns = self.get_compiled_patterns();
-
-        files.iter().any(|file| {
-            self.files.iter().any(|pattern| {
-                if let Some(Some(re)) = compiled_patterns.get(pattern) {
-                    re.is_match(file)
-                } else if pattern.contains('*') {
-                    simple_wildcard_match(file, pattern)
-                } else {
-                    file == pattern
-                }
-            })
-        })
     }
 }

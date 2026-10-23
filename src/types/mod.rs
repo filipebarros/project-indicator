@@ -39,49 +39,6 @@ mod tests {
     }
 
     #[test]
-    fn test_file_matching() -> Result<(), Box<dyn std::error::Error>> {
-        let indicator = Indicator::new(
-            "TypeScript".to_string(),
-            vec!["package.json".to_string(), "*.ts".to_string()],
-            "#3178C6".to_string(),
-            "󰛦".to_string(),
-            1,
-            vec![],
-        );
-
-        let files = vec![
-            "package.json".to_string(),
-            "src/main.ts".to_string(),
-            "README.md".to_string(),
-        ];
-
-        assert!(indicator.matches_files(&files));
-
-        let no_match_files = vec!["README.md".to_string(), "main.py".to_string()];
-        assert!(!indicator.matches_files(&no_match_files));
-        Ok(())
-    }
-
-    #[test]
-    fn test_wildcard_matching() -> Result<(), Box<dyn std::error::Error>> {
-        let indicator = Indicator::new(
-            "C++".to_string(),
-            vec!["*.cpp".to_string(), "*.h".to_string()],
-            "#00599C".to_string(),
-            "".to_string(),
-            1,
-            vec![],
-        );
-
-        let files = vec!["main.cpp".to_string(), "header.h".to_string()];
-        assert!(indicator.matches_files(&files));
-
-        let no_match = vec!["main.py".to_string()];
-        assert!(!indicator.matches_files(&no_match));
-        Ok(())
-    }
-
-    #[test]
     fn test_detection_result_empty() -> Result<(), Box<dyn std::error::Error>> {
         let result = DetectionResult::empty();
         assert!(result.is_empty());

@@ -11,7 +11,7 @@ pub fn create_lua_indicator() -> Indicator {
             "init.lua".to_string(),
             "main.lua".to_string(),
             "conf.lua".to_string(),
-            "rockspec".to_string(),
+            "*.rockspec".to_string(),
             "luarocks.lock".to_string(),
         ],
         "#000080".to_string(),
@@ -21,7 +21,7 @@ pub fn create_lua_indicator() -> Indicator {
         vec![
             root_indicator("init.lua", 0.95, IndicatorContext::LanguageRoot),
             root_indicator("main.lua", 0.9, IndicatorContext::LanguageRoot),
-            root_indicator("rockspec", 0.85, IndicatorContext::LanguageRoot),
+            root_indicator("*.rockspec", 0.85, IndicatorContext::LanguageRoot),
             root_indicator("luarocks.lock", 0.8, IndicatorContext::LanguageRoot),
         ],
     )

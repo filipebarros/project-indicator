@@ -221,7 +221,7 @@ fn benchmark_upward_traversal(c: &mut Criterion) -> Result<(), Box<dyn std::erro
 fn benchmark_indicator_strength(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let mut group = c.benchmark_group("indicator_strength");
 
-    // Project with strong root indicators (Cargo.toml found via upward traversal)
+    // Project with a strong root indicator (Cargo.toml in the scanned directory)
     let temp_dir_strong =
         TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
     fs::write(

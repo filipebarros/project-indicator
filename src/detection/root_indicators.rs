@@ -1,9 +1,13 @@
 use crate::constants::*;
+use crate::patterns::simple_wildcard_match;
 use crate::performance::FileSystemCache;
 use crate::types::{DetectionConfig, Indicator};
 use crate::Result;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+/// Directory markers that satisfy `require_vcs_root`
+const VCS_MARKERS: [&str; 3] = [DOT_GIT, ".hg", ".svn"];
 
 #[derive(Debug, Clone)]
 pub struct FoundRootIndicator {
@@ -30,6 +34,10 @@ impl RootIndicatorEngine {
 
     /// Walk up directory tree to find project root
     /// Returns (root_path, matched_indicator) or None if not found
+    ///
+    /// With `require_vcs_root`, an indicator root is accepted only when a
+    /// VCS marker (.git/.hg/.svn) exists in the same directory or any
+    /// ancestor within the traversal bound (monorepo subprojects count).
     pub fn find_project_root(
         &self,
         start_path: &Path,
@@ -45,6 +53,8 @@ impl RootIndicatorEngine {
 
         let mut current = start_path.to_path_buf();
         let mut levels = 0;
+        // A root found below here that still awaits a VCS marker above it
+        let mut vcs_pending: Option<(PathBuf, FoundRootIndicator)> = None;
 
         log::debug!(
             "Starting upward traversal from {} (max {} levels)",
@@ -55,16 +65,29 @@ impl RootIndicatorEngine {
         while levels < self.config.max_upward_traversal {
             log::trace!("Checking for project root at: {}", current.display());
 
-            // Optimization: Check for root indicators BEFORE boundary check
-            // Most projects have indicators before hitting boundaries
-            if let Some(indicator) = self.check_root_indicators_at_path(&current, file_cache)? {
-                log::info!(
-                    "Found project root at {} (pattern: {}, certainty: {:.2})",
-                    current.display(),
-                    indicator.pattern,
-                    indicator.certainty
+            if vcs_pending.is_some() {
+                // The deepest indicator root wins; higher levels are only
+                // consulted for the VCS marker that validates it
+                if self.has_vcs_marker(&current, file_cache) {
+                    return Ok(vcs_pending.take());
+                }
+            } else if let Some(indicator) =
+                self.check_root_indicators_at_path(&current, file_cache)?
+            {
+                if !self.config.require_vcs_root || self.has_vcs_marker(&current, file_cache) {
+                    log::info!(
+                        "Found project root at {} (pattern: {}, certainty: {:.2})",
+                        current.display(),
+                        indicator.pattern,
+                        indicator.certainty
+                    );
+                    return Ok(Some((current, indicator)));
+                }
+                log::trace!(
+                    "require_vcs_root: deferring root at {} until a VCS marker is found above",
+                    current.display()
                 );
-                return Ok(Some((current, indicator)));
+                vcs_pending = Some((current.clone(), indicator));
             }
 
             let parent = match current.parent() {
@@ -103,17 +126,9 @@ impl RootIndicatorEngine {
         Ok(None)
     }
 
-    /// Check if a directory is a boundary that we shouldn't traverse past or scan
-    /// Returns true for home directory, /Users, /home, system directories
-    ///
-    /// Public wrapper for use by DetectionEngine
-    pub fn is_boundary_directory_public(&self, path: &Path) -> bool {
-        self.is_boundary_directory(path)
-    }
-
-    /// Check if a directory is a boundary that we shouldn't traverse past
-    /// Returns true for home directory, /Users, /home, system directories
-    fn is_boundary_directory(&self, path: &Path) -> bool {
+    /// Check if a directory is a boundary that we shouldn't traverse past or
+    /// scan from: home directory, /Users, /home, system directories
+    pub fn is_boundary_directory(&self, path: &Path) -> bool {
         if let Some(ref home) = self.cached_home_dir {
             if path == home {
                 return true;
@@ -132,10 +147,16 @@ impl RootIndicatorEngine {
         )
     }
 
-    /// Check for indicator root files at a specific path. A VCS marker
-    /// (.git/.hg/.svn) is never itself a root candidate; it is consulted
-    /// only as the require_vcs_root gate, which demands the marker in the
-    /// same directory as the indicator file.
+    /// Any VCS marker directly in this directory
+    fn has_vcs_marker(&self, path: &Path, file_cache: &Arc<FileSystemCache>) -> bool {
+        VCS_MARKERS
+            .iter()
+            .any(|marker| file_cache.exists(&path.join(marker)))
+    }
+
+    /// Check for indicator root files at a specific path. VCS markers are
+    /// never root candidates themselves; `find_project_root` consults them
+    /// separately for the require_vcs_root gate.
     fn check_root_indicators_at_path(
         &self,
         path: &Path,
@@ -143,29 +164,41 @@ impl RootIndicatorEngine {
     ) -> Result<Option<FoundRootIndicator>> {
         let mut found_indicators = Vec::new();
 
-        // Must be checked before the indicator loop: the strong-indicator
-        // early exit below would otherwise bypass it.
-        if self.config.require_vcs_root {
-            let has_vcs = [".git", ".hg", ".svn"]
-                .iter()
-                .any(|marker| file_cache.exists(&path.join(marker)));
-            if !has_vcs {
-                log::trace!(
-                    "require_vcs_root: no VCS marker at {}, rejecting root candidates",
-                    path.display()
-                );
-                return Ok(None);
-            }
-        }
-
         // Optimization: Check high-priority indicators first for early exit
         let mut indicators_by_priority: Vec<_> = self.indicators.iter().collect();
         indicators_by_priority.sort_by_key(|indicator| indicator.priority);
 
+        // Wildcard patterns (*.csproj, *.kt) can't be checked with a literal
+        // stat; they need the directory listing, built at most once per level
+        let mut listing: Option<Vec<String>> = None;
+
         for indicator in indicators_by_priority {
             for root_indicator in &indicator.root_indicators {
-                let indicator_path = path.join(&root_indicator.pattern);
-                if file_cache.exists(&indicator_path) {
+                // The concrete filename that satisfied the pattern — for
+                // literals it is the pattern itself
+                let matched_name = if root_indicator.pattern.contains('*') {
+                    listing
+                        .get_or_insert_with(|| {
+                            std::fs::read_dir(path)
+                                .map(|entries| {
+                                    entries
+                                        .filter_map(|e| e.ok())
+                                        .filter_map(|e| e.file_name().into_string().ok())
+                                        .collect()
+                                })
+                                .unwrap_or_default()
+                        })
+                        .iter()
+                        .find(|name| simple_wildcard_match(name, &root_indicator.pattern))
+                        .cloned()
+                } else {
+                    file_cache
+                        .exists(&path.join(&root_indicator.pattern))
+                        .then(|| root_indicator.pattern.clone())
+                };
+
+                if let Some(matched_name) = matched_name {
+                    let indicator_path = path.join(&matched_name);
                     let certainty = self.calculate_indicator_certainty(
                         &indicator_path,
                         root_indicator,
@@ -176,8 +209,10 @@ impl RootIndicatorEngine {
                     if certainty > 0.2 {
                         let specificity = self.get_pattern_specificity(&root_indicator.pattern);
 
+                        // Report the concrete file: evidence and the cache's
+                        // mtime-invalidation set need a real path
                         let found_root_indicator = FoundRootIndicator {
-                            pattern: root_indicator.pattern.clone(),
+                            pattern: matched_name,
                             certainty,
                             indicator: indicator.clone(),
                             specificity,
@@ -485,6 +520,74 @@ mod tests {
     }
 
     #[test]
+    fn test_find_project_root_wildcard_root_indicator() -> Result<(), Box<dyn std::error::Error>> {
+        // C#/Java/Kotlin declare wildcard root indicators (*.csproj, *.kt);
+        // upward traversal must match them against real filenames, not stat
+        // a literal file named "*.csproj"
+        let indicators = vec![create_test_indicator_with_indicators(
+            "C#",
+            vec![("*.csproj", 0.95)],
+        )];
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            DetectionConfig::default(),
+        );
+
+        let temp_dir = TempDir::new()?;
+        fs::write(temp_dir.path().join("MyApp.csproj"), "<Project/>")?;
+        let subdir = temp_dir.path().join("src");
+        fs::create_dir(&subdir)?;
+
+        let file_cache = Arc::new(FileSystemCache::new());
+        let result = engine.find_project_root(&subdir, &file_cache)?;
+
+        let (root_path, found) = match result {
+            Some(r) => r,
+            None => panic!("wildcard root indicator must fire during upward traversal"),
+        };
+        assert_eq!(root_path, temp_dir.path());
+        assert_eq!(
+            found.pattern, "MyApp.csproj",
+            "the concrete matched file must be reported, not the glob"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_project_root_vcs_root_at_ancestor() -> Result<(), Box<dyn std::error::Error>> {
+        // Monorepo layout: .git at the repo root, manifest in a subproject.
+        // require_vcs_root accepts an indicator root when a VCS marker exists
+        // at that directory OR any ancestor within the traversal bound.
+        let indicators = vec![create_test_indicator_with_indicators(
+            "Rust",
+            vec![("Cargo.toml", 0.95)],
+        )];
+        let config = DetectionConfig {
+            require_vcs_root: true,
+            ..Default::default()
+        };
+        let engine =
+            RootIndicatorEngine::from_parts(indicators.into_iter().map(Arc::new).collect(), config);
+
+        let temp_dir = TempDir::new()?;
+        fs::create_dir(temp_dir.path().join(".git"))?;
+        let proj = temp_dir.path().join("projA");
+        fs::create_dir(&proj)?;
+        fs::write(proj.join("Cargo.toml"), "[package]\nname = \"test\"")?;
+
+        let file_cache = Arc::new(FileSystemCache::new());
+        let result = engine.find_project_root(&proj, &file_cache)?;
+
+        let (root_path, found) = match result {
+            Some(r) => r,
+            None => panic!("manifest under a VCS ancestor must satisfy require_vcs_root"),
+        };
+        assert_eq!(root_path, proj, "project root is the manifest's directory");
+        assert_eq!(found.pattern, "Cargo.toml");
+        Ok(())
+    }
+
+    #[test]
     fn test_find_project_root_vcs_root_accepts_non_git_vcs(
     ) -> Result<(), Box<dyn std::error::Error>> {
         // The flag is require_vcs_root, not require_git_root: Mercurial and
@@ -518,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_boundary_directory_public() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_is_boundary_directory() -> Result<(), Box<dyn std::error::Error>> {
         let indicators = vec![create_test_indicator_with_indicators(
             "Rust",
             vec![("Cargo.toml", 0.95)],
@@ -529,17 +632,17 @@ mod tests {
         );
 
         if let Some(home) = dirs::home_dir() {
-            assert!(engine.is_boundary_directory_public(&home));
+            assert!(engine.is_boundary_directory(&home));
         }
 
-        assert!(engine.is_boundary_directory_public(Path::new("/")));
+        assert!(engine.is_boundary_directory(Path::new("/")));
         // /usr and /System may not be considered boundary on all systems
         // Just test that the function doesn't panic
-        let _ = engine.is_boundary_directory_public(Path::new("/usr"));
-        let _ = engine.is_boundary_directory_public(Path::new("/System"));
+        let _ = engine.is_boundary_directory(Path::new("/usr"));
+        let _ = engine.is_boundary_directory(Path::new("/System"));
 
         let temp_dir = TempDir::new()?;
-        assert!(!engine.is_boundary_directory_public(temp_dir.path()));
+        assert!(!engine.is_boundary_directory(temp_dir.path()));
 
         Ok(())
     }

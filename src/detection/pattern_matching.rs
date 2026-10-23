@@ -72,7 +72,9 @@ impl PatternMatcher {
         }
 
         if let Some(ext) = pattern.strip_prefix("*.") {
-            return self.optimized_extension_match(file_name, ext);
+            if !ext.contains('*') {
+                return self.optimized_extension_match(file_name, ext);
+            }
         }
 
         if let Some(prefix) = pattern.strip_suffix("*") {
@@ -101,16 +103,10 @@ impl PatternMatcher {
         file_name[start_pos + 1..] == *extension
     }
 
-    /// Optimized prefix matching using slice comparison.
-    ///
-    /// Checks if a filename starts with the given prefix.
-    /// Uses efficient slice comparison for prefix patterns like "test*".
+    /// Prefix matching for patterns like "test*". `starts_with` compares
+    /// bytes without slicing, so multibyte filenames can't panic it.
     fn optimized_prefix_match(&self, file_name: &str, prefix: &str) -> bool {
-        if file_name.len() < prefix.len() {
-            return false;
-        }
-
-        file_name[..prefix.len()] == *prefix
+        file_name.starts_with(prefix)
     }
 }
 
@@ -200,5 +196,21 @@ mod tests {
         assert!(matcher.matches_pattern("test", "test*"));
         assert!(matcher.matches_pattern("test", "*test"));
         Ok(())
+    }
+
+    #[test]
+    fn test_prefix_match_multibyte_filename_does_not_panic() {
+        let matcher = create_matcher();
+        // "tüüxyz"[..4] would split the second ü — must not panic
+        assert!(!matcher.matches_pattern("tüüxyz", "test*"));
+        assert!(matcher.matches_pattern("türkçe.rs", "tü*"));
+    }
+
+    #[test]
+    fn test_dot_prefix_pattern_with_second_wildcard() {
+        let matcher = create_matcher();
+        // "*.x" fast path must not swallow patterns with more wildcards
+        assert!(matcher.matches_pattern("foo.test.js", "*.test.*"));
+        assert!(!matcher.matches_pattern("footest.js", "*.test.*"));
     }
 }

@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 #[derive(Debug)]
 pub enum ConfigError {
     ValidationError { message: String },
-    UnsupportedVersion { version: String },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -13,9 +12,6 @@ impl std::fmt::Display for ConfigError {
         match self {
             ConfigError::ValidationError { message } => {
                 write!(f, "Invalid configuration: {message}")
-            }
-            ConfigError::UnsupportedVersion { version } => {
-                write!(f, "Unsupported configuration version: {version}")
             }
         }
     }

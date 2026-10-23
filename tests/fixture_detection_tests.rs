@@ -65,6 +65,8 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("kotlin", "Kotlin", &["Ktor"]),
     ("kotlin-spring", "Kotlin", &["Spring Boot"]),
     ("lua", "Lua", &["LÖVE"]),
+    // Real rockspecs are named <name>-<version>.rockspec
+    ("lua-rockspec-only", "Lua", &[]),
     ("nix", "Nix", &[]),
     ("php-laravel", "PHP", &["Laravel"]),
     ("php-phpunit-only", "PHP", &[]),

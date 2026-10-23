@@ -133,6 +133,50 @@ fn test_binary_end_to_end_cache_behavior() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+/// Scan evidence is relative to the DISCOVERED project root, which can be an
+/// ancestor of the invocation directory. The cache must track those files at
+/// their real location: editing/removing one must invalidate the entry for
+/// the subdirectory invocation.
+#[test]
+fn test_subdir_invocation_invalidates_on_root_evidence_change(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = react_project()?;
+    let subdir = project.path().join("app");
+    fs::create_dir(&subdir)?;
+    let home = TempDir::new()?;
+
+    let run = || -> Result<std::process::Output, std::io::Error> {
+        Command::new(env!("CARGO_BIN_EXE_project-indicator"))
+            .args([subdir.to_str().unwrap_or("."), "--format", "json"])
+            .env("HOME", home.path())
+            .env("XDG_CACHE_HOME", home.path().join("xdg-cache"))
+            .env("XDG_CONFIG_HOME", home.path().join("xdg-config"))
+            .output()
+    };
+
+    let first = run()?;
+    let first_out = String::from_utf8_lossy(&first.stdout);
+    assert!(
+        first_out.contains("React"),
+        "subdir invocation must detect the root project, got: {first_out}"
+    );
+
+    // Editing a root manifest that is scan/framework evidence (NOT the
+    // root-discovery indicator, which is tracked absolutely) must still
+    // invalidate the subdirectory's cache entry
+    fs::write(
+        project.path().join("package.json"),
+        r#"{"name": "app", "dependencies": {"vue": "^3.4.0"}}"#,
+    )?;
+    let second = run()?;
+    let second_out = String::from_utf8_lossy(&second.stdout);
+    assert!(
+        second_out.contains("Vue") && !second_out.contains("React"),
+        "stale cache served after root evidence changed, got: {second_out}"
+    );
+    Ok(())
+}
+
 /// A config file that fails to parse (old schema, garbage) must not break
 /// detection: the binary falls back to the built-in template and exits 0.
 #[test]

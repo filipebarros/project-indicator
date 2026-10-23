@@ -118,11 +118,7 @@ impl DetectionEngine {
         let file_cache = cache_manager.file_existence_cache();
 
         let scanning_engine = ScanningEngine::with_cache(
-            PatternProcessor::new(
-                pattern_matcher.clone(),
-                pattern_compiler.unique_patterns(),
-                indicators.clone(),
-            ),
+            PatternProcessor::new(pattern_matcher.clone(), pattern_compiler.unique_patterns()),
             detection_config.max_depth,
             Some(file_cache),
         );
@@ -147,10 +143,7 @@ impl DetectionEngine {
 
         // Safety check: Don't scan from boundary directories (home, system dirs)
         // These are too large and not meaningful to scan
-        if self
-            .root_indicator_engine
-            .is_boundary_directory_public(path)
-        {
+        if self.root_indicator_engine.is_boundary_directory(path) {
             log::warn!(
                 "Refusing to scan from boundary directory: {}",
                 path.display()

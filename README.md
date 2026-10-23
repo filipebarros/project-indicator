@@ -10,7 +10,6 @@ Project Indicator is a high-performance replacement for shell-based project dete
 ## Key Features
 
 - 🔒 **Enhanced Security**: EDITOR validation to prevent shell injection attacks
-- ⚙️ **Configurable Thresholds**: Fine-tune detection with configurable performance thresholds
 - 🧪 **Property-Based Testing**: Extensive test suite including rigorous property-based testing with proptest
 - 🔗 **Symlink Handling**: Comprehensive edge case handling for Unix symlinks
 
@@ -20,7 +19,7 @@ Project Indicator is a high-performance replacement for shell-based project dete
 - 🏗️ **Framework Recognition**: Detects 37 popular frameworks like React, Svelte, Axum, Django, Gin, Spring Boot, Laravel, Rails
 - ⚡ **Blazing Performance**: 3-5ms typical detection
 - 🎨 **Multiple Output Formats**: Simple, Full, JSON, and Debug formats
-- 🔧 **Comprehensive CLI**: Configuration management and debugging tools
+- 🔧 **CLI**: Configuration and cache management, plus a full-evidence debug format
 - 🧠 **Advanced Detection**: Confidence-based scoring with weighted root indicators
 - 🔧 **Configuration Templates**: Pre-built templates for different development environments
 - 🐚 **Shell Integration**: Ready-to-use integration scripts for Bash, Zsh, and Fish

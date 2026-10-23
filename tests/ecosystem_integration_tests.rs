@@ -1,6 +1,6 @@
 use project_indicator::detection::caches::ParsedFileCache;
 use project_indicator::detection::matchers::ecosystems::{
-    check_elixir_ecosystem, check_kotlin_ecosystem, check_swift_ecosystem,
+    check_elixir_ecosystem, check_java_ecosystem, check_swift_ecosystem,
 };
 use std::path::PathBuf;
 
@@ -20,7 +20,7 @@ fn test_kotlin_ktor_detection() -> anyhow::Result<()> {
         "kotlinx-coroutines-core".to_string(),
     ];
 
-    let (found_deps, evidence) = check_kotlin_ecosystem(&path, &dependencies, &cache)?;
+    let (found_deps, evidence) = check_java_ecosystem(&path, &dependencies, &cache)?;
 
     assert!(!found_deps.is_empty(), "Should find Kotlin dependencies");
     assert!(
@@ -45,7 +45,7 @@ fn test_kotlin_missing_dependency() -> anyhow::Result<()> {
     let path = fixture_path("kotlin");
     let dependencies = vec!["spring-boot".to_string()];
 
-    let (found_deps, _evidence) = check_kotlin_ecosystem(&path, &dependencies, &cache)?;
+    let (found_deps, _evidence) = check_java_ecosystem(&path, &dependencies, &cache)?;
 
     assert!(
         found_deps.is_empty(),
@@ -169,7 +169,7 @@ fn test_empty_dependency_list() -> anyhow::Result<()> {
     let path = fixture_path("kotlin");
     let dependencies = vec![];
 
-    let (found_deps, _evidence) = check_kotlin_ecosystem(&path, &dependencies, &cache)?;
+    let (found_deps, _evidence) = check_java_ecosystem(&path, &dependencies, &cache)?;
 
     assert!(
         found_deps.is_empty(),
@@ -189,7 +189,7 @@ fn test_all_ecosystems_with_partial_matches() -> anyhow::Result<()> {
         "ktor-server-core".to_string(),
         "nonexistent-dep".to_string(),
     ];
-    let (found, _) = check_kotlin_ecosystem(&kotlin_path, &kotlin_deps, &cache)?;
+    let (found, _) = check_java_ecosystem(&kotlin_path, &kotlin_deps, &cache)?;
     assert_eq!(
         found.len(),
         1,
