@@ -77,7 +77,6 @@ mod tests {
         let display_config = DisplayConfig::default();
 
         let output = render(&result, OutputFormat::Simple, &display_config);
-        // Icon wrapped in ANSI truecolor from the framework color (#61DAFB)
         assert_eq!(output, "\x1b[38;2;97;218;251m⚛️\x1b[0m");
     }
 

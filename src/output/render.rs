@@ -7,7 +7,6 @@ pub fn render_simple(result: &DetectionResult) -> String {
         return String::new();
     }
 
-    // Color the icon with ANSI truecolor so prompts show the configured color
     if color_enabled(std::env::var_os("NO_COLOR").as_deref()) {
         if let Some((r, g, b)) = result.display_color().and_then(hex_to_rgb) {
             return format!("\x1b[38;2;{r};{g};{b}m{icon}\x1b[0m");

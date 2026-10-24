@@ -1,8 +1,3 @@
-//! Property-based tests using proptest
-//!
-//! These tests verify invariants across randomized inputs to catch edge cases
-//! that might be missed by example-based testing.
-
 use project_indicator::config::{Config, TemplateGenerator};
 use project_indicator::detection::confidence_scorer::ConfidenceScorer;
 use project_indicator::patterns::matches_pattern;
@@ -10,7 +5,6 @@ use project_indicator::types::{DetectionResult, MatchedFile};
 use proptest::prelude::*;
 use std::sync::Arc;
 
-/// Strategy for generating filenames
 fn filename_strategy() -> impl Strategy<Value = String> {
     ("[a-z]{3,10}", "[a-z]{2,4}").prop_map(|(name, ext)| format!("{}.{}", name, ext))
 }
@@ -47,7 +41,6 @@ proptest! {
     }
 }
 
-/// Test that pattern matching works correctly with edge case patterns
 #[test]
 fn test_edge_case_patterns() {
     let config = ProptestConfig::with_cases(100);

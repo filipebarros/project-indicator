@@ -130,9 +130,7 @@ impl RootIndicatorEngine {
         None
     }
 
-    /// Check if a directory is a boundary that we shouldn't traverse past or
-    /// scan from: home directory, any filesystem root (`/`, `C:\`, …), and
-    /// per-OS system directories
+    /// Home, any filesystem root, and per-OS system directories: never traversed or scanned
     pub fn is_boundary_directory(&self, path: &Path) -> bool {
         if self.cached_home_dir.as_deref() == Some(path) {
             return true;
@@ -155,7 +153,6 @@ impl RootIndicatorEngine {
         )
     }
 
-    /// Any VCS marker directly in this directory
     fn has_vcs_marker(&self, path: &Path, file_cache: &FileSystemCache) -> bool {
         VCS_MARKERS
             .iter()
@@ -219,7 +216,6 @@ impl RootIndicatorEngine {
                         &ts_deps,
                     );
 
-                    // Use lower threshold for root discovery (0.2) to catch more indicators
                     if certainty > 0.2 {
                         let specificity = self.get_pattern_specificity(&root_indicator.pattern);
 
@@ -232,8 +228,7 @@ impl RootIndicatorEngine {
                             specificity,
                         };
 
-                        // Optimization: If we found a very strong indicator (certainty > 0.9 and high specificity),
-                        // return immediately without checking other indicators
+                        // Strong, specific match: skip the remaining indicators
                         if certainty > 0.9 && specificity >= 8 {
                             log::trace!(
                                 "Found strong root indicator '{}' (certainty: {:.2}, specificity: {}), early exit",
@@ -617,7 +612,8 @@ mod tests {
         );
 
         if let Some(home) = std::env::home_dir() {
-            assert!(engine.is_boundary_directory(&home));
+            // scan paths are canonical (`\\?\C:\…` on Windows), so is the cached home
+            assert!(engine.is_boundary_directory(&home.canonicalize().unwrap_or(home)));
         }
 
         #[cfg(windows)]

@@ -97,8 +97,6 @@ impl ConfigParser {
     fn load_fallback_config() -> Result<Config> {
         log::info!("No configuration file found, using built-in full template");
 
-        // Use the full built-in template so all languages and framework
-        // detection work out of the box without running `config init`
         crate::config::TemplateGenerator::generate_template(Some("full"))
     }
     pub fn default_save_path() -> Result<PathBuf> {
@@ -226,7 +224,6 @@ priority = 5
         assert!(language_names.contains(&&"TypeScript".to_string()));
         assert!(language_names.contains(&&"Python".to_string()));
 
-        // The fallback must include framework detection out of the box
         assert!(
             !config.frameworks.is_empty(),
             "fallback config should define frameworks"

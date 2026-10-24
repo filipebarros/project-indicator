@@ -674,8 +674,6 @@ mod tests {
         Ok(())
     }
 
-    // ---- false positives: comments and look-alikes ----
-
     #[test]
     fn test_pom_commented_dependency_is_ignored() {
         let pom = "<!-- <artifactId>spring-boot-starter-web</artifactId> -->";
@@ -773,8 +771,6 @@ mod tests {
         let sbt = "// libraryDependencies += \"com.typesafe.akka\" %% \"akka-http\" % \"10\"";
         assert!(!check_sbt_dependencies(sbt, &names(&["akka-http"])));
     }
-
-    // ---- false negatives ----
 
     #[test]
     fn test_cargo_renamed_dependency_matches_the_real_package() -> Result<(), toml::de::Error> {

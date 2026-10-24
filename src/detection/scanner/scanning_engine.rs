@@ -148,8 +148,6 @@ impl ScanningEngine {
         }
         let (entry_count, root_names) = Self::list_root(path);
 
-        // Safety: Skip scanning extremely large directories (likely home dir or system dir)
-        // This prevents scanning from places like ~, /usr, etc.
         if entry_count > EXTREME_SIZE_THRESHOLD {
             log::debug!(
                 "Directory {} has {} immediate entries (>{} threshold), likely not a project root. Skipping scan.",
@@ -180,11 +178,8 @@ impl ScanningEngine {
         Ok(outcome)
     }
 
-    /// Per-entry pre-filter: `true` when the entry is a file whose name passes
-    /// the pattern pre-filter.
     fn prefilter_entry(pattern_processor: &PatternProcessor, entry: &ignore::DirEntry) -> bool {
-        // Check file type first before any string operations. Symlinks are
-        // resolved to their targets so a symlinked manifest counts as a file
+        // Symlinks are resolved to their targets so a symlinked manifest counts as a file
         // (matching the extreme-size root check, which stats through
         // symlinks); broken links resolve to nothing and are skipped.
         let is_file = entry
@@ -205,8 +200,6 @@ impl ScanningEngine {
         true
     }
 
-    /// Add `entry` to `matched` if it is a file matching a pattern and not
-    /// already present.
     fn collect_match(&self, entry: &ignore::DirEntry, base: &Path, matched: &mut Vec<MatchedFile>) {
         if !Self::prefilter_entry(&self.pattern_processor, entry) {
             return;

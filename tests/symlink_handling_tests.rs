@@ -1,11 +1,3 @@
-//! Symlink handling tests
-//!
-//! Tests for correct handling of symbolic links in project detection:
-//! - Detection through symlinks to project directories
-//! - Circular symlink cycle detection and prevention
-//! - Multiple symlink chains
-//! - Broken symlink handling
-
 #[cfg(unix)]
 mod unix_symlink_tests {
     use project_indicator::config::TemplateGenerator;
@@ -76,7 +68,6 @@ edition = "2021"
             "[package]\nname = \"test\"\nversion = \"0.1.0\"",
         )?;
 
-        // Create a circular symlink: link1 -> link2 -> link1
         let link1 = project_dir.join("link1");
         let link2 = project_dir.join("link2");
 
@@ -144,7 +135,6 @@ edition = "2021"
             "[package]\nname = \"test\"\nversion = \"0.1.0\"",
         )?;
 
-        // Create a chain of symlinks: link3 -> link2 -> link1 -> real_project
         let link1 = temp_dir.path().join("link1");
         let link2 = temp_dir.path().join("link2");
         let link3 = temp_dir.path().join("link3");
@@ -244,7 +234,6 @@ edition = "2021"
         let elapsed = start.elapsed();
 
         assert_eq!(detected_name(&result)?, "Rust");
-        // Should complete in under 5 seconds even with many symlinks
         assert!(
             elapsed.as_secs() < 5,
             "Detection took too long: {:?}",
