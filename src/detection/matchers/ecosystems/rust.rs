@@ -20,6 +20,9 @@ pub fn check_rust_ecosystem(
         if manifest.get("package").is_some() {
             return Ok(None);
         }
+    } else if parsed_cache.is_present(path.join(CARGO_TOML))? {
+        // present but unparseable: still the authority, not the lockfile
+        return Ok(None);
     }
 
     first_hit(

@@ -177,7 +177,7 @@ fn test_all_fixtures_detect_as_expected() -> Result<(), Box<dyn std::error::Erro
     let engine = DetectionEngine::with_config(
         config.indicators.clone(),
         config.frameworks.clone(),
-        config.detection.clone(),
+        config.detection,
     );
 
     let mut failures = Vec::new();
@@ -191,8 +191,7 @@ fn test_all_fixtures_detect_as_expected() -> Result<(), Box<dyn std::error::Erro
         let language = result
             .indicator
             .as_ref()
-            .map(|l| l.name.as_str())
-            .unwrap_or("<none>");
+            .map_or("<none>", |l| l.name.as_str());
         if language != *expected_language {
             failures.push(format!(
                 "{name}: expected language {expected_language}, got {language}"

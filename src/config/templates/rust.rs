@@ -63,7 +63,7 @@ pub fn rust_frameworks() -> Vec<Framework> {
             "Tauri",
             &[Ecosystem::Cargo, Ecosystem::Npm],
             &["tauri.conf.json", "src-tauri/tauri.conf.json"],
-            None,
+            Some("e8bb"),
             Some("#24c8db"),
             2,
         ),

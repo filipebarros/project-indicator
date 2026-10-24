@@ -52,7 +52,7 @@ fn test_cached_result_renders_identically() -> Result<(), Box<dyn std::error::Er
         .ok_or("expected cache hit")?;
 
     for format in [OutputFormat::Simple, OutputFormat::Json, OutputFormat::Full] {
-        let fresh_out = render(&fresh, format.clone(), &config.display);
+        let fresh_out = render(&fresh, format, &config.display);
         let cached_out = render(&cached, format, &display);
         assert_eq!(fresh_out, cached_out);
     }

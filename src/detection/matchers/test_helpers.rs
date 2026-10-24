@@ -1,6 +1,6 @@
 #[cfg(test)]
 pub mod helpers {
-    pub fn create_test_indicator(name: &str, patterns: Vec<&str>) -> crate::types::Indicator {
+    pub fn create_test_indicator(name: &str, patterns: &[&str]) -> crate::types::Indicator {
         crate::types::Indicator::new(
             name.to_string(),
             patterns.iter().map(|s| s.to_string()).collect(),
@@ -13,7 +13,7 @@ pub mod helpers {
 
     pub fn create_test_indicator_with_priority(
         name: &str,
-        patterns: Vec<&str>,
+        patterns: &[&str],
         priority: u8,
     ) -> crate::types::Indicator {
         crate::types::Indicator::new(

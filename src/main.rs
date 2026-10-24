@@ -12,7 +12,7 @@ use commands::{handle_cache_command, handle_config_command, handle_detect_comman
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e:#}");
         std::process::exit(1);
     }
 }

@@ -4,6 +4,7 @@
 
 use std::time::{Duration, Instant};
 
+#[derive(Clone, Copy)]
 pub struct TimeoutManager {
     start_time: Instant,
     timeout_duration: Duration,

@@ -25,29 +25,6 @@ Or manually:
 - **PowerShell** — dot-source `project-indicator.ps1` from your `$PROFILE`
   (wraps your existing `prompt` function).
 
-## Starship
-
-If you use [Starship](https://starship.rs), you don't need these hooks:
-
-```toml
-[custom.project_indicator]
-command = "project-indicator"
-when = true
-shell = ["sh"]
-```
-
-## tmux
-
-Warm invocations are served from the persistent cache, so the binary is cheap
-enough to call from the status line:
-
-```tmux
-set -g status-right '#(cd #{pane_current_path} && NO_COLOR=1 project-indicator) | %H:%M'
-```
-
-(`NO_COLOR=1` because tmux renders its own colors; drop it if your status-right
-passes ANSI through.)
-
 ## Cache management
 
 ```bash

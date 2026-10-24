@@ -19,6 +19,9 @@ pub fn check_php_ecosystem(
         if manifest.get("require").is_some() || manifest.get("require-dev").is_some() {
             return Ok(None);
         }
+    } else if parsed_cache.is_present(path.join(COMPOSER_JSON))? {
+        // present but unparseable: still the authority, not the lockfile
+        return Ok(None);
     }
 
     let Some(lock) = parsed_cache.get_json_value(path.join(COMPOSER_LOCK))? else {

@@ -16,7 +16,7 @@ Project Indicator is a high-performance replacement for shell-based project dete
 - 🎨 **Multiple Output Formats**: Simple, Full, JSON, and Debug formats
 - 🧠 **Advanced Detection**: Confidence-based scoring with weighted root indicators
 - 🔧 **Configuration Templates**: Pre-built templates for different development environments
-- 🐚 **Shell Integration**: Ready-to-use hooks for Bash, Zsh, Fish and PowerShell (plus Starship and tmux snippets)
+- 🐚 **Shell Integration**: Ready-to-use hooks for Bash, Zsh, Fish and PowerShell
 
 ## Quick Start
 
@@ -219,9 +219,8 @@ Run `project-indicator config validate` to see the exact error, or
 ## Shell Integration
 
 Thin prompt hooks for **fish, zsh, bash and PowerShell** live in
-[`shell-integration/`](shell-integration/README.md) (plus Starship and tmux
-snippets). Each hook just calls `project-indicator` and prints its output;
-caching is done by the binary itself.
+[`shell-integration/`](shell-integration/README.md). Each hook just calls `project-indicator` and
+prints its output; caching is done by the binary itself.
 
 ```bash
 shell-integration/install.sh fish   # or zsh | bash

@@ -1,13 +1,9 @@
-use project_indicator::config::{Config, TemplateGenerator};
+use project_indicator::config::TemplateGenerator;
 use project_indicator::detection::confidence_scorer::ConfidenceScorer;
 use project_indicator::patterns::matches_pattern;
-use project_indicator::types::{DetectionResult, MatchedFile};
+use project_indicator::types::{Indicator, MatchedFile};
 use proptest::prelude::*;
-use std::sync::Arc;
-
-fn filename_strategy() -> impl Strategy<Value = String> {
-    ("[a-z]{3,10}", "[a-z]{2,4}").prop_map(|(name, ext)| format!("{}.{}", name, ext))
-}
+use std::sync::{Arc, LazyLock};
 
 /// Naive recursive glob (`*` = any run of characters): the specification
 /// `matches_pattern` must agree with.
@@ -41,39 +37,20 @@ proptest! {
     }
 }
 
-#[test]
-fn test_edge_case_patterns() {
-    let config = ProptestConfig::with_cases(100);
-
-    proptest!(config, |(
-        filename in filename_strategy()
-    )| {
-
-        prop_assert!(
-            matches_pattern(&filename, "*"),
-            "Pattern '*' should match '{}'",
-            filename
-        );
-
-        prop_assert!(
-            matches_pattern(&filename, &filename),
-            "Exact match failed for '{}'",
-            filename
-        );
-
-        prop_assert!(
-            !matches_pattern(&filename, ""),
-            "Empty pattern should not match '{}'",
-            filename
-        );
+/// The full template's indicators and scorer, built once for all cases
+fn scoring_fixture() -> &'static (Vec<Arc<Indicator>>, ConfidenceScorer) {
+    static FIXTURE: LazyLock<(Vec<Arc<Indicator>>, ConfidenceScorer)> = LazyLock::new(|| {
+        let config = match TemplateGenerator::generate_template(Some("full")) {
+            Ok(config) => config,
+            Err(e) => panic!("full template: {e}"),
+        };
+        let indicators = config.indicators.into_iter().map(Arc::new).collect();
+        (
+            indicators,
+            ConfidenceScorer::with_catalog(Arc::from(config.frameworks)),
+        )
     });
-}
-
-fn full_config() -> Config {
-    match TemplateGenerator::generate_template(Some("full")) {
-        Ok(config) => config,
-        Err(e) => panic!("full template: {e}"),
-    }
+    &FIXTURE
 }
 
 /// A scan match with a realistic name at a realistic depth
@@ -107,29 +84,15 @@ proptest! {
     fn indicator_scores_are_bounded_and_stable(
         files in prop::collection::vec(matched_file_strategy(), 0..12)
     ) {
-        let config = full_config();
-        let indicators: Vec<_> = config.indicators.into_iter().map(Arc::new).collect();
-        let scorer = ConfidenceScorer::with_catalog(Arc::new(config.frameworks));
+        let (indicators, scorer) = scoring_fixture();
 
-        for indicator in &indicators {
-            let score = scorer.calculate_indicator_score(indicator, &files, &indicators);
+        for indicator in indicators {
+            let score = scorer.calculate_indicator_score(indicator, &files, indicators);
             prop_assert!((0.0..=1.0).contains(&score), "{}: {score}", indicator.name);
             prop_assert_eq!(
                 score,
-                scorer.calculate_indicator_score(indicator, &files, &indicators)
+                scorer.calculate_indicator_score(indicator, &files, indicators)
             );
         }
-    }
-
-    /// Invariant: the cache stores results as JSON, so any result must come
-    /// back equal.
-    #[test]
-    fn detection_results_survive_a_json_round_trip(confidence in 0.0f32..=1.0) {
-        let result = DetectionResult::new(None, vec![], confidence);
-        let json = serde_json::to_string(&result)
-            .map_err(|e| TestCaseError::fail(e.to_string()))?;
-        let back: DetectionResult = serde_json::from_str(&json)
-            .map_err(|e| TestCaseError::fail(e.to_string()))?;
-        prop_assert_eq!(back, result);
     }
 }

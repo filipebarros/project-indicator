@@ -95,7 +95,7 @@ fn test_builtin_full_template_detects_frameworks_out_of_box(
     let engine = DetectionEngine::with_config(
         config.indicators.clone(),
         config.frameworks.clone(),
-        config.detection.clone(),
+        config.detection,
     );
     let result = engine.detect(temp_dir.path())?;
 

@@ -20,9 +20,10 @@ pub fn check_node_ecosystem(
         return Ok(Some(PACKAGE_JSON.to_owned()));
     }
 
-    // package.json is authoritative: lockfiles also list transitive packages
-    // (vitest pulls in vite), so they are only a fallback without a manifest
-    if manifest.is_none() {
+    // package.json is authoritative, even when it does not parse: lockfiles
+    // also list transitive packages (vitest pulls in vite), so they are only
+    // a fallback without a manifest
+    if manifest.is_none() && !parsed_cache.is_present(path.join(PACKAGE_JSON))? {
         let found = match parsed_cache.get_json_value(path.join(PACKAGE_LOCK_JSON))? {
             Some(json) => hit(
                 PACKAGE_LOCK_JSON,

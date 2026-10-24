@@ -1,22 +1,6 @@
 use super::Config;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-#[derive(Debug)]
-pub enum ConfigError {
-    ValidationError { message: String },
-}
-
-impl std::fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConfigError::ValidationError { message } => {
-                write!(f, "Invalid configuration: {message}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ConfigError {}
 fn first_existing(paths: Vec<PathBuf>) -> Option<PathBuf> {
     paths.into_iter().find(|p| p.exists())
 }
@@ -207,7 +191,7 @@ priority = 5
         fs::write(&present_b, "x")?;
 
         assert_eq!(
-            first_existing(vec![missing.clone(), present_a.clone(), present_b.clone()]),
+            first_existing(vec![missing.clone(), present_a.clone(), present_b]),
             Some(present_a)
         );
         assert_eq!(first_existing(vec![missing]), None);

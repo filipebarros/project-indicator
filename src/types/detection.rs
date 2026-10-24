@@ -11,7 +11,6 @@ pub enum EvidenceType {
     ManifestFile,
     FrameworkDependency,
     RootIndicator,
-    DirectoryStructure,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -72,22 +71,20 @@ impl EvidenceItem {
 pub struct ConfidenceFactor {
     pub factor_type: String,
     pub value: f32,
-    pub weight: f32,
     pub description: String,
 }
 
 impl ConfidenceFactor {
-    pub fn new(factor_type: String, value: f32, weight: f32, description: String) -> Self {
+    pub fn new(factor_type: String, value: f32, description: String) -> Self {
         Self {
             factor_type,
             value,
-            weight,
             description,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct DetectionEvidence {
     pub indicator_evidence: Vec<EvidenceItem>,
     pub framework_evidence: Vec<EvidenceItem>,
@@ -117,20 +114,6 @@ impl DetectionEvidence {
     /// cache would have to stat them all on every hit.
     pub const MAX_WATCHED_DIRS: usize = 256;
 
-    pub fn new() -> Self {
-        Self {
-            indicator_evidence: Vec::new(),
-            framework_evidence: Vec::new(),
-            root_discovery: Vec::new(),
-            confidence_factors: Vec::new(),
-            files_scanned: 0,
-            total_scan_time_ms: 0,
-            scan_truncated: false,
-            watched_dirs: Vec::new(),
-            read_files: Vec::new(),
-        }
-    }
-
     /// Two indicators matching the same file by the same pattern (JavaScript
     /// and TypeScript both claim package.json) produce one row, not two
     pub fn add_indicator_evidence(&mut self, evidence: EvidenceItem) {
@@ -157,12 +140,6 @@ impl DetectionEvidence {
     }
 }
 
-impl Default for DetectionEvidence {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DetectionResult {
     pub indicator: Option<Arc<Indicator>>,
@@ -181,7 +158,7 @@ impl DetectionResult {
             indicator,
             frameworks,
             confidence,
-            evidence: DetectionEvidence::new(),
+            evidence: DetectionEvidence::default(),
         }
     }
 
@@ -204,11 +181,10 @@ impl DetectionResult {
     }
     pub fn best_framework(&self) -> Option<&FrameworkMatch> {
         self.frameworks.iter().min_by(|a, b| {
-            a.framework.priority.cmp(&b.framework.priority).then(
-                b.confidence
-                    .partial_cmp(&a.confidence)
-                    .unwrap_or(std::cmp::Ordering::Equal),
-            )
+            a.framework
+                .priority
+                .cmp(&b.framework.priority)
+                .then(b.confidence.total_cmp(&a.confidence))
         })
     }
     /// Icon and color are resolved as a PAIR from the same source: if the
@@ -246,7 +222,7 @@ mod tests {
 
     #[test]
     fn test_identical_evidence_is_recorded_once() {
-        let mut evidence = DetectionEvidence::new();
+        let mut evidence = DetectionEvidence::default();
         let item =
             || EvidenceItem::manifest_file("package.json".into(), "package.json".into(), 0.8);
         evidence.add_indicator_evidence(item());
@@ -256,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_evidence_for_a_different_pattern_is_kept() {
-        let mut evidence = DetectionEvidence::new();
+        let mut evidence = DetectionEvidence::default();
         for pattern in ["*.js", "a.*"] {
             evidence.add_indicator_evidence(EvidenceItem::indicator_file(
                 "a.js".into(),

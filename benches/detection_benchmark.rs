@@ -143,10 +143,10 @@ fn benchmark_monorepo_detection(c: &mut Criterion) -> Result<(), Box<dyn std::er
     let engine = DetectionEngine::new(config.indicators, config.frameworks);
 
     for (idx, path) in project_paths.iter().enumerate() {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| format!("project_{}", idx));
+        let name = path.file_name().map_or_else(
+            || format!("project_{}", idx),
+            |n| n.to_string_lossy().to_string(),
+        );
         group.bench_with_input(BenchmarkId::new("subproject", &name), &idx, |b, _| {
             b.iter(|| {
                 if let Err(e) = engine.detect(black_box(path)) {
@@ -300,7 +300,7 @@ fn benchmark_cache_effectiveness(c: &mut Criterion) -> Result<(), Box<dyn std::e
         );
     });
 
-    c.bench_function("repeated_detection_with_cache", |b| {
+    c.bench_function("repeated_detection", |b| {
         b.iter(|| {
             for _ in 0..5 {
                 if let Err(e) = engine.detect(black_box(temp_dir.path())) {

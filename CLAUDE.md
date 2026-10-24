@@ -54,7 +54,7 @@ cargo doc --no-deps --document-private-items
 cargo bench
 
 # Run specific benchmark
-cargo bench --bench component_benchmark  # pattern matching + per-run caches
+cargo bench --bench component_benchmark  # pattern matching + file parse caches
 cargo bench --bench detection_benchmark  # end-to-end engine.detect scenarios
 
 # Dry run (compile but don't run)
@@ -239,8 +239,8 @@ Caching Architecture); components call the function directly.
 ### 3. Error Handling
 
 - Use `anyhow::Result<T>` for functions that can fail
-- Custom error types implement `Display`/`Error` by hand (see `ConfigError`);
-  don't add an error-derive dependency for the few variants this crate needs
+- No custom error types: `anyhow::bail!` / `anyhow!` carry the message; don't
+  add an error-derive dependency
 - Always provide context: `.context("Failed to parse config")?`
 
 ### 4. Performance Considerations
@@ -252,7 +252,6 @@ Caching Architecture); components call the function directly.
 ### 5. Testing Requirements
 
 - Property-based tests for invariants (use `proptest`)
-- Concurrent stress tests for cache implementations
 - Edge case coverage (symlinks, large projects, empty directories)
 - All new features require tests
 
@@ -331,9 +330,8 @@ For ecosystem-specific dependency matching:
 1. **Benchmark first**: Use `cargo bench` to establish baseline
 2. **Profile**: Run with `cargo bench --bench detection_benchmark`
 3. **Cache aggressively**: But measure cache overhead vs benefit
-4. **Prefer Arc over Clone**: For shared state across threads
-5. **Plain std maps**: per-run caches are `Mutex<HashMap>` (detection is single-threaded; hold the lock only for a lookup/insert, never across I/O) — dashmap was benchmarked as ~3% faster per lookup, not worth a dependency
-6. **Document complexity**: Add Big-O notation comments for algorithms
+4. **Plain std maps**: per-run caches are `RefCell<HashMap>` (a detection run is single-threaded and the caches are built inside `detect`, so they are `!Sync`; keep each borrow to a single lookup/insert, never across I/O or another cache call)
+5. **Document complexity**: Add Big-O notation comments for algorithms
 
 ### Performance targets
 

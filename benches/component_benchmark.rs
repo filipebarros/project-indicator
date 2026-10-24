@@ -1,10 +1,9 @@
 //! Component micro-benchmarks: pattern matching, the per-run filesystem
 //! metadata cache, and the parsed-manifest cache.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use project_indicator::detection::caches::ParsedFileCache;
 use project_indicator::patterns::matches_pattern;
-use project_indicator::performance::FileSystemCache;
 use std::fs;
 use std::hint::black_box;
 use tempfile::TempDir;
@@ -61,85 +60,6 @@ fn benchmark_pattern_matching(c: &mut Criterion) {
     });
 
     group.finish();
-}
-
-fn create_test_files(count: usize) -> Result<TempDir, Box<dyn std::error::Error>> {
-    let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
-
-    for i in 0..count {
-        let file_path = temp_dir.path().join(format!("file_{}.txt", i));
-        std::fs::write(&file_path, format!("content {}", i))
-            .map_err(|e| format!("Failed to write test file: {}", e))?;
-    }
-
-    Ok(temp_dir)
-}
-
-fn benchmark_cache_hits(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
-    let mut group = c.benchmark_group("cache_hits");
-    let cache = FileSystemCache::default();
-    let temp_dir = create_test_files(100)?;
-
-    for i in 0..100 {
-        let path = temp_dir.path().join(format!("file_{}.txt", i));
-        cache.exists(&path);
-    }
-
-    group.bench_function("sequential_100_files", |b| {
-        b.iter(|| {
-            for i in 0..100 {
-                let path = temp_dir.path().join(format!("file_{}.txt", i));
-                black_box(cache.exists(black_box(&path)));
-            }
-        });
-    });
-
-    group.finish();
-    Ok(())
-}
-
-fn benchmark_cache_misses(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
-    let mut group = c.benchmark_group("cache_misses");
-    let temp_dir = create_test_files(100)?;
-
-    group.bench_function("sequential_100_files", |b| {
-        b.iter(|| {
-            let cache = FileSystemCache::default(); // Fresh cache each time
-            for i in 0..100 {
-                let path = temp_dir.path().join(format!("file_{}.txt", i));
-                black_box(cache.exists(black_box(&path)));
-            }
-        });
-    });
-
-    group.finish();
-    Ok(())
-}
-
-fn benchmark_cache_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
-    let mut group = c.benchmark_group("cache_scaling");
-
-    for count in [10, 50, 100, 500].iter() {
-        let temp_dir = create_test_files(*count)?;
-        let cache = FileSystemCache::default();
-
-        for i in 0..*count {
-            let path = temp_dir.path().join(format!("file_{}.txt", i));
-            cache.exists(&path);
-        }
-
-        group.bench_with_input(BenchmarkId::from_parameter(count), count, |b, &count| {
-            b.iter(|| {
-                for i in 0..count {
-                    let path = temp_dir.path().join(format!("file_{}.txt", i));
-                    black_box(cache.exists(black_box(&path)));
-                }
-            });
-        });
-    }
-
-    group.finish();
-    Ok(())
 }
 
 fn benchmark_json_parsing(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
@@ -371,9 +291,6 @@ macro_rules! infallible {
     )+};
 }
 infallible!(
-    benchmark_cache_hits_wrapper => benchmark_cache_hits,
-    benchmark_cache_misses_wrapper => benchmark_cache_misses,
-    benchmark_cache_scaling_wrapper => benchmark_cache_scaling,
     benchmark_json_parsing_wrapper => benchmark_json_parsing,
     benchmark_toml_parsing_wrapper => benchmark_toml_parsing,
     benchmark_mixed_access_wrapper => benchmark_mixed_access,
@@ -383,9 +300,6 @@ infallible!(
 criterion_group!(
     benches,
     benchmark_pattern_matching,
-    benchmark_cache_hits_wrapper,
-    benchmark_cache_misses_wrapper,
-    benchmark_cache_scaling_wrapper,
     benchmark_json_parsing_wrapper,
     benchmark_toml_parsing_wrapper,
     benchmark_mixed_access_wrapper,

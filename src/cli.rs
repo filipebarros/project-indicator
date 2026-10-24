@@ -1,3 +1,4 @@
+use crate::output::OutputFormat;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -8,12 +9,8 @@ use std::path::PathBuf;
 pub struct Cli {
     pub path: Option<PathBuf>,
 
-    #[arg(
-        long,
-        default_value = "simple",
-        help = "Output format: simple, full, json, debug"
-    )]
-    pub format: String,
+    #[arg(long, value_enum, ignore_case = true, default_value = "simple")]
+    pub format: OutputFormat,
 
     #[arg(
         long,
@@ -67,7 +64,7 @@ pub enum ConfigAction {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone, Copy)]
 pub enum CacheAction {
     /// Delete all cached detection results
     Clear,
@@ -89,6 +86,23 @@ mod tests {
             })
         ));
         Ok(())
+    }
+
+    #[test]
+    fn test_format_is_case_insensitive() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["project-indicator", "--format", "JSON"])?;
+        assert_eq!(cli.format, OutputFormat::Json);
+        Ok(())
+    }
+
+    #[test]
+    fn test_unknown_format_error_lists_the_valid_ones() {
+        // the removed "compact" must be rejected, naming what is accepted
+        let err = match Cli::try_parse_from(["project-indicator", "--format", "compact"]) {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("removed format must not parse"),
+        };
+        assert!(err.contains("simple") && err.contains("json"), "{err}");
     }
 
     #[test]
@@ -168,7 +182,7 @@ mod tests {
         ])?;
 
         assert_eq!(cli.path, Some(PathBuf::from("/custom/path")));
-        assert_eq!(cli.format, "full");
+        assert_eq!(cli.format, OutputFormat::Full);
         assert!(matches!(
             cli.command,
             Some(Commands::Cache {

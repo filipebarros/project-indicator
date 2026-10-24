@@ -49,3 +49,10 @@ strip = true
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
+unused_self = "warn"
+needless_pass_by_value = "warn"
+unnecessary_wraps = "warn"
+map_unwrap_or = "warn"
+manual_let_else = "warn"
+redundant_clone = "warn"
+match_same_arms = "warn"

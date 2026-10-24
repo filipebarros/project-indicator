@@ -1,6 +1,6 @@
 use crate::output::render::{render_debug, render_full, render_json, render_simple};
 use crate::types::{DetectionResult, DisplayConfig};
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, clap::ValueEnum)]
 pub enum OutputFormat {
     Simple,
     Full,
@@ -8,22 +8,6 @@ pub enum OutputFormat {
     Debug,
 }
 
-impl std::str::FromStr for OutputFormat {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "simple" => Ok(OutputFormat::Simple),
-            "full" => Ok(OutputFormat::Full),
-            "json" => Ok(OutputFormat::Json),
-            "debug" => Ok(OutputFormat::Debug),
-            _ => Err(format!(
-                "Unknown output format: {}. Valid options: simple, full, json, debug",
-                s
-            )),
-        }
-    }
-}
 pub fn render(result: &DetectionResult, format: OutputFormat, config: &DisplayConfig) -> String {
     // `show_frameworks = false` hides frameworks from every user-facing
     // format (icon/color selection included); debug stays an unfiltered dump
@@ -31,10 +15,8 @@ pub fn render(result: &DetectionResult, format: OutputFormat, config: &DisplayCo
     let user_facing = if config.show_frameworks || result.frameworks.is_empty() {
         result
     } else {
-        hidden = DetectionResult {
-            frameworks: Vec::new(),
-            ..result.clone()
-        };
+        // user-facing formats never read the evidence, so don't copy it
+        hidden = DetectionResult::new(result.indicator.clone(), Vec::new(), result.confidence);
         &hidden
     };
 
@@ -50,26 +32,6 @@ pub fn render(result: &DetectionResult, format: OutputFormat, config: &DisplayCo
 mod tests {
     use super::*;
     use crate::test_utils::create_test_result;
-
-    #[test]
-    fn test_output_format_parsing() -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!("simple".parse::<OutputFormat>()?, OutputFormat::Simple);
-        assert_eq!("full".parse::<OutputFormat>()?, OutputFormat::Full);
-        assert_eq!("json".parse::<OutputFormat>()?, OutputFormat::Json);
-        assert_eq!("debug".parse::<OutputFormat>()?, OutputFormat::Debug);
-
-        // An unknown format (e.g. the removed "compact") must get an error
-        // that names the valid options
-        let err = match "compact".parse::<OutputFormat>() {
-            Err(err) => err,
-            Ok(_) => panic!("removed format must not parse"),
-        };
-        assert!(
-            err.contains("simple") && err.contains("json"),
-            "format error must list valid options, got: {err}"
-        );
-        Ok(())
-    }
 
     #[test]
     fn test_simple_format() {

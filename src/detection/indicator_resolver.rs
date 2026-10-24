@@ -12,7 +12,7 @@ pub struct IndicatorResolver {
 
 impl IndicatorResolver {
     /// A resolver that scores with the same framework catalog as the engine
-    pub fn with_catalog(frameworks: Arc<Vec<Framework>>) -> Self {
+    pub fn with_catalog(frameworks: Arc<[Framework]>) -> Self {
         Self {
             confidence_scorer: ConfidenceScorer::with_catalog(frameworks),
         }
@@ -36,7 +36,6 @@ impl IndicatorResolver {
                 evidence.add_confidence_factor(ConfidenceFactor::new(
                     format!("indicator_{}", indicator.name),
                     weighted_score,
-                    1.0,
                     format!("Score for {} indicator detection", indicator.name),
                 ));
 
@@ -69,7 +68,6 @@ impl IndicatorResolver {
             evidence.add_confidence_factor(ConfidenceFactor::new(
                 "no_indicator_found".to_string(),
                 0.0,
-                1.0,
                 "No indicator patterns matched".to_string(),
             ));
             return None;
@@ -79,7 +77,6 @@ impl IndicatorResolver {
 
         evidence.add_confidence_factor(ConfidenceFactor::new(
             "selected_indicator".to_string(),
-            1.0,
             1.0,
             format!(
                 "Selected {} as best indicator match",
@@ -111,7 +108,7 @@ impl IndicatorResolver {
                 (idx, base_score + context_bonus)
             })
             .collect();
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
 
         if scored[0].1 - scored[1].1 > 0.3 {
             return scored[0].0;
@@ -127,8 +124,7 @@ impl IndicatorResolver {
             .rev()
             .filter(|(_, score)| *score >= 0.5)
             .max_by(|a, b| {
-                a.1.partial_cmp(&b.1)
-                    .unwrap_or(std::cmp::Ordering::Equal)
+                a.1.total_cmp(&b.1)
                     .then(indicators[b.0].priority.cmp(&indicators[a.0].priority))
             });
         match confident {
@@ -156,18 +152,18 @@ mod tests {
         let indicators = vec![
             Arc::new(create_test_indicator_with_priority(
                 "Rust",
-                vec!["Cargo.toml", "*.rs"],
+                &["Cargo.toml", "*.rs"],
                 1,
             )),
             Arc::new(create_test_indicator_with_priority(
                 "JavaScript",
-                vec!["package.json", "*.js"],
+                &["package.json", "*.js"],
                 2,
             )),
         ];
 
         let files = vec![create_test_file("README.md", "README.md")];
-        let mut evidence = DetectionEvidence::new();
+        let mut evidence = DetectionEvidence::default();
 
         let result = resolver.detect_indicator_with_conflict_resolution_and_evidence(
             &indicators,
@@ -191,18 +187,18 @@ mod tests {
         let indicators = vec![
             Arc::new(create_test_indicator_with_priority(
                 "Rust",
-                vec!["Cargo.toml", "*.rs"],
+                &["Cargo.toml", "*.rs"],
                 1,
             )),
             Arc::new(create_test_indicator_with_priority(
                 "JavaScript",
-                vec!["package.json", "*.js"],
+                &["package.json", "*.js"],
                 2,
             )),
         ];
 
         let files = vec![create_test_file("Cargo.toml", "Cargo.toml")];
-        let mut evidence = DetectionEvidence::new();
+        let mut evidence = DetectionEvidence::default();
 
         let result = resolver.detect_indicator_with_conflict_resolution_and_evidence(
             &indicators,
@@ -228,7 +224,7 @@ mod tests {
         let resolver = IndicatorResolver::default();
         let indicators = vec![Arc::new(create_test_indicator_with_priority(
             "Rust",
-            vec!["*.rs"],
+            &["*.rs"],
             1,
         ))];
         let candidates = vec![(0, 0.8)];
@@ -242,10 +238,10 @@ mod tests {
     fn test_resolve_indicator_conflicts_clear_winner() {
         let resolver = IndicatorResolver::default();
         let indicators = vec![
-            Arc::new(create_test_indicator_with_priority("Rust", vec!["*.rs"], 1)),
+            Arc::new(create_test_indicator_with_priority("Rust", &["*.rs"], 1)),
             Arc::new(create_test_indicator_with_priority(
                 "JavaScript",
-                vec!["*.js"],
+                &["*.js"],
                 2,
             )),
         ];
@@ -264,13 +260,7 @@ mod tests {
     fn pick(priorities: &[u8], candidates: Vec<(usize, f32)>) -> usize {
         let indicators: Vec<Arc<Indicator>> = priorities
             .iter()
-            .map(|&priority| {
-                Arc::new(create_test_indicator_with_priority(
-                    "x",
-                    vec!["*.x"],
-                    priority,
-                ))
-            })
+            .map(|&priority| Arc::new(create_test_indicator_with_priority("x", &["*.x"], priority)))
             .collect();
         IndicatorResolver::default().resolve_indicator_conflicts(&indicators, candidates, &[])
     }
@@ -322,11 +312,11 @@ mod tests {
         let resolver = IndicatorResolver::default();
         let indicators = vec![Arc::new(create_test_indicator_with_priority(
             "Rust",
-            vec!["*.rs"],
+            &["*.rs"],
             5,
         ))];
         let files = vec![create_test_file("main.rs", "main.rs")];
-        let mut evidence = DetectionEvidence::new();
+        let mut evidence = DetectionEvidence::default();
 
         let result = resolver.detect_indicator_with_conflict_resolution_and_evidence(
             &indicators,
