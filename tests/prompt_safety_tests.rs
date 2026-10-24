@@ -3,7 +3,7 @@
 //! never panic.
 
 use std::fs;
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Output};
 use tempfile::TempDir;
 
 fn command(home: &TempDir) -> Command {
@@ -70,6 +70,8 @@ fn test_oversized_directory_is_silent() -> Result<(), Box<dyn std::error::Error>
 #[cfg(unix)]
 #[test]
 fn test_closed_stdout_does_not_panic() -> Result<(), Box<dyn std::error::Error>> {
+    use std::process::Stdio;
+
     let (home, project) = (TempDir::new()?, TempDir::new()?);
     fs::write(
         project.path().join("Cargo.toml"),
