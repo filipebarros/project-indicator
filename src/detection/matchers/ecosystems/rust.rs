@@ -20,10 +20,13 @@ pub fn check_rust_ecosystem<P: AsRef<Path>>(
             found_deps.extend(cargo_deps);
             evidence.push(CARGO_TOML.to_owned());
         }
-        // The manifest is authoritative: Cargo.lock also lists transitive
-        // crates (tonic pulls in axum), so it is only a fallback when
-        // there is no manifest
-        return Ok((found_deps, evidence));
+        // A manifest that declares dependencies is authoritative: Cargo.lock
+        // also lists transitive crates (tonic pulls in axum). A virtual
+        // workspace (no [package]) declares none itself — its members do —
+        // so the lockfile stays a fallback there.
+        if !found_deps.is_empty() || toml_value.get("package").is_some() {
+            return Ok((found_deps, evidence));
+        }
     }
 
     let cargo_lock_path = path.as_ref().join(CARGO_LOCK);

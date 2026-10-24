@@ -27,10 +27,13 @@ pub fn check_ruby_ecosystem<P: AsRef<Path>>(
         return Ok((found_deps, evidence));
     }
 
-    // The Gemfile is authoritative; Gemfile.lock lists transitive gems too,
-    // so it is only a fallback when there is no Gemfile
-    if path.as_ref().join(GEMFILE).is_file() {
-        return Ok((found_deps, evidence));
+    // A Gemfile that lists gems is authoritative; Gemfile.lock lists
+    // transitive gems too. A Gemfile with no `gem` lines (just `gemspec`)
+    // declares nothing itself, so the lockfile stays a fallback there.
+    if let Some(gemfile) = parsed_cache.get_file_content(path.as_ref().join(GEMFILE))? {
+        if gemfile.lines().any(|l| l.trim_start().starts_with("gem ")) {
+            return Ok((found_deps, evidence));
+        }
     }
 
     let gemfile_lock_path = path.as_ref().join(GEMFILE_LOCK);

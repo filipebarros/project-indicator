@@ -156,10 +156,6 @@ pub enum DetectionType {
     FileExists {
         files: Vec<String>,
     },
-    ConfigFile {
-        file: String,
-        keys: Vec<String>,
-    },
 }
 
 // NOTE: `detection` is an internally-tagged enum (`#[serde(tag = "type")]`),

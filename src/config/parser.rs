@@ -36,7 +36,7 @@ impl ConfigParser {
             paths.push(config_dir.join("project-indicator.toml"));
         }
 
-        if let Some(home_dir) = dirs::home_dir() {
+        if let Some(home_dir) = std::env::home_dir() {
             paths.push(home_dir.join(".project-indicator.toml"));
         }
 
@@ -48,7 +48,7 @@ impl ConfigParser {
             .ok()
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
-            .or_else(|| dirs::home_dir().map(|home| home.join(".config")))
+            .or_else(|| std::env::home_dir().map(|home| home.join(".config")))
     }
     /// The config file `load_default` would read, without parsing it.
     /// `None` means detection runs on the built-in fallback config.

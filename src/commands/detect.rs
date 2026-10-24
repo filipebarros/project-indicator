@@ -1,7 +1,7 @@
 use project_indicator::{
     cache::PersistentCache,
     cli::Cli,
-    config::{Config, ConfigParser},
+    config::ConfigParser,
     detection::DetectionEngine,
     output::{render, OutputFormat},
     Result,
@@ -30,14 +30,13 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
     if let Some(cache) = &cache {
         if let Some((result, display)) = cache.load(&path, config_path.as_deref()) {
             // Cache hit: render from the cached result and display snapshot,
-            // skipping config parsing and engine construction. Note that
-            // tracking snapshots are not recorded for cache hits.
+            // skipping config parsing and engine construction.
             println!("{}", render(&result, format, &display));
             return Ok(());
         }
     }
 
-    let config = Config::load_default()?;
+    let config = ConfigParser::load_default()?;
     let mut detection_config = config.detection;
 
     if let Some(max_depth) = cli.max_depth {
@@ -51,7 +50,8 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
 
     let display_config = config.display;
 
-    if let Some(cache) = &cache {
+    // A timed-out scan is a partial, load-dependent sample: never persist it
+    if let (Some(cache), false) = (&cache, result.evidence.scan_truncated) {
         cache.store(&path, config_path.as_deref(), &result, &display_config);
     }
 

@@ -1,29 +1,18 @@
-use dashmap::DashMap;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
-/// Initial capacity for the DashMap cache.
+/// Initial capacity for the cache map.
 ///
 /// Typical projects touch 50-200 paths during a detection run; pre-allocating
 /// avoids early rehashing without over-allocating.
 const INITIAL_CACHE_CAPACITY: usize = 128;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct CachedMetadata {
     pub exists: bool,
     pub is_file: bool,
-    pub is_dir: bool,
-}
-
-impl CachedMetadata {
-    pub fn new(exists: bool, is_file: bool, is_dir: bool) -> Self {
-        Self {
-            exists,
-            is_file,
-            is_dir,
-        }
-    }
 }
 
 /// Per-run memoization of `fs::metadata` lookups.
@@ -33,78 +22,51 @@ impl CachedMetadata {
 /// naturally bounded by the scan, and the process exits when the run ends.
 #[derive(Debug, Default)]
 pub struct FileSystemCache {
-    metadata_cache: DashMap<PathBuf, CachedMetadata>,
-    hits: AtomicU64,
-    misses: AtomicU64,
+    metadata_cache: Mutex<HashMap<PathBuf, CachedMetadata>>,
 }
 
 impl FileSystemCache {
     pub fn new() -> Self {
         Self {
-            metadata_cache: DashMap::with_capacity(INITIAL_CACHE_CAPACITY),
-            hits: AtomicU64::new(0),
-            misses: AtomicU64::new(0),
+            metadata_cache: Mutex::new(HashMap::with_capacity(INITIAL_CACHE_CAPACITY)),
         }
     }
 
-    pub fn get_metadata(&self, path: &Path) -> Option<CachedMetadata> {
-        // DashMap supports &Path lookups via the Borrow trait, avoiding a
-        // PathBuf allocation for cache hits (the common case)
-        if let Some(cached) = self.metadata_cache.get(path) {
-            self.hits.fetch_add(1, Ordering::Relaxed);
-            return Some(cached.clone());
+    /// The lock is only ever held for a lookup or an insert, never across
+    /// I/O; a poisoned lock still holds valid data, so recover it.
+    fn map(&self) -> MutexGuard<'_, HashMap<PathBuf, CachedMetadata>> {
+        self.metadata_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn get_metadata(&self, path: &Path) -> CachedMetadata {
+        if let Some(cached) = self.map().get(path) {
+            return *cached;
         }
 
-        self.misses.fetch_add(1, Ordering::Relaxed);
-
         let metadata = match fs::metadata(path) {
-            Ok(metadata) => CachedMetadata::new(true, metadata.is_file(), metadata.is_dir()),
-            Err(_) => CachedMetadata::new(false, false, false),
+            Ok(metadata) => CachedMetadata {
+                exists: true,
+                is_file: metadata.is_file(),
+            },
+            Err(_) => CachedMetadata {
+                exists: false,
+                is_file: false,
+            },
         };
 
-        self.metadata_cache
-            .insert(path.to_path_buf(), metadata.clone());
-
-        Some(metadata)
+        self.map().insert(path.to_path_buf(), metadata);
+        metadata
     }
 
     pub fn exists(&self, path: &Path) -> bool {
-        self.get_metadata(path).map(|m| m.exists).unwrap_or(false)
+        self.get_metadata(path).exists
     }
 
     pub fn is_file(&self, path: &Path) -> bool {
-        self.get_metadata(path).map(|m| m.is_file).unwrap_or(false)
+        self.get_metadata(path).is_file
     }
-
-    pub fn clear(&self) {
-        self.metadata_cache.clear();
-    }
-
-    pub fn stats(&self) -> CacheStats {
-        let hits = self.hits.load(Ordering::Relaxed);
-        let misses = self.misses.load(Ordering::Relaxed);
-        let total = hits + misses;
-        let hit_rate = if total > 0 {
-            (hits as f64 / total as f64) * 100.0
-        } else {
-            0.0
-        };
-
-        CacheStats {
-            metadata_entries: self.metadata_cache.len(),
-            hits,
-            misses,
-            hit_rate,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct CacheStats {
-    pub metadata_entries: usize,
-    pub hits: u64,
-    pub misses: u64,
-    pub hit_rate: f64,
 }
 
 #[cfg(test)]
@@ -114,45 +76,35 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn test_metadata_caching_hit_and_miss() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_metadata_is_memoized_for_the_run() -> Result<(), Box<dyn std::error::Error>> {
         let cache = FileSystemCache::new();
         let temp_dir = TempDir::new()?;
         let file_path = temp_dir.path().join("test.txt");
         fs::write(&file_path, "content")?;
 
-        let first = cache
-            .get_metadata(&file_path)
-            .ok_or("expected metadata on first lookup")?;
-        assert!(first.exists);
-        assert!(first.is_file);
-        assert!(!first.is_dir);
+        let first = cache.get_metadata(&file_path);
+        assert!(first.exists && first.is_file);
 
-        let second = cache
-            .get_metadata(&file_path)
-            .ok_or("expected metadata on second lookup")?;
-        assert!(second.exists);
-
-        let stats = cache.stats();
-        assert_eq!(stats.hits, 1);
-        assert_eq!(stats.misses, 1);
-        assert_eq!(stats.metadata_entries, 1);
+        // Memoized: the run sees one consistent snapshot even if the file
+        // disappears mid-run
+        fs::remove_file(&file_path)?;
+        assert!(cache.exists(&file_path));
         Ok(())
     }
 
     #[test]
-    fn test_nonexistent_path_is_cached_as_missing() {
+    fn test_missing_path_is_cached_as_missing() -> Result<(), Box<dyn std::error::Error>> {
         let cache = FileSystemCache::new();
-        let path = Path::new("/nonexistent/path/to/file.txt");
+        let temp_dir = TempDir::new()?;
+        let path = temp_dir.path().join("later.txt");
 
-        assert!(!cache.exists(path));
-        assert!(!cache.is_file(path));
-        assert!(!cache.exists(path));
+        assert!(!cache.exists(&path));
+        assert!(!cache.is_file(&path));
 
-        let stats = cache.stats();
-        // Only the first lookup should miss; subsequent lookups hit the
-        // cached negative entry
-        assert_eq!(stats.misses, 1);
-        assert_eq!(stats.hits, 2);
+        // Negative results are memoized too
+        fs::write(&path, "x")?;
+        assert!(!cache.exists(&path));
+        Ok(())
     }
 
     #[test]
@@ -162,21 +114,6 @@ mod tests {
 
         assert!(cache.exists(temp_dir.path()));
         assert!(!cache.is_file(temp_dir.path()));
-        Ok(())
-    }
-
-    #[test]
-    fn test_clear_empties_cache() -> Result<(), Box<dyn std::error::Error>> {
-        let cache = FileSystemCache::new();
-        let temp_dir = TempDir::new()?;
-        let file_path = temp_dir.path().join("test.txt");
-        fs::write(&file_path, "content")?;
-
-        cache.exists(&file_path);
-        assert_eq!(cache.stats().metadata_entries, 1);
-
-        cache.clear();
-        assert_eq!(cache.stats().metadata_entries, 0);
         Ok(())
     }
 
@@ -208,8 +145,6 @@ mod tests {
                 .join()
                 .map_err(|_| "concurrent access thread panicked")?;
         }
-
-        assert_eq!(cache.stats().metadata_entries, 20);
         Ok(())
     }
 }

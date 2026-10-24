@@ -1,19 +1,5 @@
 #[cfg(test)]
 pub mod helpers {
-    use crate::types::{DetectionType, Framework};
-
-    fn create_framework_detector(name: &str, detection: DetectionType, priority: u8) -> Framework {
-        Framework {
-            name: name.to_string(),
-            ecosystems: vec![],
-            detection,
-            icon: None,
-            color: None,
-            priority,
-            root_indicators: vec![],
-        }
-    }
-
     pub fn create_test_indicator(name: &str, patterns: Vec<&str>) -> crate::types::Indicator {
         crate::types::Indicator::new(
             name.to_string(),
@@ -42,16 +28,6 @@ pub mod helpers {
 
     pub fn create_test_file(filename: &str, path: &str) -> crate::types::MatchedFile {
         crate::types::MatchedFile::new(filename.to_string(), path.to_string())
-    }
-
-    pub fn create_test_framework_generic(name: &str, priority: u8) -> Framework {
-        create_framework_detector(
-            name,
-            DetectionType::FileExists {
-                files: vec![format!("{}.toml", name.to_lowercase())],
-            },
-            priority,
-        )
     }
 
     pub fn create_test_indicator_with_indicators(

@@ -1,18 +1,11 @@
 //! File scanning module with adaptive performance optimization
 //!
-//! This module provides efficient file system scanning with:
+//! This module provides efficient, deterministic file system scanning:
+//! - A sorted walk (stable results across runs and platforms)
+//! - Root-level manifests always kept, ahead of the match cap
 //! - Adaptive timeout management
-//! - Sequential vs parallel scanning based on project size
 //! - A match cap to bound memory and scan time
 //! - GitIgnore support
-//!
-//! # Performance Optimizations
-//!
-//! - **Small projects (< 50 files):** Sequential scan avoids thread overhead
-//! - **Large projects (≥ 50 files):** Parallel scan leverages multiple cores
-//! - **Arc pattern sharing:** Eliminates Vec cloning in parallel workers
-//! - **Pre-allocated capacity:** Reduces memory reallocations
-//! - **Arc::try_unwrap:** Avoids final Vec clone when possible
 //!
 //! # Example
 //!
@@ -27,7 +20,7 @@
 //! let pattern_processor = PatternProcessor::new(patterns);
 //!
 //! // Create scanning engine with max depth of 3
-//! let engine = ScanningEngine::with_cache(pattern_processor, 3, None);
+//! let engine = ScanningEngine::new(pattern_processor, 3);
 //!
 //! // Scan a directory for matching files
 //! let path = Path::new("/path/to/project");

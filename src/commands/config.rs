@@ -1,6 +1,6 @@
 use project_indicator::{
     cli::ConfigAction,
-    config::{validate_config, Config, ConfigParser, TemplateGenerator},
+    config::{validate_config, ConfigParser, TemplateGenerator},
     Result,
 };
 use std::env;
@@ -17,52 +17,11 @@ fn split_editor(editor: &str) -> (String, Vec<String>) {
     (program, parts.collect())
 }
 
-/// Validates the EDITOR environment variable for security
-fn validate_editor(editor: &str) -> Result<()> {
-    if editor.contains(';') || editor.contains('&') || editor.contains('|') {
-        anyhow::bail!("Invalid EDITOR: contains shell operators (;, &, |). Please use a direct path to an editor binary.");
-    }
-
-    const KNOWN_EDITORS: &[&str] = &[
-        "vim",
-        "nvim",
-        "vi",
-        "emacs",
-        "emacsclient",
-        "nano",
-        "pico",
-        "code",
-        "code-insiders",
-        "subl",
-        "sublime_text",
-        "atom",
-        "gedit",
-        "kate",
-        "kwrite",
-        "micro",
-        "helix",
-        "hx",
-    ];
-
-    let base_cmd = editor.split_whitespace().next().unwrap_or(editor);
-    let base_name = std::path::Path::new(base_cmd)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(base_cmd);
-
-    if !KNOWN_EDITORS.contains(&base_name) {
-        println!("⚠️  Warning: Using unknown editor '{}'", editor);
-        println!("💡 Recommended: vim, nvim, emacs, nano, code, subl");
-    }
-
-    Ok(())
-}
-
 pub fn handle_config_command(action: ConfigAction) -> Result<()> {
     match action {
         ConfigAction::Validate => {
             // Validate the file detection actually reads (same resolution
-            // order as Config::load_default), and parse it directly —
+            // order as ConfigParser::load_default), and parse it directly —
             // load_default's soft fallback would swallow the parse error
             // this command exists to surface.
             let Some(config_path) = ConfigParser::active_config_path() else {
@@ -73,7 +32,7 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                 std::process::exit(1);
             };
 
-            match Config::load_from_file(&config_path) {
+            match ConfigParser::load_from_file(&config_path) {
                 Ok(config) => match validate_config(&config) {
                     Ok(()) => {
                         println!("✅ Configuration is valid");
@@ -172,7 +131,7 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                 // Parse the active file directly — load_default's soft
                 // fallback would mask a parse error and report the built-in
                 // template's counts as if they came from this file.
-                match Config::load_from_file(&active) {
+                match ConfigParser::load_from_file(&active) {
                     Ok(config) => {
                         println!("📦 Active Configuration:");
                         println!("   Indicators: {}", config.indicators.len());
@@ -198,12 +157,10 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             Ok(())
         }
         ConfigAction::Edit => {
-            let config_path = Config::get_config_path()?;
+            let config_path = ConfigParser::default_save_path()?;
             println!("📍 Configuration file location: {}", config_path.display());
 
             if let Ok(editor) = env::var("EDITOR") {
-                validate_editor(&editor)?;
-
                 let (program, editor_args) = split_editor(&editor);
                 std::process::Command::new(&program)
                     .args(&editor_args)
@@ -224,7 +181,7 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             let config_path = if let Some(custom_path) = path {
                 std::path::PathBuf::from(custom_path)
             } else {
-                Config::get_config_path()?
+                ConfigParser::default_save_path()?
             };
 
             if config_path.is_dir() {

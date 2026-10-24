@@ -131,12 +131,6 @@ fn validate_detection_type(detection: &DetectionType) -> Result<()> {
         DetectionType::FileExists { files } => {
             validate_non_empty_vec(files, "FileExists files")?;
         }
-        DetectionType::ConfigFile { file, keys } => {
-            if file.is_empty() {
-                return Err(simple_error("ConfigFile file path cannot be empty"));
-            }
-            validate_non_empty_vec(keys, "ConfigFile keys")?;
-        }
     }
 
     Ok(())
@@ -372,10 +366,6 @@ mod tests {
             },
             DetectionType::FileExists {
                 files: vec!["next.config.js".to_string()],
-            },
-            DetectionType::ConfigFile {
-                file: "pyproject.toml".to_string(),
-                keys: vec!["tool.poetry".to_string()],
             },
         ];
 

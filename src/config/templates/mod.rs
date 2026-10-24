@@ -31,7 +31,6 @@ pub mod shared;
 use crate::config::Config;
 use anyhow::Result;
 use shared::ConfigBuilder;
-use std::collections::HashMap;
 
 use bun::create_bun_indicator;
 use cpp::create_cpp_indicator;
@@ -80,50 +79,49 @@ impl ConfigTemplate {
 pub struct TemplateGenerator;
 
 impl TemplateGenerator {
-    pub fn get_available_templates() -> HashMap<String, ConfigTemplate> {
-        let mut templates = HashMap::new();
+    /// Template names in display order
+    pub const TEMPLATE_NAMES: [&'static str; 8] = [
+        "minimal",
+        "full",
+        "rust-dev",
+        "python-dev",
+        "web-dev",
+        "mobile-dev",
+        "data-science",
+        "enterprise",
+    ];
 
-        templates.insert("minimal".to_string(), create_minimal_template());
-        templates.insert("full".to_string(), create_full_template());
-
-        templates.insert("rust-dev".to_string(), create_rust_dev_template());
-        templates.insert("python-dev".to_string(), create_python_dev_template());
-        templates.insert("web-dev".to_string(), create_web_dev_template());
-        templates.insert("mobile-dev".to_string(), create_mobile_dev_template());
-        templates.insert("data-science".to_string(), create_data_science_template());
-        templates.insert("enterprise".to_string(), create_enterprise_template());
-
-        templates
+    fn build(name: &str) -> Option<ConfigTemplate> {
+        Some(match name {
+            "minimal" => create_minimal_template(),
+            "full" => create_full_template(),
+            "rust-dev" => create_rust_dev_template(),
+            "python-dev" => create_python_dev_template(),
+            "web-dev" => create_web_dev_template(),
+            "mobile-dev" => create_mobile_dev_template(),
+            "data-science" => create_data_science_template(),
+            "enterprise" => create_enterprise_template(),
+            _ => return None,
+        })
     }
 
+    /// Builds only the requested template (default: minimal)
     pub fn generate_template(template_name: Option<&str>) -> Result<Config> {
-        let templates = Self::get_available_templates();
-
-        let template = match template_name {
-            Some(name) => templates.get(name).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Template '{}' not found. Available templates: {}",
-                    name,
-                    templates
-                        .keys()
-                        .map(|k| k.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            })?,
-            None => templates
-                .get("minimal")
-                .ok_or_else(|| anyhow::anyhow!("Internal error: 'minimal' template not found"))?,
-        };
-
-        Ok(template.config.clone())
+        let name = template_name.unwrap_or("minimal");
+        let template = Self::build(name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Template '{}' not found. Available templates: {}",
+                name,
+                Self::TEMPLATE_NAMES.join(", ")
+            )
+        })?;
+        Ok(template.config)
     }
 
     pub fn list_templates() -> Vec<(String, String)> {
-        let templates = Self::get_available_templates();
-        templates
-            .into_iter()
-            .map(|(name, template)| (name, template.description))
+        Self::TEMPLATE_NAMES
+            .iter()
+            .filter_map(|name| Self::build(name).map(|t| (name.to_string(), t.description)))
             .collect()
     }
 }
@@ -361,4 +359,32 @@ pub fn create_enterprise_template() -> ConfigTemplate {
             .to_string(),
         config,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_template_listing_order_is_stable() {
+        let names = || -> Vec<String> {
+            TemplateGenerator::list_templates()
+                .into_iter()
+                .map(|(n, _)| n)
+                .collect()
+        };
+        let first = names();
+        assert_eq!(first.first().map(String::as_str), Some("minimal"));
+        for _ in 0..10 {
+            assert_eq!(first, names(), "listing order must not vary between calls");
+        }
+        let err = match TemplateGenerator::generate_template(Some("nope")) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("unknown template must fail"),
+        };
+        assert!(
+            err.ends_with(&first.join(", ")),
+            "error lists templates in order: {err}"
+        );
+    }
 }

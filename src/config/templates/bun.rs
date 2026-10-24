@@ -10,7 +10,7 @@ pub fn create_bun_indicator() -> Indicator {
             "bunfig.toml".to_string(),
         ],
         "#fbf0df".to_string(),
-        "🥟".to_string(),
+        "".to_string(),
         // Higher priority than TypeScript/JavaScript (6): a project with a
         // bun lockfile is a Bun project even though its sources also match
         5,

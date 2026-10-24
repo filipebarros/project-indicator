@@ -20,9 +20,15 @@ pub fn check_php_ecosystem<P: AsRef<Path>>(
             found_deps.extend(composer_deps);
             evidence.push(COMPOSER_JSON.to_owned());
         }
-        // The manifest is authoritative; composer.lock lists transitive
-        // packages too, so it is only a fallback without a manifest
-        return Ok((found_deps, evidence));
+        // A manifest that declares requirements is authoritative; composer.lock
+        // lists transitive packages too, so it is only a fallback when
+        // composer.json requires nothing itself
+        if !found_deps.is_empty()
+            || json_value.get("require").is_some()
+            || json_value.get("require-dev").is_some()
+        {
+            return Ok((found_deps, evidence));
+        }
     }
 
     let composer_lock_path = path.as_ref().join(COMPOSER_LOCK);

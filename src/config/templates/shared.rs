@@ -72,7 +72,7 @@ pub fn create_react_framework() -> Framework {
         },
         icon: Some(nerd_icon("e7ba")),
         color: Some("#61dafb".to_string()),
-        priority: 1,
+        priority: 2,
         root_indicators: vec![],
     }
 }
@@ -96,6 +96,8 @@ pub fn create_angular_framework() -> Framework {
     }
 }
 
+// Meta-frameworks (Next.js, Astro, NestJS) carry priority 1 and the UI
+// libraries they build on 2+: the prompt icon shows the more specific one.
 pub fn create_nextjs_framework() -> Framework {
     Framework {
         name: "Next.js".to_string(),
@@ -104,8 +106,9 @@ pub fn create_nextjs_framework() -> Framework {
             dependencies: vec!["next".to_string()],
         },
         icon: Some(nerd_icon("e83e")),
-        color: Some("#000000".to_string()),
-        priority: 3,
+        // Neutral gray: the brand black is invisible on dark terminals
+        color: Some("#8b949e".to_string()),
+        priority: 1,
         root_indicators: vec![
             RootIndicator {
                 pattern: "next.config.js".to_string(),
@@ -146,7 +149,7 @@ pub fn create_nestjs_framework() -> Framework {
         },
         icon: Some(nerd_icon("e83b")),
         color: Some("#e0234e".to_string()),
-        priority: 4,
+        priority: 1,
         root_indicators: vec![RootIndicator {
             pattern: "nest-cli.json".to_string(),
             weight: 0.9,
@@ -165,7 +168,7 @@ pub fn create_astro_framework() -> Framework {
         },
         icon: Some(nerd_icon("e735")),
         color: Some("#ff5d01".to_string()),
-        priority: 3,
+        priority: 1,
         root_indicators: vec![RootIndicator {
             pattern: "astro.config.mjs".to_string(),
             weight: 0.9,

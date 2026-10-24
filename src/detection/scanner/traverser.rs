@@ -51,57 +51,17 @@ impl FileSystemTraverser {
             .sort_by_file_name(|a, b| a.cmp(b));
         builder
     }
-
-    /// Estimate directory size by counting immediate children
-    /// Used for adaptive timeout calculation
-    pub fn estimate_directory_size(&self, path: &Path) -> usize {
-        std::fs::read_dir(path)
-            .map(|entries| entries.count())
-            .unwrap_or(0)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use tempfile::TempDir;
-
-    fn create_test_directory() -> Result<TempDir, Box<dyn std::error::Error>> {
-        let temp_dir = TempDir::new()?;
-        let root = temp_dir.path();
-
-        fs::write(root.join("file1.rs"), "fn main() {}")?;
-        fs::write(root.join("file2.rs"), "fn test() {}")?;
-        fs::write(root.join(".gitignore"), "target/")?;
-
-        let nested = root.join("src");
-        fs::create_dir(&nested)?;
-        fs::write(nested.join("lib.rs"), "// lib")?;
-
-        let ignored = root.join("target");
-        fs::create_dir(&ignored)?;
-        fs::write(ignored.join("build.rs"), "// should be ignored")?;
-
-        Ok(temp_dir)
-    }
 
     #[test]
     fn test_traverser_creation() {
         let traverser = FileSystemTraverser::new(3);
         assert_eq!(traverser.max_depth, 3);
-    }
-
-    #[test]
-    fn test_directory_size_estimation() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = create_test_directory()?;
-        let traverser = FileSystemTraverser::new(3);
-
-        let size = traverser.estimate_directory_size(temp_dir.path());
-        // Should count: file1.rs, file2.rs, .gitignore, src/, target/
-        assert!(size >= 3, "Should count at least the immediate children");
-
-        Ok(())
     }
 
     #[test]
@@ -113,22 +73,5 @@ mod tests {
         // Can't directly test WalkBuilder internals, but we can verify it builds
         let _count = walker.build().count();
         Ok(())
-    }
-
-    #[test]
-    fn test_estimate_empty_directory() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = TempDir::new()?;
-        let traverser = FileSystemTraverser::new(3);
-
-        let size = traverser.estimate_directory_size(temp_dir.path());
-        assert_eq!(size, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn test_estimate_nonexistent_directory() {
-        let traverser = FileSystemTraverser::new(3);
-        let size = traverser.estimate_directory_size(Path::new("/nonexistent/path"));
-        assert_eq!(size, 0);
     }
 }

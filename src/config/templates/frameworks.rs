@@ -84,4 +84,29 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_meta_frameworks_outrank_the_ui_libraries_they_build_on() {
+        // best_framework picks the LOWEST priority number for the prompt
+        // icon: the more specific framework must win over its base library
+        let catalog = framework_catalog();
+        let prio = |name: &str| -> u8 {
+            match catalog.iter().find(|f| f.name == name) {
+                Some(f) => f.priority,
+                None => panic!("{name} missing from catalog"),
+            }
+        };
+        for (meta, base) in [
+            ("Next.js", "React"),
+            ("Astro", "React"),
+            ("NestJS", "Angular"),
+        ] {
+            assert!(
+                prio(meta) < prio(base),
+                "{meta} ({}) must outrank {base} ({})",
+                prio(meta),
+                prio(base)
+            );
+        }
+    }
 }

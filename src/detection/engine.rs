@@ -107,10 +107,9 @@ impl DetectionEngine {
                 .collect(),
         );
 
-        let scanning_engine = ScanningEngine::with_cache(
+        let scanning_engine = ScanningEngine::new(
             PatternProcessor::new(unique_patterns),
             detection_config.max_depth,
-            Some(file_cache.clone()),
         );
 
         let root_indicator_engine =
@@ -176,10 +175,11 @@ impl DetectionEngine {
 
         let scan_start = std::time::Instant::now();
 
-        let detailed_files = self
+        let (detailed_files, scan_truncated) = self
             .scanning_engine
-            .scan(&scan_path)
+            .scan_with_status(&scan_path)
             .with_context(|| format!("Failed to scan files in path: {}", scan_path.display()))?;
+        evidence.scan_truncated = scan_truncated;
 
         evidence.set_scan_metrics(
             detailed_files.len(),

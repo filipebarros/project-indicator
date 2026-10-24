@@ -8,8 +8,8 @@
 
 #[cfg(unix)]
 mod unix_symlink_tests {
+    use project_indicator::config::TemplateGenerator;
     use project_indicator::detection::engine::DetectionEngine;
-    use project_indicator::Config;
     use std::fs;
     use std::os::unix::fs::symlink;
     use tempfile::TempDir;
@@ -38,7 +38,7 @@ edition = "2021"
         let link_path = temp_dir.path().join("link_to_project");
         symlink(&project_dir, &link_path)?;
 
-        let config = Config::load_default()?;
+        let config = TemplateGenerator::generate_template(Some("full"))?;
 
         let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
 
@@ -73,7 +73,7 @@ edition = "2021"
         symlink(&link1, &link2)?;
 
         // Detection should not crash with circular symlinks
-        let config = Config::load_default()?;
+        let config = TemplateGenerator::generate_template(Some("full"))?;
 
         let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
 
@@ -104,7 +104,7 @@ edition = "2021"
         )?;
 
         // Detection should handle the self-reference gracefully
-        let config = Config::load_default()?;
+        let config = TemplateGenerator::generate_template(Some("full"))?;
         let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
         let result = detector.detect(&project_dir)?;
 
@@ -132,7 +132,7 @@ edition = "2021"
         )?;
 
         // Detection should handle broken symlinks gracefully
-        let config = Config::load_default()?;
+        let config = TemplateGenerator::generate_template(Some("full"))?;
         let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
         let result = detector.detect(&project_dir)?;
 
@@ -165,7 +165,7 @@ edition = "2021"
         symlink(&link1, &link2)?;
         symlink(&link2, &link3)?;
 
-        let config = Config::load_default()?;
+        let config = TemplateGenerator::generate_template(Some("full"))?;
         let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
         let result = detector.detect(&link3)?;
 
@@ -199,7 +199,7 @@ edition = "2021"
         let link_to_file = project_dir.join("link_package.json");
         symlink(&package_json, &link_to_file)?;
 
-        let config = Config::load_default()?;
+        let config = TemplateGenerator::generate_template(Some("full"))?;
         let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
         let result = detector.detect(&project_dir)?;
 
@@ -238,7 +238,7 @@ edition = "2021"
         let link_in_vendor = subdir.join("external_link");
         symlink(&external_project, &link_in_vendor)?;
 
-        let config = Config::load_default()?;
+        let config = TemplateGenerator::generate_template(Some("full"))?;
         let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
         let result = detector.detect(&main_project)?;
 
@@ -273,7 +273,7 @@ edition = "2021"
             }
         }
 
-        let config = Config::load_default()?;
+        let config = TemplateGenerator::generate_template(Some("full"))?;
         let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
 
         let start = std::time::Instant::now();

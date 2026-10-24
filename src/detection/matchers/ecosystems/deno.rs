@@ -3,26 +3,15 @@ use crate::Result;
 use std::path::Path;
 
 /// Detect Deno ecosystem dependencies via the `imports` map in
-/// deno.json/deno.jsonc. deno.jsonc is parsed here (comments and trailing
-/// commas stripped) rather than through the strict JSON cache, so a
-/// commented file matches and no parse warning is emitted.
+/// deno.json/deno.jsonc (the parse cache tolerates comments in `.jsonc`).
 pub fn check_deno_ecosystem<P: AsRef<Path>>(
     path: P,
     dependencies: &[String],
     parsed_cache: &ParsedFileCache,
 ) -> Result<(Vec<String>, Vec<String>)> {
     for config in ["deno.json", "deno.jsonc"] {
-        let json = read_deno_config(path.as_ref(), config, parsed_cache)?;
-        if let Some(imports) = json
-            .as_ref()
-            .and_then(|j| j.get("imports"))
-            .and_then(|v| v.as_object())
-        {
-            let found: Vec<String> = dependencies
-                .iter()
-                .filter(|dep| imports_match(imports, dep))
-                .cloned()
-                .collect();
+        if let Some(json) = parsed_cache.get_json_value(path.as_ref().join(config))? {
+            let found = imports_dependencies(&json, dependencies);
             if !found.is_empty() {
                 return Ok((found, vec![config.to_string()]));
             }
@@ -32,93 +21,21 @@ pub fn check_deno_ecosystem<P: AsRef<Path>>(
     Ok((Vec::new(), Vec::new()))
 }
 
-/// Load deno.json (strict JSON, cached) or deno.jsonc (comments and trailing
-/// commas tolerated, no parse warning). Shared with the npm matcher's
+/// The dependencies named by a deno.json `imports` map (see
+/// [`imports_match`] for what counts). Shared with the npm matcher's
 /// `npm:` import fallback.
-pub(super) fn read_deno_config(
-    dir: &Path,
-    file_name: &str,
-    parsed_cache: &ParsedFileCache,
-) -> Result<Option<serde_json::Value>> {
-    let path = dir.join(file_name);
-    if file_name.ends_with(".jsonc") {
-        Ok(parsed_cache
-            .get_file_content(&path)?
-            .and_then(|c| serde_json::from_str(&strip_jsonc(&c)).ok()))
-    } else {
-        parsed_cache.get_json_value(&path)
-    }
-}
-
-/// Remove `//` and `/* */` comments and trailing commas, leaving string
-/// contents untouched.
-fn strip_jsonc(src: &str) -> String {
-    let mut out = String::with_capacity(src.len());
-    let mut chars = src.chars().peekable();
-    let (mut in_str, mut escaped) = (false, false);
-    while let Some(c) = chars.next() {
-        if in_str {
-            out.push(c);
-            match (escaped, c) {
-                (true, _) => escaped = false,
-                (false, '\\') => escaped = true,
-                (false, '"') => in_str = false,
-                _ => {}
-            }
-            continue;
-        }
-        match (c, chars.peek()) {
-            ('"', _) => {
-                in_str = true;
-                out.push(c);
-            }
-            ('/', Some('/')) => {
-                for n in chars.by_ref() {
-                    if n == '\n' {
-                        out.push('\n');
-                        break;
-                    }
-                }
-            }
-            ('/', Some('*')) => {
-                chars.next();
-                let mut prev = ' ';
-                for n in chars.by_ref() {
-                    if prev == '*' && n == '/' {
-                        break;
-                    }
-                    prev = n;
-                }
-            }
-            _ => out.push(c),
-        }
-    }
-    strip_trailing_commas(&out)
-}
-
-fn strip_trailing_commas(src: &str) -> String {
-    let chars: Vec<char> = src.chars().collect();
-    let mut out = String::with_capacity(src.len());
-    let (mut in_str, mut escaped) = (false, false);
-    for (i, &c) in chars.iter().enumerate() {
-        if in_str {
-            match (escaped, c) {
-                (true, _) => escaped = false,
-                (false, '\\') => escaped = true,
-                (false, '"') => in_str = false,
-                _ => {}
-            }
-        } else if c == '"' {
-            in_str = true;
-        } else if c == ',' {
-            let next = chars[i + 1..].iter().find(|n| !n.is_whitespace());
-            if matches!(next, Some('}') | Some(']')) {
-                continue;
-            }
-        }
-        out.push(c);
-    }
-    out
+pub(super) fn imports_dependencies(
+    json: &serde_json::Value,
+    dependencies: &[String],
+) -> Vec<String> {
+    let Some(imports) = json.get("imports").and_then(|v| v.as_object()) else {
+        return Vec::new();
+    };
+    dependencies
+        .iter()
+        .filter(|dep| imports_match(imports, dep))
+        .cloned()
+        .collect()
 }
 
 /// The package name inside `rest` of a `jsr:@scope/name[@ver][/path]` or
@@ -235,17 +152,6 @@ mod tests {
     fn test_alias_key_lookalikes_do_not_match() {
         let json = r#"{"imports": {"hono-jsx": "https://x/y.ts", "$$oak//": "https://x/z.ts"}}"#;
         assert!(check(json, &["hono", "oak"]).is_empty());
-    }
-
-    #[test]
-    fn test_strip_jsonc_comments_and_trailing_commas() {
-        let src = "{\n // c\n \"u\": \"http://x//y\", /* b */\n \"a\": [1,],\n}";
-        let v: serde_json::Value = match serde_json::from_str(&strip_jsonc(src)) {
-            Ok(v) => v,
-            Err(e) => panic!("stripped output must parse: {e}"),
-        };
-        assert_eq!(v["u"], "http://x//y");
-        assert_eq!(v["a"][0], 1);
     }
 
     #[test]

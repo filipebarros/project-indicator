@@ -25,7 +25,6 @@
 //!
 //! - **IndicatorFile** - Source files matching patterns (*.rs, *.py)
 //! - **ManifestFile** - Package manifests (Cargo.toml, package.json) - Higher weight
-//! - **ConfigFile** - Configuration files (tsconfig.json, .eslintrc)
 //! - **FrameworkDependency** - Framework detected in dependencies
 //! - **RootIndicator** - Project root markers - Highest weight
 //! - **DirectoryStructure** - Conventional directory names (src/, tests/)
@@ -163,7 +162,6 @@ use std::sync::Arc;
 pub enum EvidenceType {
     IndicatorFile,
     ManifestFile,
-    ConfigFile,
     FrameworkDependency,
     RootIndicator,
     DirectoryStructure,
@@ -210,17 +208,6 @@ impl EvidenceItem {
         let description = format!("Found manifest file: {}", file_path);
         Self {
             evidence_type: EvidenceType::ManifestFile,
-            file_path,
-            pattern_matched: pattern,
-            weight,
-            description,
-        }
-    }
-
-    pub fn config_file(file_path: String, pattern: String, weight: f32) -> Self {
-        let description = format!("Found config file: {}", file_path);
-        Self {
-            evidence_type: EvidenceType::ConfigFile,
             file_path,
             pattern_matched: pattern,
             weight,
@@ -277,6 +264,10 @@ pub struct DetectionEvidence {
     pub confidence_factors: Vec<ConfidenceFactor>,
     pub files_scanned: usize,
     pub total_scan_time_ms: u64,
+    /// The scan timed out and the result is built from a partial sample;
+    /// such results must not be persisted
+    #[serde(default)]
+    pub scan_truncated: bool,
 }
 
 impl DetectionEvidence {
@@ -288,6 +279,7 @@ impl DetectionEvidence {
             confidence_factors: Vec::new(),
             files_scanned: 0,
             total_scan_time_ms: 0,
+            scan_truncated: false,
         }
     }
 
