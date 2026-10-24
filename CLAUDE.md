@@ -144,12 +144,11 @@ The detection flow follows this path:
 
 The remaining caches live and die within a single detection run:
 
-#### 1. FileSystemCacheManager (Per-detection run)
+#### 1. FileSystemCache (Per-detection run)
 
-- **Location**: `src/detection/caches/file_system.rs` + `src/performance.rs`
-- **Purpose**: Memoize file existence checks and metadata (size, modified time)
-  so root discovery, the scanner, and the framework detector don't repeat
-  `stat` calls
+- **Location**: `src/performance.rs`
+- **Purpose**: Memoize file existence / is-file checks so root discovery and
+  the framework detector don't repeat `stat` calls
 
 #### 2. ParsedFileCache (Per-detection run)
 
@@ -202,7 +201,7 @@ All types in `src/types/` organized by domain:
 - Use `?` operator, `.ok_or()`, or `match` statements
 - All tests must also avoid unwrap/expect
 
-### 2. Shared PatternMatcher Pattern
+### 2. Pattern Matching
 
 Pattern matching is a free function: `crate::patterns::matches_pattern`.
 There is no matcher object and no cache (a memo was benchmarked out — see
@@ -219,7 +218,7 @@ Caching Architecture); components call the function directly.
 
 - **Cache key design**: Use `PathBuf` with `Borrow<Path>` trait to avoid allocations
 - **Bound the scan**: The match cap and adaptive timeout keep worst-case scans cheap
-- **Memory limits**: File size limits prevent memory exhaustion (1MB per file)
+- **Memory limits**: files over 1MB are read but not kept in the per-run parse cache
 
 ### 5. Testing Requirements
 
@@ -304,7 +303,7 @@ For ecosystem-specific dependency matching:
 2. **Profile**: Run with `cargo bench --bench detection_benchmark`
 3. **Cache aggressively**: But measure cache overhead vs benefit
 4. **Prefer Arc over Clone**: For shared state across threads
-5. **Use DashMap**: For concurrent HashMap needs
+5. **Plain std maps**: per-run caches are `Mutex<HashMap>` (detection is single-threaded; hold the lock only for a lookup/insert, never across I/O) — dashmap was benchmarked as ~3% faster per lookup, not worth a dependency
 6. **Document complexity**: Add Big-O notation comments for algorithms
 
 ### Performance targets
@@ -336,8 +335,8 @@ Automated via GitHub Actions:
 
 ## Security Considerations
 
-- **Editor validation**: `config edit` validates `$EDITOR` environment variable
-- **Path traversal protection**: Max 10 level upward traversal, boundary checks
+- **Editor**: `config edit` spawns `$EDITOR` directly (never via a shell), splitting arguments
+- **Path traversal protection**: bounded upward traversal (`max_upward_traversal`), boundary checks
 - **No file modifications**: Tool is read-only
-- **File size limits**: 1MB per file prevents memory exhaustion
-- **Symlink safety**: Loop detection for circular symlinks
+- **File size**: files over 1MB are read but not kept in the per-run parse cache
+- **Symlink safety**: directory symlinks are never followed (no loops possible); symlinked files count as files

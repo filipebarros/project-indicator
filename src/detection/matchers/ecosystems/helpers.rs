@@ -101,7 +101,8 @@ fn normalize_py_name(name: &str) -> String {
 /// extras, a version specifier, a marker, or whitespace — so look-alikes
 /// (`django-extensions`) never match.
 fn python_requirement_names(line: &str, dep_name: &str) -> bool {
-    let line = line.trim();
+    // A UTF-8 BOM can prefix the first line of a file
+    let line = line.trim_start_matches('\u{feff}').trim();
     let end = line
         .find(|c: char| !(c.is_ascii_alphanumeric() || "._-".contains(c)))
         .unwrap_or(line.len());
@@ -110,7 +111,7 @@ fn python_requirement_names(line: &str, dep_name: &str) -> bool {
         .trim_start()
         .chars()
         .next()
-        .is_none_or(|c| "[=<>!~;@(".contains(c));
+        .is_none_or(|c| "[=<>!~;@(#".contains(c));
     !name.is_empty() && boundary && normalize_py_name(name) == normalize_py_name(dep_name)
 }
 
@@ -929,5 +930,16 @@ mod tests {
             check_json_dependencies(&json, &d(&["react"])),
             d(&["react"])
         );
+    }
+
+    #[test]
+    fn test_python_requirements_inline_comments_and_bom() {
+        let content = "\u{feff}django  # web framework\nflask==3.0  # micro\nrequests\t# http\n";
+        assert_eq!(
+            check_python_text_dependencies(content, &d(&["django", "flask", "requests"])),
+            d(&["django", "flask", "requests"])
+        );
+        // a comment is not a dependency
+        assert!(check_python_text_dependencies("# django\n", &d(&["django"])).is_empty());
     }
 }

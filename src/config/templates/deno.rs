@@ -10,7 +10,7 @@ pub fn create_deno_indicator() -> Indicator {
             "deno.lock".to_string(),
         ],
         "#70ffaf".to_string(),
-        "🦕".to_string(),
+        "".to_string(),
         // Higher priority than TypeScript (6): a project with deno.json is a
         // Deno project even though its *.ts files also match TypeScript
         5,

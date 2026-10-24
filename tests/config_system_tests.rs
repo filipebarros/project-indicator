@@ -1,3 +1,4 @@
+use project_indicator::config::ConfigParser;
 use project_indicator::detection::DetectionEngine;
 use project_indicator::types::DetectionConfig;
 use project_indicator::Config;
@@ -106,7 +107,7 @@ priority = 1
 
     fs::write(&config_file, config_content)?;
 
-    let config = Config::load_from_file(&config_file)?;
+    let config = ConfigParser::load_from_file(&config_file)?;
 
     assert_eq!(config.detection.max_upward_traversal, 5);
     assert!(config.detection.require_vcs_root);
@@ -173,7 +174,7 @@ priority = 1
 
 /// When the active config exists but fails to parse, 'config show' must say
 /// so instead of silently printing the built-in template's counts (which is
-/// what Config::load_default's soft fallback returns).
+/// what ConfigParser::load_default's soft fallback returns).
 #[test]
 fn test_config_show_surfaces_unparsable_active_config() -> Result<(), Box<dyn std::error::Error>> {
     let home = TempDir::new()?;
@@ -251,7 +252,7 @@ fn test_partial_sections_take_defaults() -> Result<(), Box<dyn std::error::Error
         "[detection]\nmax_depth = 2\n\n[display]\nmax_frameworks = 5\n\n[[indicators]]\nname = \"T\"\nfiles = [\"t.file\"]\ncolor = \"#FF0000\"\nicon = \"T\"\npriority = 1\n",
     )?;
 
-    let config = Config::load_from_file(&config_file)?;
+    let config = ConfigParser::load_from_file(&config_file)?;
     assert_eq!(config.detection.max_depth, 2);
     assert_eq!(config.detection.max_upward_traversal, 10);
     assert!(!config.detection.require_vcs_root);
@@ -260,11 +261,47 @@ fn test_partial_sections_take_defaults() -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
+/// `type = "ConfigFile"` framework detection was removed (no built-in used
+/// it). A config still using it must fail loudly, naming the variant.
+#[test]
+fn test_removed_configfile_detection_type_fails_parse() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = TempDir::new()?;
+    let config_file = temp_dir.path().join("config.toml");
+    fs::write(
+        &config_file,
+        r##"
+[[indicators]]
+name = "Test Language"
+files = ["test.file"]
+color = "#FF0000"
+icon = "T"
+priority = 1
+
+[[frameworks]]
+name = "Poetry"
+ecosystems = ["pypi"]
+priority = 1
+
+[frameworks.detection]
+type = "ConfigFile"
+file = "pyproject.toml"
+keys = ["tool.poetry"]
+"##,
+    )?;
+
+    let err = match ConfigParser::load_from_file(&config_file) {
+        Err(err) => format!("{err:#}"),
+        Ok(_) => panic!("a removed detection type must fail to parse"),
+    };
+    assert!(err.contains("ConfigFile"), "error should name it: {err}");
+    Ok(())
+}
+
 #[test]
 fn test_removed_config_keys_fail_parse() -> Result<(), Box<dyn std::error::Error>> {
     // Removed schema keys must be rejected loudly, not silently ignored:
     // a stale config gets surfaced ('config validate' names the unknown
-    // key) instead of half-applying. At prompt time Config::load_default
+    // key) instead of half-applying. At prompt time ConfigParser::load_default
     // still soft-falls-back to the built-in template, so a stale config
     // can never break the shell (covered by
     // persistent_cache_tests::test_unparsable_config_soft_fallback).
@@ -333,7 +370,7 @@ priority = 1
         let config_file = temp_dir.path().join("config.toml");
         fs::write(&config_file, &stale_config)?;
 
-        let err = match Config::load_from_file(&config_file) {
+        let err = match ConfigParser::load_from_file(&config_file) {
             Err(err) => format!("{err:#}"),
             Ok(_) => panic!("config with removed key '{removed_key}' must fail to parse"),
         };

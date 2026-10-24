@@ -76,10 +76,6 @@ fn test_detection_types_serialization() -> Result<(), Box<dyn std::error::Error>
         DetectionType::FileExists {
             files: vec!["next.config.js".to_string()],
         },
-        DetectionType::ConfigFile {
-            file: "pyproject.toml".to_string(),
-            keys: vec!["tool.poetry".to_string()],
-        },
     ];
 
     for detection_type in detection_types {

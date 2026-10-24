@@ -5,7 +5,6 @@ use crate::types::{
     DetectionEvidence, DetectionType, EvidenceItem, Framework, FrameworkMatch, Indicator,
 };
 use crate::Result;
-use anyhow::Context;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -17,7 +16,6 @@ impl FrameworkDetector {
         Self
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn detect_frameworks_with_evidence(
         &self,
         path: &Path,
@@ -68,7 +66,6 @@ impl FrameworkDetector {
         let mut all_matches = Vec::new();
 
         let mut file_exists_frameworks = Vec::with_capacity(candidates.len());
-        let mut config_file_frameworks = Vec::with_capacity(candidates.len());
         let mut dependency_frameworks = Vec::with_capacity(candidates.len());
 
         for framework in candidates {
@@ -77,7 +74,6 @@ impl FrameworkDetector {
                     dependency_frameworks.push(framework.clone());
                 }
                 DetectionType::FileExists { .. } => file_exists_frameworks.push(framework),
-                DetectionType::ConfigFile { .. } => config_file_frameworks.push(framework),
             }
         }
 
@@ -120,27 +116,6 @@ impl FrameworkDetector {
             all_matches.extend(file_exists_matches);
         }
 
-        if !config_file_frameworks.is_empty() {
-            let config_file_matches: Vec<FrameworkMatch> = config_file_frameworks
-                .iter()
-                .filter_map(|framework| {
-                    if let DetectionType::ConfigFile { file, keys } = &framework.detection {
-                        if let Ok(Some(confidence)) =
-                            self.check_config_file(&path_buf, file, keys, file_cache)
-                        {
-                            return Some(FrameworkMatch::new(
-                                (*framework).clone(),
-                                confidence,
-                                vec![file.clone()],
-                            ));
-                        }
-                    }
-                    None
-                })
-                .collect();
-            all_matches.extend(config_file_matches);
-        }
-
         self.resolve_framework_matches(all_matches)
     }
 
@@ -154,84 +129,6 @@ impl FrameworkDetector {
             let file_path = base_path.join(file);
             file_cache.exists(&file_path)
         })
-    }
-
-    fn check_config_file(
-        &self,
-        base_path: &Path,
-        file: &str,
-        keys: &[String],
-        file_cache: &Arc<FileSystemCache>,
-    ) -> Result<Option<f32>> {
-        let config_path = base_path.join(file);
-
-        if !file_cache.exists(&config_path) {
-            return Ok(None);
-        }
-
-        let content = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("Failed to read config file: {}", config_path.display()))?;
-
-        if file.ends_with(".toml") {
-            match toml::from_str::<toml::Value>(&content) {
-                Ok(toml_value) => {
-                    let mut found_keys = 0;
-                    for key in keys {
-                        if self.check_toml_key(&toml_value, key) {
-                            found_keys += 1;
-                        }
-                    }
-
-                    if found_keys > 0 {
-                        let confidence = (found_keys as f32 / keys.len() as f32) * 0.9;
-                        return Ok(Some(confidence));
-                    }
-                }
-                Err(_) => {
-                    return Ok(self.check_text_keys(&content, keys));
-                }
-            }
-        } else {
-            return Ok(self.check_text_keys(&content, keys));
-        }
-
-        Ok(None)
-    }
-
-    fn check_toml_key(&self, value: &toml::Value, key: &str) -> bool {
-        let parts: Vec<&str> = key.split('.').collect();
-        let mut current = value;
-
-        for part in parts {
-            match current {
-                toml::Value::Table(table) => {
-                    if let Some(next_value) = table.get(part) {
-                        current = next_value;
-                    } else {
-                        return false;
-                    }
-                }
-                _ => return false,
-            }
-        }
-
-        true
-    }
-
-    fn check_text_keys(&self, content: &str, keys: &[String]) -> Option<f32> {
-        let mut found_keys = 0;
-        for key in keys {
-            if content.contains(key) {
-                found_keys += 1;
-            }
-        }
-
-        if found_keys > 0 {
-            let confidence = (found_keys as f32 / keys.len() as f32) * 0.7;
-            Some(confidence)
-        } else {
-            None
-        }
     }
 
     fn resolve_framework_matches(
@@ -392,95 +289,6 @@ mod tests {
             &["package.json".to_string(), "nonexistent.json".to_string()],
             &file_cache
         ));
-        Ok(())
-    }
-
-    #[test]
-    fn test_check_toml_key() -> Result<(), Box<dyn std::error::Error>> {
-        let detector = FrameworkDetector::new();
-        let toml_content = r#"
-[package]
-name = "test"
-version = "1.0.0"
-
-[dependencies]
-serde = "1.0"
-"#;
-
-        let value: toml::Value = toml::from_str(toml_content)?;
-
-        assert!(detector.check_toml_key(&value, "package"));
-        assert!(detector.check_toml_key(&value, "package.name"));
-        assert!(detector.check_toml_key(&value, "dependencies"));
-        assert!(detector.check_toml_key(&value, "dependencies.serde"));
-        assert!(!detector.check_toml_key(&value, "nonexistent"));
-        assert!(!detector.check_toml_key(&value, "package.nonexistent"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_check_text_keys() -> Result<(), Box<dyn std::error::Error>> {
-        let detector = FrameworkDetector::new();
-        let content = "This is a test file with react and vue frameworks";
-
-        let keys = vec!["react".to_string(), "vue".to_string()];
-        let confidence = detector.check_text_keys(content, &keys);
-        assert!(confidence.is_some());
-        assert_eq!(confidence.ok_or("Failed to get confidence")?, 0.7);
-
-        let partial_keys = vec!["react".to_string(), "angular".to_string()];
-        let partial_confidence = detector.check_text_keys(content, &partial_keys);
-        assert!(partial_confidence.is_some());
-        assert_eq!(
-            partial_confidence.ok_or("Failed to get partial confidence")?,
-            0.35
-        );
-
-        let no_keys = vec!["angular".to_string(), "svelte".to_string()];
-        let no_confidence = detector.check_text_keys(content, &no_keys);
-        assert!(no_confidence.is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn test_check_config_file_toml() -> Result<(), Box<dyn std::error::Error>> {
-        let detector = FrameworkDetector::new();
-        let temp_dir = create_test_directory_with_files(&[(
-            "Cargo.toml",
-            r#"
-[package]
-name = "test"
-
-[dependencies]
-serde = "1.0"
-tokio = "1.0"
-"#,
-        )])?;
-
-        let keys = vec!["dependencies.serde".to_string()];
-        let file_cache = Arc::new(FileSystemCache::new());
-        let confidence =
-            detector.check_config_file(temp_dir.path(), "Cargo.toml", &keys, &file_cache)?;
-        assert!(confidence.is_some());
-        assert!(confidence.ok_or("Failed to get confidence")? > 0.0);
-
-        let bad_keys = vec!["nonexistent.key".to_string()];
-        let no_confidence =
-            detector.check_config_file(temp_dir.path(), "Cargo.toml", &bad_keys, &file_cache)?;
-        assert!(no_confidence.is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn test_check_config_file_nonexistent() -> Result<(), Box<dyn std::error::Error>> {
-        let detector = FrameworkDetector::new();
-        let temp_dir = TempDir::new()?;
-
-        let keys = vec!["any.key".to_string()];
-        let file_cache = Arc::new(FileSystemCache::new());
-        let confidence =
-            detector.check_config_file(temp_dir.path(), "nonexistent.toml", &keys, &file_cache)?;
-        assert!(confidence.is_none());
         Ok(())
     }
 

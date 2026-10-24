@@ -28,12 +28,22 @@ if [[ -n "$out" ]]; then echo "✓ bash: $out"; else
     echo "✗ bash hook produced no output"
     fail=1
 fi
+# Readline needs \001..\002 around every escape sequence or it miscounts width
+if [[ "$out" == *$'\033'* && "$out" != *$'\001\033[38;2'* ]]; then
+    echo "✗ bash hook: colour escapes are not wrapped in \\001..\\002"
+    fail=1
+fi
 
 echo "Testing zsh hook..."
 if command -v zsh >/dev/null 2>&1; then
     out="$(cd "$fixture" && zsh -c "source '$SCRIPT_DIR/project-indicator.zsh'; project_indicator_prompt")"
     if [[ -n "$out" ]]; then echo "✓ zsh: $out"; else
         echo "✗ zsh hook produced no output"
+        fail=1
+    fi
+    # zle needs %{ %} around escape codes or it miscounts width
+    if [[ "$out" == *$'\033'* && "$out" != *'%{'$'\033'* ]]; then
+        echo "✗ zsh hook: colour escapes are not wrapped in %{ %}"
         fail=1
     fi
 else

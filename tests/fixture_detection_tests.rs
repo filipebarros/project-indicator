@@ -119,6 +119,15 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("rust", "Rust", &[]),
     // *.v is also a Verilog extension; a stray .v must not outrank Cargo.toml
     // axum appears only transitively in Cargo.lock (tonic depends on it)
+    // A manifest that declares NO dependencies of its own (virtual workspace,
+    // bare `gemspec` Gemfile, empty composer.json, tool-only pyproject) does
+    // not shadow its lockfile
+    ("rust-virtual-workspace", "Rust", &["Axum"]),
+    // A gem's lone .gemspec is a Ruby marker
+    ("ruby-gemspec-only", "Ruby", &[]),
+    ("ruby-gemspec-gemfile", "Ruby", &["Rails"]),
+    ("php-empty-composer", "PHP", &["Laravel"]),
+    ("python-poetry-lock-only-deps", "Python", &["Django"]),
     ("rust-transitive-lock", "Rust", &[]),
     ("rust-workspace-deps", "Rust", &["Axum"]),
     ("rust-stray-v", "Rust", &[]),

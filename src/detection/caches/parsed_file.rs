@@ -6,25 +6,122 @@
 //! for a single CLI invocation, so there is no eviction or memory budget.
 
 use anyhow::{Context, Result};
-use dashmap::DashMap;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
-/// Files above this size are read but not cached (1MB safety limit).
+/// Files above this size are read but not cached (keeps the per-run cache small).
 const MAX_FILE_SIZE: u64 = 1_048_576;
+
+/// Read a text manifest tolerantly: UTF-16 (BOM) is decoded — PowerShell 5's
+/// `>` writes it — and anything else is read lossily, so one stray Latin-1
+/// byte can't blank a whole manifest.
+fn read_text(path: &Path) -> std::io::Result<String> {
+    let bytes = fs::read(path)?;
+    let utf16 = |rest: &[u8], from: fn([u8; 2]) -> u16| {
+        let units: Vec<u16> = rest
+            .chunks(2)
+            .filter(|c| c.len() == 2)
+            .map(|c| from([c[0], c[1]]))
+            .collect();
+        char::decode_utf16(units)
+            .map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect()
+    };
+    Ok(match bytes.as_slice() {
+        [0xFF, 0xFE, rest @ ..] => utf16(rest, u16::from_le_bytes),
+        [0xFE, 0xFF, rest @ ..] => utf16(rest, u16::from_be_bytes),
+        _ => String::from_utf8_lossy(&bytes).into_owned(),
+    })
+}
+
+/// Remove `//` and `/* */` comments and trailing commas, leaving string
+/// contents untouched.
+fn strip_jsonc(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut chars = src.chars().peekable();
+    let (mut in_str, mut escaped) = (false, false);
+    while let Some(c) = chars.next() {
+        if in_str {
+            out.push(c);
+            match (escaped, c) {
+                (true, _) => escaped = false,
+                (false, '\\') => escaped = true,
+                (false, '"') => in_str = false,
+                _ => {}
+            }
+            continue;
+        }
+        match (c, chars.peek()) {
+            ('"', _) => {
+                in_str = true;
+                out.push(c);
+            }
+            ('/', Some('/')) => {
+                for n in chars.by_ref() {
+                    if n == '\n' {
+                        out.push('\n');
+                        break;
+                    }
+                }
+            }
+            ('/', Some('*')) => {
+                chars.next();
+                let mut prev = ' ';
+                for n in chars.by_ref() {
+                    if prev == '*' && n == '/' {
+                        break;
+                    }
+                    prev = n;
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    strip_trailing_commas(&out)
+}
+
+fn strip_trailing_commas(src: &str) -> String {
+    let chars: Vec<char> = src.chars().collect();
+    let mut out = String::with_capacity(src.len());
+    let (mut in_str, mut escaped) = (false, false);
+    for (i, &c) in chars.iter().enumerate() {
+        if in_str {
+            match (escaped, c) {
+                (true, _) => escaped = false,
+                (false, '\\') => escaped = true,
+                (false, '"') => in_str = false,
+                _ => {}
+            }
+        } else if c == '"' {
+            in_str = true;
+        } else if c == ',' {
+            let next = chars[i + 1..].iter().find(|n| !n.is_whitespace());
+            if matches!(next, Some('}') | Some(']')) {
+                continue;
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Locks are only held for a lookup or an insert, never across file I/O or
+/// parsing; a poisoned lock still holds valid data, so recover it.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 #[derive(Debug, Default)]
 pub struct ParsedFileCache {
     /// Raw file contents; `None` records a missing file so it isn't re-stat'd
-    contents: DashMap<PathBuf, Option<Arc<String>>>,
+    contents: Mutex<HashMap<PathBuf, Option<Arc<String>>>>,
     /// Parsed JSON values; `None` records a missing file or parse failure
-    json_values: DashMap<PathBuf, Option<Arc<serde_json::Value>>>,
+    json_values: Mutex<HashMap<PathBuf, Option<Arc<serde_json::Value>>>>,
     /// Parsed TOML values; `None` records a missing file or parse failure
-    toml_values: DashMap<PathBuf, Option<Arc<toml::Value>>>,
-    hits: AtomicUsize,
-    misses: AtomicUsize,
+    toml_values: Mutex<HashMap<PathBuf, Option<Arc<toml::Value>>>>,
 }
 
 impl ParsedFileCache {
@@ -35,17 +132,14 @@ impl ParsedFileCache {
     pub fn get_file_content<P: AsRef<Path>>(&self, file_path: P) -> Result<Option<Arc<String>>> {
         let file_path = file_path.as_ref();
 
-        // DashMap supports &Path lookups via the Borrow trait, avoiding a
+        // HashMap<PathBuf, _> accepts &Path lookups via Borrow, avoiding a
         // PathBuf allocation on cache hits
-        if let Some(cached) = self.contents.get(file_path) {
-            self.hits.fetch_add(1, Ordering::Relaxed);
+        if let Some(cached) = lock(&self.contents).get(file_path) {
             return Ok(cached.clone());
         }
 
-        self.misses.fetch_add(1, Ordering::Relaxed);
-
         if !file_path.exists() {
-            self.contents.insert(file_path.to_path_buf(), None);
+            lock(&self.contents).insert(file_path.to_path_buf(), None);
             return Ok(None);
         }
 
@@ -54,17 +148,16 @@ impl ParsedFileCache {
 
         if metadata.len() > MAX_FILE_SIZE {
             // Read but don't cache oversized files
-            let content = fs::read_to_string(file_path)
+            let content = read_text(file_path)
                 .with_context(|| format!("Failed to read large file: {}", file_path.display()))?;
             return Ok(Some(Arc::new(content)));
         }
 
-        let content = fs::read_to_string(file_path)
+        let content = read_text(file_path)
             .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
 
         let arc_content = Arc::new(content);
-        self.contents
-            .insert(file_path.to_path_buf(), Some(arc_content.clone()));
+        lock(&self.contents).insert(file_path.to_path_buf(), Some(arc_content.clone()));
 
         Ok(Some(arc_content))
     }
@@ -72,16 +165,21 @@ impl ParsedFileCache {
     pub fn get_json_value<P: AsRef<Path>>(
         &self,
         file_path: P,
-    ) -> Result<Option<serde_json::Value>> {
+    ) -> Result<Option<Arc<serde_json::Value>>> {
         let file_path = file_path.as_ref();
 
-        if let Some(cached) = self.json_values.get(file_path) {
-            self.hits.fetch_add(1, Ordering::Relaxed);
-            return Ok(cached.as_ref().map(|value| (**value).clone()));
+        if let Some(cached) = lock(&self.json_values).get(file_path) {
+            return Ok(cached.clone());
         }
 
+        let jsonc = file_path.extension().is_some_and(|e| e == "jsonc");
         let parsed = match self.get_file_content(file_path)? {
-            Some(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+            Some(content) => match if jsonc {
+                // JSONC: comments and trailing commas are legal
+                serde_json::from_str::<serde_json::Value>(&strip_jsonc(&content))
+            } else {
+                serde_json::from_str::<serde_json::Value>(&content)
+            } {
                 Ok(value) => Some(Arc::new(value)),
                 Err(e) => {
                     // Memoize the failure so the file isn't re-parsed this run
@@ -92,18 +190,16 @@ impl ParsedFileCache {
             None => None,
         };
 
-        self.json_values
-            .insert(file_path.to_path_buf(), parsed.clone());
+        lock(&self.json_values).insert(file_path.to_path_buf(), parsed.clone());
 
-        Ok(parsed.map(|value| (*value).clone()))
+        Ok(parsed)
     }
 
-    pub fn get_toml_value<P: AsRef<Path>>(&self, file_path: P) -> Result<Option<toml::Value>> {
+    pub fn get_toml_value<P: AsRef<Path>>(&self, file_path: P) -> Result<Option<Arc<toml::Value>>> {
         let file_path = file_path.as_ref();
 
-        if let Some(cached) = self.toml_values.get(file_path) {
-            self.hits.fetch_add(1, Ordering::Relaxed);
-            return Ok(cached.as_ref().map(|value| (**value).clone()));
+        if let Some(cached) = lock(&self.toml_values).get(file_path) {
+            return Ok(cached.clone());
         }
 
         let parsed = match self.get_file_content(file_path)? {
@@ -118,10 +214,9 @@ impl ParsedFileCache {
             None => None,
         };
 
-        self.toml_values
-            .insert(file_path.to_path_buf(), parsed.clone());
+        lock(&self.toml_values).insert(file_path.to_path_buf(), parsed.clone());
 
-        Ok(parsed.map(|value| (*value).clone()))
+        Ok(parsed)
     }
 }
 
@@ -222,6 +317,79 @@ mod tests {
         assert!(cache
             .get_json_value(temp_dir.path().join("missing.json"))?
             .is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_utf16_and_invalid_utf8_manifests_are_readable() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = TempDir::new()?;
+        let cache = ParsedFileCache::new();
+
+        // PowerShell 5 `>` writes UTF-16LE with a BOM
+        let mut utf16 = vec![0xFF, 0xFE];
+        for unit in "flask==2.0\n".encode_utf16() {
+            utf16.extend_from_slice(&unit.to_le_bytes());
+        }
+        let p16 = dir.path().join("requirements.txt");
+        fs::write(&p16, utf16)?;
+        let text = cache.get_file_content(&p16)?.ok_or("missing")?;
+        assert_eq!(text.as_str(), "flask==2.0\n");
+
+        // A stray Latin-1 byte must not blank the whole file
+        let plat = dir.path().join("Cargo.toml");
+        fs::write(&plat, b"# caf\xE9\n[dependencies]\naxum = \"0.7\"\n")?;
+        let text = cache.get_file_content(&plat)?.ok_or("missing")?;
+        assert!(text.contains("axum = \"0.7\""));
+        Ok(())
+    }
+
+    #[test]
+    fn test_strip_jsonc_comments_and_trailing_commas() {
+        let src = "{\n // c\n \"u\": \"http://x//y\", /* b */\n \"a\": [1,],\n}";
+        let v: serde_json::Value = match serde_json::from_str(&strip_jsonc(src)) {
+            Ok(v) => v,
+            Err(e) => panic!("stripped output must parse: {e}"),
+        };
+        assert_eq!(v["u"], "http://x//y");
+        assert_eq!(v["a"][0], 1);
+    }
+
+    #[test]
+    fn test_strip_jsonc_unterminated_block_comment_and_edges() {
+        // An unterminated block comment swallows the rest — parse fails soft
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&strip_jsonc("{} /* never closed")).is_ok()
+        );
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&strip_jsonc(r#"{"a": 1 /*/ x */}"#)).is_ok()
+        );
+        // Comment markers inside strings survive
+        let v: serde_json::Value =
+            serde_json::from_str(&strip_jsonc(r#"{"u": "a/*b*/c//d"}"#)).unwrap_or_default();
+        assert_eq!(v["u"], "a/*b*/c//d");
+    }
+
+    #[test]
+    fn test_jsonc_with_comments_is_parsed_and_cached() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("deno.jsonc");
+        fs::write(
+            &path,
+            "{\n  // a comment\n  \"imports\": {\"oak\": \"jsr:@oak/oak\",},\n}\n",
+        )?;
+
+        let cache = ParsedFileCache::new();
+        let first = cache.get_json_value(&path)?.ok_or("jsonc must parse")?;
+        assert_eq!(first["imports"]["oak"], "jsr:@oak/oak");
+        // memoized: the same Arc comes back
+        let second = cache.get_json_value(&path)?.ok_or("cached")?;
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+
+        // a plain .json with comments is still invalid
+        let strict = dir.path().join("x.json");
+        fs::write(&strict, "{ // no\n}")?;
+        assert!(cache.get_json_value(&strict)?.is_none());
         Ok(())
     }
 }

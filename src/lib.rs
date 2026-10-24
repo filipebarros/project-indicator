@@ -41,54 +41,10 @@ mod tests {
     }
 
     #[test]
-    fn test_detection_engine_creation() -> Result<(), Box<dyn std::error::Error>> {
-        let engine = detection::DetectionEngine::new(vec![], vec![]);
-        let _ = engine;
-        Ok(())
-    }
-
-    #[test]
     fn test_config_creation() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::new(vec![]);
         assert!(config.indicators.is_empty());
         assert_eq!(config.meta.version, "3.0");
-        Ok(())
-    }
-
-    #[test]
-    fn test_module_imports() -> Result<(), Box<dyn std::error::Error>> {
-        let config = config::Config::default();
-        let detection = detection::DetectionEngine::new(vec![], vec![]);
-        let output = output::formatters::OutputFormat::Simple;
-        let matches = patterns::simple_wildcard_match("main.rs", "*.rs");
-        let performance = performance::FileSystemCache::default();
-        let types = types::DetectionResult::new(None, vec![], 0.0);
-
-        assert_eq!(config.indicators.len(), 0);
-        assert!(matches);
-        assert!(types.indicator.is_none());
-        assert_eq!(types.confidence, 0.0);
-
-        let cache_stats = performance.stats();
-        assert_eq!(cache_stats.metadata_entries, 0);
-
-        match output {
-            output::formatters::OutputFormat::Simple => {}
-            output::formatters::OutputFormat::Full => {}
-            output::formatters::OutputFormat::Json => {}
-            output::formatters::OutputFormat::Debug => {}
-        }
-        let _ = detection;
-        Ok(())
-    }
-
-    #[test]
-    fn test_result_type_alias() -> Result<(), Box<dyn std::error::Error>> {
-        fn test_function() -> Result<()> {
-            Ok(())
-        }
-
-        assert!(test_function().is_ok());
         Ok(())
     }
 

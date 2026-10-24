@@ -17,6 +17,7 @@ pub fn check_python_ecosystem<P: AsRef<Path>>(
     let mut evidence = Vec::new();
 
     let pyproject_path = path.as_ref().join(PYPROJECT_TOML);
+    let mut pyproject_declares_deps = false;
     if let Some(toml_value) = parsed_cache.get_toml_value(&pyproject_path)? {
         let pyproject_deps = check_pyproject_dependencies(&toml_value, dependencies);
         if !pyproject_deps.is_empty() {
@@ -24,6 +25,13 @@ pub fn check_python_ecosystem<P: AsRef<Path>>(
             evidence.push(PYPROJECT_TOML.to_owned());
             return Ok((found_deps, evidence));
         }
+        // A tool-only pyproject (just [tool.ruff]) declares no dependencies
+        pyproject_declares_deps = toml_value.get("project").is_some()
+            || toml_value.get("dependency-groups").is_some()
+            || toml_value
+                .get("tool")
+                .and_then(|t| t.get("poetry"))
+                .is_some();
     }
 
     if try_config_file_deps(
@@ -50,11 +58,16 @@ pub fn check_python_ecosystem<P: AsRef<Path>>(
         return Ok((found_deps, evidence));
     }
 
-    // Manifests are authoritative; poetry.lock lists transitive packages
-    // too, so it is only a fallback when no manifest exists
-    if [PYPROJECT_TOML, REQUIREMENTS_TXT, PIPFILE]
-        .iter()
-        .any(|m| path.as_ref().join(m).is_file())
+    // Manifests that declare dependencies are authoritative; poetry.lock
+    // lists transitive packages too, so it is only a fallback when none do.
+    // (Presence checks go through the parse cache: no extra syscalls.)
+    if pyproject_declares_deps
+        || parsed_cache
+            .get_file_content(path.as_ref().join(REQUIREMENTS_TXT))?
+            .is_some()
+        || parsed_cache
+            .get_file_content(path.as_ref().join(PIPFILE))?
+            .is_some()
     {
         return Ok((found_deps, evidence));
     }

@@ -9,7 +9,7 @@ Project Indicator is a high-performance replacement for shell-based project dete
 
 ## Key Features
 
-- 🔒 **Enhanced Security**: EDITOR validation to prevent shell injection attacks
+- 🔒 **Read-only & safe by construction**: never modifies project files, never runs a shell, no `unsafe` code
 - 🧪 **Property-Based Testing**: Extensive test suite including rigorous property-based testing with proptest
 - 🔗 **Symlink Handling**: Comprehensive edge case handling for Unix symlinks
 
@@ -312,9 +312,8 @@ dependencies = ["react"]
 - `Dependencies` - dependency names checked in the manifests of the
   framework's ecosystems (`npm`, `pypi`, `cargo`, `go`, `packagist`,
   `rubygems`, `maven`, `gradle`, `nuget`, `sbt`, `pub`, `hex`, `luarocks`,
-  `swiftpm`)
+  `swiftpm`, `deno`)
 - `FileExists` - file/directory presence
-- `ConfigFile` - config file contents
 
 ### Confidence Scoring
 
@@ -437,7 +436,7 @@ src/
 ### Key Components
 
 - **DetectionEngine**: Orchestrates detection workflow
-- **PatternMatcher**: Thread-safe pattern matching with nested DashMap cache
+- **Pattern matching**: `patterns::matches_pattern`, a plain function (no cache — a memo was benchmarked and removed)
 - **ParsedFileCache**: Per-run manifest parse memoization (JSON/TOML)
 - **FileSystemCache**: Per-run metadata memoization
 - **PersistentCache**: Cross-invocation result cache with mtime invalidation
@@ -457,16 +456,10 @@ src/
 
 When using `project-indicator config edit`, the tool respects your `$EDITOR` environment variable to open the configuration file. **Ensure this variable points to a trusted executable.**
 
-**Recommended editors:**
-- `vim`, `nvim` - Vi/Neovim
-- `emacs` - GNU Emacs
-- `nano` - Nano editor
-- `code` - Visual Studio Code
-- `subl` - Sublime Text
+`$EDITOR` may include arguments (`EDITOR="code --wait"`). The command is
+spawned directly, never through a shell, so shell metacharacters have no
+effect — but the binary it names is run as-is, so:
 
-**Security notes:**
-- The tool validates against shell injection attempts (`;`, `&`, `|` characters)
-- Unknown editors will trigger a warning but are still allowed
 - Always verify your `$EDITOR` variable: `echo $EDITOR`
 - Avoid setting `$EDITOR` to shell scripts or untrusted binaries
 
@@ -482,16 +475,16 @@ export EDITOR=vim
 ### Path Traversal Protection
 
 The tool includes built-in safeguards against path traversal attacks:
-- Maximum upward traversal limited to 10 directory levels
+- Upward traversal is bounded (`max_upward_traversal`: default 10, built-in templates use 2–5)
 - Boundary directory checks prevent scanning from system directories (`/`, `/home`, `/root`, `/System`)
-- Symbolic links are followed safely with loop detection
+- Directory symlinks are never followed (the walker doesn't follow links, so loops can't occur); symlinked files count as files
 
 ### File System Access
 
 - Read-only operations - the tool never modifies project files
 - Respects file system permissions - gracefully handles unreadable files
-- File size limits prevent memory exhaustion (1MB cache limit per file)
-- Cache files stored in standard user cache directories (`~/.cache/project-indicator-*`)
+- Files over 1MB are read but not kept in the per-run parse cache
+- Cache files stored in standard user cache directories (`$XDG_CACHE_HOME/project-indicator/results/`, default `~/.cache/...`)
 
 ## License
 

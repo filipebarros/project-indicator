@@ -24,6 +24,10 @@ use std::time::SystemTime;
 /// Opportunistic GC kicks in when the results directory exceeds this count.
 const MAX_ENTRIES_BEFORE_GC: usize = 512;
 
+/// A hit refreshes the entry's mtime only once it is older than this (well
+/// under the GC horizon), keeping the warm path write-free.
+const TOUCH_AFTER_SECS: u64 = 24 * 60 * 60;
+
 /// GC removes entries whose file mtime is older than this.
 const GC_MAX_AGE_SECS: u64 = 30 * 24 * 60 * 60;
 
@@ -57,7 +61,7 @@ impl PersistentCache {
         let cache_home = std::env::var_os("XDG_CACHE_HOME")
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
-            .or_else(|| dirs::home_dir().map(|home| home.join(".cache")))?;
+            .or_else(|| std::env::home_dir().map(|home| home.join(".cache")))?;
 
         Some(Self::at_base(
             cache_home.join("project-indicator").join("results"),
@@ -97,12 +101,22 @@ impl PersistentCache {
             }
         }
 
-        // Touch the entry so the age-based GC treats actively used projects
-        // as fresh; best-effort, a hit must never fail
-        let _ = fs::File::options()
-            .write(true)
-            .open(self.entry_path(&dir))
-            .and_then(|f| f.set_modified(SystemTime::now()));
+        // Refresh the entry's mtime so the age-based GC (30 days) treats
+        // actively used projects as fresh. Only entries older than a day need
+        // it — a write on EVERY hit is the priciest user-space cost of the
+        // warm path. Best-effort: a hit must never fail.
+        let entry_path = self.entry_path(&dir);
+        let stale = fs::metadata(&entry_path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| SystemTime::now().duration_since(t).ok())
+            .is_some_and(|age| age.as_secs() > TOUCH_AFTER_SECS);
+        if stale {
+            let _ = fs::File::options()
+                .write(true)
+                .open(&entry_path)
+                .and_then(|f| f.set_modified(SystemTime::now()));
+        }
 
         Some((entry.result, entry.display))
     }
@@ -168,10 +182,20 @@ impl PersistentCache {
 
         fs::create_dir_all(&self.base)?;
         let final_path = self.entry_path(&dir);
-        let tmp_path = final_path.with_extension("json.tmp");
-        fs::write(&tmp_path, serde_json::to_vec(&entry)?)?;
-        fs::rename(&tmp_path, &final_path)?;
-        Ok(())
+        // Unique per writer (process + in-process counter) so concurrent
+        // stores of the same directory can't interleave one temp file
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let tmp_path = final_path.with_extension(format!(
+            "json.{}.{}.tmp",
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let write = fs::write(&tmp_path, serde_json::to_vec(&entry)?)
+            .and_then(|()| fs::rename(&tmp_path, &final_path));
+        if write.is_err() {
+            let _ = fs::remove_file(&tmp_path);
+        }
+        Ok(write?)
     }
 
     /// Delete all cached entries.
@@ -262,7 +286,11 @@ fn ancestor_chain(dir: &Path, result: &DetectionResult) -> Vec<PathBuf> {
         .first()
         .map(|item| Path::new(&item.file_path))
         .and_then(Path::parent)
-        .filter(|p| p.is_absolute());
+        .filter(|p| p.is_absolute())
+        // Canonical like `dir` (/var vs /private/var on macOS), or the
+        // equality checks below would never fire
+        .map(canonical);
+    let root = root.as_deref();
 
     // Root found in `dir` itself: nothing above it was consulted
     if root == Some(dir) {
@@ -271,7 +299,8 @@ fn ancestor_chain(dir: &Path, result: &DetectionResult) -> Vec<PathBuf> {
 
     // Root discovery never enters boundary directories (home, filesystem
     // root), so their churn must not invalidate entries
-    let home = dirs::home_dir();
+    // Canonical like `dir`: a symlinked $HOME would never compare equal
+    let home = std::env::home_dir().map(|h| canonical(&h));
     let mut chain = Vec::new();
     for ancestor in dir.ancestors().skip(1) {
         if ancestor.parent().is_none() || home.as_deref() == Some(ancestor) {
@@ -648,6 +677,89 @@ mod tests {
         // At the root (a new go.mod could change the winner): must invalidate
         fs::write(root.join("go.mod"), "module x")?;
         assert!(cache.load(&sub, None).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_ancestor_chain_is_capped_without_a_root() {
+        let deep = Path::new("/a/b/c/d/e/f/g/h/i/j/k/l/m/n");
+        let result = test_result("Cargo.toml");
+        let chain = ancestor_chain(deep, &result);
+        assert_eq!(chain.len(), NO_ROOT_ANCESTOR_DEPTH);
+        assert_eq!(
+            chain.first().map(|p| p.as_path()),
+            Some(Path::new("/a/b/c/d/e/f/g/h/i/j/k/l/m"))
+        );
+        // never includes the filesystem root
+        assert!(!chain.iter().any(|p| p.parent().is_none()));
+    }
+
+    #[test]
+    fn test_ancestor_chain_stops_before_home() {
+        if let Some(home) = std::env::home_dir().map(|h| canonical(&h)) {
+            let dir = home.join("proj").join("sub");
+            let result = test_result("Cargo.toml");
+            let chain = ancestor_chain(&dir, &result);
+            assert!(chain.contains(&home.join("proj")));
+            assert!(
+                !chain.contains(&home),
+                "home is a boundary and must not be tracked"
+            );
+        }
+    }
+
+    #[test]
+    fn test_concurrent_stores_leave_a_valid_entry_and_no_temp_files(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (cache_dir, project, cache) = setup()?;
+        let cache = Arc::new(cache);
+        let result = rooted(test_result("Cargo.toml"), project.path());
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let (cache, result, dir) =
+                    (cache.clone(), result.clone(), project.path().to_path_buf());
+                std::thread::spawn(move || {
+                    for _ in 0..10 {
+                        cache.store(&dir, None, &result, &DisplayConfig::default());
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().map_err(|_| "writer thread panicked")?;
+        }
+
+        assert!(cache.load(project.path(), None).is_some());
+        let stray: Vec<_> = fs::read_dir(cache_dir.path().join("results"))?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(stray.is_empty(), "stray temp files: {stray:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_hit_on_recent_entry_does_not_rewrite_mtime() -> Result<(), Box<dyn std::error::Error>> {
+        let (cache_dir, project, cache) = setup()?;
+        cache.store(
+            project.path(),
+            None,
+            &rooted(test_result("Cargo.toml"), project.path()),
+            &DisplayConfig::default(),
+        );
+        let entry = fs::read_dir(cache_dir.path().join("results"))?
+            .filter_map(|e| e.ok())
+            .next()
+            .ok_or("entry file missing")?
+            .path();
+
+        // An hour old is well inside the GC horizon: a hit must stay read-only
+        let an_hour_ago = SystemTime::now() - Duration::from_secs(3600);
+        set_file_mtime(&entry, an_hour_ago)?;
+        let before = mtime(&entry).ok_or("no mtime")?;
+
+        assert!(cache.load(project.path(), None).is_some());
+        assert_eq!(mtime(&entry).ok_or("no mtime")?, before);
         Ok(())
     }
 }

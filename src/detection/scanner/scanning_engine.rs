@@ -1,10 +1,8 @@
 use super::{FileSystemTraverser, TimeoutManager};
 use crate::detection::pattern_processor::PatternProcessor;
-use crate::performance::FileSystemCache;
 use crate::types::MatchedFile;
 use crate::Result;
 use std::path::Path;
-use std::sync::Arc;
 
 /// Maximum matches before the scan stops collecting.
 ///
@@ -17,7 +15,7 @@ use std::sync::Arc;
 /// - Reduces scan time by 40-60% for large projects
 /// - Memory savings: ~3KB per pattern at limit
 /// - Accuracy: No measurable impact on detection quality
-const DEFAULT_MAX_MATCHES_PER_PATTERN: usize = 15;
+const MAX_MATCHES: usize = 15;
 
 /// Extreme directory size threshold for safety checks.
 ///
@@ -31,102 +29,110 @@ const DEFAULT_MAX_MATCHES_PER_PATTERN: usize = 15;
 /// - Prevents accidental scans of home directory (~/)
 /// - Prevents system directory scans (/usr, /etc)
 /// - Protects against misconfiguration
-/// - Returns empty result rather than hanging
+/// - Falls back to a root-level manifest check (exact + wildcard names)
 const EXTREME_SIZE_THRESHOLD: usize = 500;
 
 pub struct ScanningEngine {
     pattern_processor: PatternProcessor,
     max_depth: usize,
-    file_cache: Option<Arc<FileSystemCache>>,
-
-    max_matches_per_pattern: usize,
-    extreme_size_threshold: usize,
 }
 
 impl ScanningEngine {
-    /// Creates a ScanningEngine with an optional FileSystemCache for file existence checks.
-    pub fn with_cache(
-        pattern_processor: PatternProcessor,
-        max_depth: usize,
-        file_cache: Option<Arc<FileSystemCache>>,
-    ) -> Self {
+    pub fn new(pattern_processor: PatternProcessor, max_depth: usize) -> Self {
         Self {
             pattern_processor,
             max_depth,
-            file_cache,
-            max_matches_per_pattern: DEFAULT_MAX_MATCHES_PER_PATTERN,
-            extreme_size_threshold: EXTREME_SIZE_THRESHOLD,
         }
     }
 
-    /// Check a set of exact (non-glob) filenames in the scan root
-    fn check_root_files<'a>(
-        &self,
-        path: &Path,
-        files: impl IntoIterator<Item = &'a String>,
-    ) -> Vec<MatchedFile> {
-        let mut matches = Vec::new();
-
-        for file_name in files {
-            let file_path = path.join(file_name);
-
-            let exists_and_is_file = if let Some(cache) = &self.file_cache {
-                cache.is_file(&file_path)
-            } else {
-                file_path.exists() && file_path.is_file()
-            };
-
-            if exists_and_is_file {
-                matches.push(MatchedFile::new(file_name.clone(), file_name.clone()));
+    /// One pass over the scan root: the total entry count (for the size
+    /// guard and timeout) and the sorted names of the files in it (symlinks
+    /// to files included). Replaces a size estimate, one `stat` per exact
+    /// pattern and a separate wildcard listing — three syscall sets — with
+    /// a single `read_dir`.
+    fn list_root(path: &Path) -> (usize, Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return (0, Vec::new());
+        };
+        let (mut count, mut names) = (0, Vec::new());
+        for entry in entries.filter_map(|e| e.ok()) {
+            count += 1;
+            let is_file = entry
+                .file_type()
+                .is_ok_and(|ft| ft.is_file() || (ft.is_symlink() && entry.path().is_file()));
+            if let (true, Ok(name)) = (is_file, entry.file_name().into_string()) {
+                names.push(name);
             }
         }
-
-        matches
-    }
-
-    /// Exact-name patterns present as files in the scan root, in sorted order
-    fn root_manifest_matches(&self, path: &Path) -> Vec<MatchedFile> {
-        let mut names: Vec<&String> = self.pattern_processor.get_exact_patterns().iter().collect();
         names.sort();
-        self.check_root_files(path, names)
+        (count, names)
     }
 
-    /// Full directory scan with an adaptive timeout
-    ///
-    /// This method chooses between sequential and parallel scanning based on the
-    /// estimated directory size to optimize performance:
-    ///
+    /// Exact-name pattern files present in the root, in sorted order
+    fn root_manifest_matches(&self, names: &[String]) -> Vec<MatchedFile> {
+        let exact = self.pattern_processor.get_exact_patterns();
+        names
+            .iter()
+            .filter(|name| exact.contains(name.as_str()))
+            .map(|name| MatchedFile::new(name.clone(), name.clone()))
+            .collect()
+    }
+
+    /// Root-level files matching a wildcard pattern (`*.csproj`, `*.gemspec`),
+    /// in name order and capped, skipping names already in `already`.
+    fn root_wildcard_matches(&self, names: &[String], already: &[MatchedFile]) -> Vec<MatchedFile> {
+        names
+            .iter()
+            .filter(|name| {
+                self.pattern_processor.should_scan_file(name)
+                    && !already.iter().any(|m| &m.filename == *name)
+            })
+            .take(MAX_MATCHES)
+            .map(|name| MatchedFile::new(name.clone(), name.clone()))
+            .collect()
+    }
+
+    /// Full directory scan: a sorted, deterministic walk bounded by the match
+    /// cap and an adaptive timeout. Oversized directories (likely a home or
+    /// system dir) only get a root-level manifest check.
     pub fn scan(&self, path: &Path) -> Result<Vec<MatchedFile>> {
+        self.scan_with_status(path).map(|(matches, _)| matches)
+    }
+
+    /// Like [`scan`](Self::scan), also reporting whether the timeout cut the
+    /// walk short (the matches are then a partial sample).
+    pub fn scan_with_status(&self, path: &Path) -> Result<(Vec<MatchedFile>, bool)> {
         log::trace!("Starting scan for path: {}", path.display());
         let traverser = FileSystemTraverser::new(self.max_depth);
-        let estimated_size = traverser.estimate_directory_size(path);
+        let (entry_count, root_names) = Self::list_root(path);
 
         // Safety: Skip scanning extremely large directories (likely home dir or system dir)
         // This prevents scanning from places like ~, /usr, etc.
-        if estimated_size > self.extreme_size_threshold {
+        if entry_count > EXTREME_SIZE_THRESHOLD {
             log::warn!(
                 "Directory {} has {} immediate entries (>{} threshold), likely not a project root. Skipping scan.",
                 path.display(),
-                estimated_size,
-                self.extreme_size_threshold
+                entry_count,
+                EXTREME_SIZE_THRESHOLD
             );
             // Root-level manifests are still cheap to check, so an oversized
             // project root (e.g. a big monorepo) is not reported as empty
-            return Ok(self.root_manifest_matches(path));
+            let mut matches = self.root_manifest_matches(&root_names);
+            matches.extend(self.root_wildcard_matches(&root_names, &matches));
+            return Ok((matches, false));
         }
 
-        self.scan_sequential(path, &traverser, estimated_size)
+        self.scan_sequential(
+            path,
+            &traverser,
+            TimeoutManager::new(entry_count),
+            self.root_manifest_matches(&root_names),
+        )
     }
 
-    /// Shared per-entry pre-filter for both scan strategies.
-    ///
-    /// Returns `true` when the entry is a file whose name passes the pattern
-    /// pre-filter (and records it with the timeout manager).
-    fn prefilter_entry(
-        pattern_processor: &PatternProcessor,
-        timeout_mgr: &TimeoutManager,
-        entry: &ignore::DirEntry,
-    ) -> bool {
+    /// Per-entry pre-filter: `true` when the entry is a file whose name passes
+    /// the pattern pre-filter.
+    fn prefilter_entry(pattern_processor: &PatternProcessor, entry: &ignore::DirEntry) -> bool {
         // Check file type first before any string operations. Symlinks are
         // resolved to their targets so a symlinked manifest counts as a file
         // (matching the extreme-size root check, which stats through
@@ -146,7 +152,6 @@ impl ScanningEngine {
             return false;
         }
 
-        timeout_mgr.record_file_scanned();
         true
     }
 
@@ -155,29 +160,27 @@ impl ScanningEngine {
         &self,
         path: &Path,
         traverser: &FileSystemTraverser,
-        estimated_size: usize,
-    ) -> Result<Vec<MatchedFile>> {
+        timeout_mgr: TimeoutManager,
+        root_manifests: Vec<MatchedFile>,
+    ) -> Result<(Vec<MatchedFile>, bool)> {
         let scan_start = std::time::Instant::now();
-        let timeout_mgr = TimeoutManager::new(estimated_size);
+        let mut timed_out = false;
         // Exact-name manifests at the root are always kept, whatever the
         // match cap does to the walk below — a busy directory must never
         // crowd out Cargo.toml / package.json
-        let mut matched_files = self.root_manifest_matches(path);
+        let mut matched_files = root_manifests;
         let root_count = matched_files.len();
-        let patterns = self.pattern_processor.get_patterns_arc();
 
         let walker = traverser.build_walker(path);
 
         for result in walker.build() {
-            if matched_files.len() - root_count >= self.max_matches_per_pattern {
-                log::debug!(
-                    "Sequential scan: max matches ({}) reached",
-                    self.max_matches_per_pattern
-                );
+            if matched_files.len() - root_count >= MAX_MATCHES {
+                log::debug!("Sequential scan: max matches ({}) reached", MAX_MATCHES);
                 break;
             }
 
             if timeout_mgr.should_stop() {
+                timed_out = true;
                 break;
             }
 
@@ -186,13 +189,13 @@ impl ScanningEngine {
                 Err(_) => continue,
             };
 
-            if !Self::prefilter_entry(&self.pattern_processor, &timeout_mgr, &entry) {
+            if !Self::prefilter_entry(&self.pattern_processor, &entry) {
                 continue;
             }
 
-            if let Some(file_match) =
-                self.pattern_processor
-                    .match_file_against_patterns(entry.path(), path, &patterns)
+            if let Some(file_match) = self
+                .pattern_processor
+                .match_file_against_patterns(entry.path(), path)
             {
                 if !matched_files
                     .iter()
@@ -205,13 +208,12 @@ impl ScanningEngine {
 
         let elapsed = scan_start.elapsed().as_millis();
         log::debug!(
-            "Sequential scan complete: {} matches, {} files scanned in {}ms",
+            "Scan complete: {} matches in {}ms",
             matched_files.len(),
-            timeout_mgr.files_scanned(),
             elapsed
         );
 
-        Ok(matched_files)
+        Ok((matched_files, timed_out))
     }
 }
 
@@ -232,7 +234,7 @@ mod tests {
 
         let pattern_processor = PatternProcessor::new(patterns);
 
-        ScanningEngine::with_cache(pattern_processor, 3, None)
+        ScanningEngine::new(pattern_processor, 3)
     }
 
     #[test]
@@ -286,17 +288,25 @@ mod tests {
     }
 
     #[test]
-    fn test_engine_with_cache() -> Result<()> {
-        let patterns = Arc::new(vec!["*.rs".to_string(), "Cargo.toml".to_string()]);
-        let pattern_processor = PatternProcessor::new(patterns);
+    fn test_list_root_counts_everything_and_lists_sorted_files() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let root = temp_dir.path();
+        fs::create_dir(root.join("a_dir"))?;
+        fs::write(root.join("b.txt"), "x")?;
+        fs::write(root.join("a.txt"), "x")?;
 
-        let file_cache = Arc::new(FileSystemCache::new());
-        let engine = ScanningEngine::with_cache(pattern_processor, 3, Some(file_cache));
+        let (count, names) = ScanningEngine::list_root(root);
+        assert_eq!(count, 3, "directories count towards the size guard");
+        assert_eq!(names, vec!["a.txt".to_string(), "b.txt".to_string()]);
 
-        let temp_dir = create_test_rust_project().map_err(|e| anyhow::anyhow!("{}", e))?;
-        let matches = engine.scan(temp_dir.path())?;
-        assert!(!matches.is_empty());
-
+        assert_eq!(
+            ScanningEngine::list_root(&root.join("missing")),
+            (0, vec![])
+        );
+        assert_eq!(
+            ScanningEngine::list_root(TempDir::new()?.path()),
+            (0, vec![])
+        );
         Ok(())
     }
 
@@ -306,7 +316,7 @@ mod tests {
         // Detection must survive the extreme-size bailout via the root
         // exact-pattern check
         let pattern_processor = PatternProcessor::new(patterns);
-        let engine = ScanningEngine::with_cache(pattern_processor, 3, None);
+        let engine = ScanningEngine::new(pattern_processor, 3);
 
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
@@ -326,7 +336,7 @@ mod tests {
         let patterns = Arc::new(vec!["*.rs".to_string()]);
         let pattern_processor = PatternProcessor::new(patterns);
 
-        let engine = ScanningEngine::with_cache(pattern_processor, 1, None); // Very low depth to trigger timeout
+        let engine = ScanningEngine::new(pattern_processor, 1); // Very low depth to trigger timeout
 
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
@@ -386,8 +396,10 @@ mod tests {
         fs::write(src.join("lib.rs"), "// lib")?;
 
         let matches = engine.scan(root)?;
-        // Adaptive timeout may result in empty matches, just verify function completes
-        let _ = matches;
+        assert!(
+            matches.iter().any(|m| m.relative_path == "src/lib.rs"),
+            "nested file within max_depth must be found: {matches:?}"
+        );
 
         Ok(())
     }
@@ -458,26 +470,27 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_file_counter_thread_safe() -> Result<()> {
+    fn test_repeated_scans_are_identical() -> Result<()> {
         let engine = create_test_engine();
         let temp_dir = create_test_rust_project().map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        // Test that file counter works correctly with multiple sequential scans
-        for _ in 0..4 {
-            let matches = engine.scan(temp_dir.path())?;
-            // File counter should work without panicking, results may vary
-            let _ = matches;
+        let paths =
+            |v: Vec<MatchedFile>| v.into_iter().map(|m| m.relative_path).collect::<Vec<_>>();
+        let first = paths(engine.scan(temp_dir.path())?);
+        assert!(!first.is_empty());
+        for _ in 0..3 {
+            assert_eq!(first, paths(engine.scan(temp_dir.path())?));
         }
 
         Ok(())
     }
 
     #[test]
-    fn test_scan_timeout_exceeded_scenario() -> Result<()> {
+    fn test_scan_ignores_files_beyond_max_depth() -> Result<()> {
         let patterns = Arc::new(vec!["*.rs".to_string()]);
         let pattern_processor = PatternProcessor::new(patterns);
 
-        let engine = ScanningEngine::with_cache(pattern_processor, 1, None);
+        let engine = ScanningEngine::new(pattern_processor, 1);
 
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
@@ -493,10 +506,9 @@ mod tests {
             }
         }
 
+        // lib.rs files sit three levels down, beyond max_depth = 1
         let matches = engine.scan(root)?;
-        // Should return some matches even if timeout occurred, but may be empty due to timeout
-        // The important thing is that the function doesn't panic
-        let _ = matches;
+        assert!(matches.is_empty(), "files beyond max_depth: {matches:?}");
 
         Ok(())
     }
@@ -510,7 +522,7 @@ mod tests {
             "*.rs".to_string(),
             "Cargo.toml".to_string(),
         ]);
-        let engine = ScanningEngine::with_cache(PatternProcessor::new(patterns), 1, None);
+        let engine = ScanningEngine::new(PatternProcessor::new(patterns), 1);
 
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
@@ -536,6 +548,51 @@ mod tests {
             };
             assert_eq!(names(&first), names(&again), "scan results must be stable");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_oversized_directory_keeps_wildcard_root_markers() -> Result<()> {
+        let patterns = Arc::new(vec!["*.csproj".to_string(), "go.mod".to_string()]);
+        let engine = ScanningEngine::new(PatternProcessor::new(patterns), 1);
+
+        let temp_dir = TempDir::new()?;
+        let root = temp_dir.path();
+        for i in 0..510 {
+            fs::write(root.join(format!("file_{i}.txt")), "x")?;
+        }
+        fs::write(root.join("App.csproj"), "<Project/>")?;
+        fs::write(root.join("go.mod"), "module x")?;
+
+        let names: Vec<String> = engine.scan(root)?.into_iter().map(|m| m.filename).collect();
+        assert!(names.contains(&"go.mod".to_string()));
+        assert!(
+            names.contains(&"App.csproj".to_string()),
+            "wildcard-only marker lost in an oversized directory: {names:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_timed_out_scan_is_reported_truncated() -> Result<()> {
+        let patterns = Arc::new(vec!["*.rs".to_string()]);
+        let engine = ScanningEngine::new(PatternProcessor::new(patterns), 1);
+        let temp_dir = TempDir::new()?;
+        for i in 0..20 {
+            fs::write(temp_dir.path().join(format!("f{i}.rs")), "x")?;
+        }
+        let traverser = FileSystemTraverser::new(1);
+
+        let (_, timed_out) = engine.scan_sequential(
+            temp_dir.path(),
+            &traverser,
+            TimeoutManager::with_timeout(std::time::Duration::ZERO),
+            Vec::new(),
+        )?;
+        assert!(timed_out, "an expired timeout must be reported");
+
+        let (matches, timed_out) = engine.scan_with_status(temp_dir.path())?;
+        assert!(!timed_out && !matches.is_empty());
         Ok(())
     }
 }

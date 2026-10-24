@@ -9,6 +9,7 @@ pub fn create_ruby_indicator() -> Indicator {
             RUBY_EXTENSION.to_string(),
             GEMFILE.to_string(),
             GEMFILE_LOCK.to_string(),
+            GEMSPEC_EXTENSION.to_string(),
             "Rakefile".to_string(),
             ".ruby-version".to_string(),
         ],

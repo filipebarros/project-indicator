@@ -3,6 +3,7 @@ use crate::patterns::simple_wildcard_match;
 use crate::performance::FileSystemCache;
 use crate::types::{DetectionConfig, Indicator};
 use crate::Result;
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -24,11 +25,13 @@ pub struct RootIndicatorEngine {
 }
 
 impl RootIndicatorEngine {
-    pub fn from_parts(indicators: Vec<Arc<Indicator>>, config: DetectionConfig) -> Self {
+    pub fn from_parts(mut indicators: Vec<Arc<Indicator>>, config: DetectionConfig) -> Self {
+        // Checked in priority order at every ancestor level: sort once here
+        indicators.sort_by_key(|indicator| indicator.priority);
         Self {
             indicators,
             config,
-            cached_home_dir: dirs::home_dir(),
+            cached_home_dir: std::env::home_dir().map(|h| h.canonicalize().unwrap_or(h)),
         }
     }
 
@@ -175,15 +178,15 @@ impl RootIndicatorEngine {
     ) -> Result<Option<FoundRootIndicator>> {
         let mut found_indicators = Vec::new();
 
-        // Optimization: Check high-priority indicators first for early exit
-        let mut indicators_by_priority: Vec<_> = self.indicators.iter().collect();
-        indicators_by_priority.sort_by_key(|indicator| indicator.priority);
+        // package.json is read and parsed at most once per directory, however
+        // many indicators (TypeScript, JavaScript) ask about it
+        let ts_deps = Cell::new(None);
 
         // Wildcard patterns (*.csproj, *.kt) can't be checked with a literal
         // stat; they need the directory listing, built at most once per level
         let mut listing: Option<Vec<String>> = None;
 
-        for indicator in indicators_by_priority {
+        for indicator in &self.indicators {
             for root_indicator in &indicator.root_indicators {
                 // The concrete filename that satisfied the pattern — for
                 // literals it is the pattern itself
@@ -192,10 +195,10 @@ impl RootIndicatorEngine {
                         .get_or_insert_with(|| {
                             std::fs::read_dir(path)
                                 .map(|entries| {
+                                    // Names only — no per-entry stat; candidates are
+                                    // checked with is_file() below
                                     let mut names: Vec<String> = entries
                                         .filter_map(|e| e.ok())
-                                        // files only (follows symlinks), not dirs
-                                        .filter(|e| e.path().is_file())
                                         .filter_map(|e| e.file_name().into_string().ok())
                                         .collect();
                                     // stable choice among several matches
@@ -205,7 +208,10 @@ impl RootIndicatorEngine {
                                 .unwrap_or_default()
                         })
                         .iter()
-                        .find(|name| simple_wildcard_match(name, &root_indicator.pattern))
+                        .find(|name| {
+                            simple_wildcard_match(name, &root_indicator.pattern)
+                                && path.join(name).is_file()
+                        })
                         .cloned()
                 } else {
                     file_cache
@@ -219,6 +225,7 @@ impl RootIndicatorEngine {
                         &indicator_path,
                         root_indicator,
                         indicator,
+                        &ts_deps,
                     )?;
 
                     // Use lower threshold for root discovery (0.2) to catch more indicators
@@ -260,6 +267,7 @@ impl RootIndicatorEngine {
         file_path: &Path,
         root_indicator: &crate::types::RootIndicator,
         indicator: &Arc<Indicator>,
+        ts_deps: &Cell<Option<bool>>,
     ) -> Result<f32> {
         match root_indicator.pattern.as_str() {
             CARGO_TOML => {
@@ -279,14 +287,22 @@ impl RootIndicatorEngine {
             }
             TSCONFIG_JSON => Ok(0.90),
             PACKAGE_JSON => {
+                let has_ts = || -> Result<bool> {
+                    if let Some(known) = ts_deps.get() {
+                        return Ok(known);
+                    }
+                    let computed = self.has_typescript_dependencies(file_path)?;
+                    ts_deps.set(Some(computed));
+                    Ok(computed)
+                };
                 if indicator.name == "TypeScript" {
-                    if self.has_typescript_dependencies(file_path)? {
+                    if has_ts()? {
                         Ok(0.85)
                     } else {
                         Ok(0.1)
                     }
                 } else if indicator.name == "JavaScript" {
-                    if self.has_typescript_dependencies(file_path)? {
+                    if has_ts()? {
                         Ok(0.1)
                     } else {
                         Ok(0.70)
@@ -351,15 +367,35 @@ impl RootIndicatorEngine {
         }
     }
 
+    /// True when package.json declares TypeScript tooling as a dependency
+    /// (`typescript`, `ts-node`, or any `@types/*`) in any dependency section.
+    /// Reads the parsed keys, not the raw text, so a prose mention or an ESM
+    /// `"type": "module"` marker can't count.
     fn has_typescript_dependencies(&self, path: &Path) -> Result<bool> {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            Ok(content.contains("typescript")
-                || content.contains("@types/")
-                || content.contains("ts-node")
-                || content.contains("\"type\": \"module\""))
-        } else {
-            Ok(false)
+        let Ok(content) = std::fs::read_to_string(path) else {
+            return Ok(false);
+        };
+        // Cheap pre-check: a matching KEY implies its text appears, so
+        // plain-JS manifests skip the JSON parse entirely
+        if !["typescript", "ts-node", "@types/"]
+            .iter()
+            .any(|needle| content.contains(needle))
+        {
+            return Ok(false);
         }
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+            return Ok(false);
+        };
+        Ok([
+            "dependencies",
+            "devDependencies",
+            "peerDependencies",
+            "optionalDependencies",
+        ]
+        .iter()
+        .filter_map(|section| json.get(section).and_then(|v| v.as_object()))
+        .flat_map(|deps| deps.keys())
+        .any(|k| k == "typescript" || k == "ts-node" || k.starts_with("@types/")))
     }
 }
 
@@ -651,7 +687,7 @@ mod tests {
             DetectionConfig::default(),
         );
 
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = std::env::home_dir() {
             assert!(engine.is_boundary_directory(&home));
         }
 
@@ -664,10 +700,6 @@ mod tests {
         }
 
         assert!(engine.is_boundary_directory(Path::new("/")));
-        // /usr and /System may not be considered boundary on all systems
-        // Just test that the function doesn't panic
-        let _ = engine.is_boundary_directory(Path::new("/usr"));
-        let _ = engine.is_boundary_directory(Path::new("/System"));
 
         let temp_dir = TempDir::new()?;
         assert!(!engine.is_boundary_directory(temp_dir.path()));
@@ -800,6 +832,40 @@ mod tests {
         let cache = Arc::new(FileSystemCache::new());
         let found = engine.find_project_root(temp_dir.path(), &cache)?;
         assert_eq!(found.map(|(_, f)| f.pattern), Some("A.csproj".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn test_typescript_detected_from_dependency_keys_only() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let engine = engine_for(vec![], DetectionConfig::default());
+        let dir = TempDir::new()?;
+        let check = |json: &str| -> Result<bool, Box<dyn std::error::Error>> {
+            let p = dir.path().join("package.json");
+            fs::write(&p, json)?;
+            Ok(engine.has_typescript_dependencies(&p)?)
+        };
+
+        // Real TypeScript signals, in any dependency section
+        assert!(check(r#"{"devDependencies":{"typescript":"^5"}}"#)?);
+        assert!(check(r#"{"dependencies":{"ts-node":"10"}}"#)?);
+        assert!(check(r#"{"devDependencies":{"@types/node":"20"}}"#)?);
+        assert!(check(r#"{"peerDependencies":{"typescript":">=4"}}"#)?);
+        // Not TypeScript: ESM modules (any spacing) and prose mentions
+        assert!(!check(
+            "{\"type\": \"module\", \"dependencies\": {\"express\": \"4\"}}"
+        )?);
+        assert!(!check(
+            "{\"type\":\"module\",\"dependencies\":{\"express\":\"4\"}}"
+        )?);
+        assert!(!check(
+            r#"{"description":"typescript lover","dependencies":{"express":"4"}}"#
+        )?);
+        assert!(!check(
+            r#"{"scripts":{"lint":"ts-node check"},"dependencies":{}}"#
+        )?);
+        // Unparsable manifest: no guess
+        assert!(!check("{not json")?);
         Ok(())
     }
 }
