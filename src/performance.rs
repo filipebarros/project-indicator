@@ -5,9 +5,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// Per-run memoization of whether a path exists.
 ///
-/// The cache lives for a single detection run (one CLI invocation), so there
-/// is no TTL and no eviction: the set of paths touched during one run is
-/// naturally bounded by the scan, and the process exits when the run ends.
+/// No TTL or eviction: lives for a single CLI invocation.
 #[derive(Debug, Default)]
 pub struct FileSystemCache {
     exists: Mutex<HashMap<PathBuf, bool>>,
@@ -61,7 +59,6 @@ mod tests {
 
         assert!(!cache.exists(&path));
 
-        // Negative results are memoized too
         fs::write(&path, "x")?;
         assert!(!cache.exists(&path));
         Ok(())

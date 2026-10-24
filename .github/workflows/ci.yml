@@ -277,15 +277,11 @@ jobs:
       run: |
         cargo build --release
 
-        # Test basic CLI functionality
         ./target/release/project-indicator --help
         ./target/release/project-indicator --format json
 
-        # Test config path resolution (OS-specific)
         ./target/release/project-indicator config validate || echo "No config found (expected)"
 
-        # Test color detection (OS-specific environment variables)
         NO_COLOR=1 ./target/release/project-indicator --format full
 
-        # Test current directory detection
         ./target/release/project-indicator --format simple

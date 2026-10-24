@@ -173,7 +173,6 @@ impl ParsedFileCache {
             .with_context(|| format!("Failed to get metadata for: {}", file_path.display()))?;
 
         if metadata.len() > MAX_FILE_SIZE {
-            // Read but don't cache oversized files
             let content = read_text(file_path)
                 .with_context(|| format!("Failed to read large file: {}", file_path.display()))?;
             lock(&self.oversized).push(file_path.to_path_buf());
@@ -298,7 +297,6 @@ mod tests {
             "parsed JSON should expose fields"
         );
 
-        // Second lookup hits the parsed-value memo
         let value = cache.get_json_value(&file_path)?.ok_or("expected JSON")?;
         assert_eq!(value.get("version").and_then(|v| v.as_str()), Some("1.0.0"));
         Ok(())

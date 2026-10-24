@@ -1,7 +1,4 @@
-//! Type definitions for project-indicator.
-//!
-//! This module contains all the core types used throughout the project-indicator codebase.
-//! Types are organized into logical submodules for better maintainability.
+//! Core types, split by domain.
 
 mod config;
 mod detection;

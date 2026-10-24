@@ -1,18 +1,6 @@
-//! Snapshot-style detection tests over real project fixtures.
-//!
-//! Each directory in `tests/fixtures/` is a minimal real project. This test
-//! runs the full detection pipeline (built-in full template, as used when no
-//! user config exists) against a copy of each fixture and asserts the
-//! detected language and framework set.
-//!
 //! Fixtures are copied to a temp directory first: detecting them in place
 //! would let upward root-indicator traversal find this repo's own
 //! `Cargo.toml`/`.git` and report everything as Rust.
-//!
-//! The table records intended behavior: framework detection runs whenever a
-//! language is selected — the presence of a framework dependency in a
-//! manifest is evidence in its own right, not a reward for a high language
-//! confidence score.
 
 use project_indicator::{config::TemplateGenerator, detection::DetectionEngine};
 use std::fs;

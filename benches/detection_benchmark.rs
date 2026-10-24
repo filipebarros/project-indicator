@@ -10,12 +10,10 @@ use std::hint::black_box;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-/// Create a realistic monorepo project with multiple languages and frameworks
 fn setup_monorepo(temp_dir: &TempDir) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     let base = temp_dir.path();
     let mut project_paths = Vec::new();
 
-    // Backend - Node.js with Express
     let backend_node = base.join("backend/node");
     fs::create_dir_all(&backend_node)?;
     fs::write(
@@ -28,14 +26,12 @@ fn setup_monorepo(temp_dir: &TempDir) -> Result<Vec<PathBuf>, Box<dyn std::error
     )?;
     project_paths.push(backend_node);
 
-    // Backend - Python with Django
     let backend_python = base.join("backend/python");
     fs::create_dir_all(&backend_python)?;
     fs::write(backend_python.join("requirements.txt"), "django\n")?;
     fs::write(backend_python.join("manage.py"), "#!/usr/bin/env python\n")?;
     project_paths.push(backend_python);
 
-    // Backend - Rust with Actix
     let backend_rust = base.join("backend/rust");
     fs::create_dir_all(&backend_rust)?;
     fs::write(
@@ -51,7 +47,6 @@ actix-web = "4.0"
     fs::write(backend_rust.join("main.rs"), "use actix_web::*;")?;
     project_paths.push(backend_rust);
 
-    // Frontend - React with Next.js
     let frontend = base.join("frontend");
     fs::create_dir_all(&frontend)?;
     fs::write(
@@ -61,7 +56,6 @@ actix-web = "4.0"
     fs::write(frontend.join("App.tsx"), "import React from 'react';")?;
     project_paths.push(frontend);
 
-    // Mobile - Kotlin with Ktor
     let mobile = base.join("mobile/android");
     fs::create_dir_all(&mobile)?;
     fs::write(
@@ -73,7 +67,6 @@ actix-web = "4.0"
     fs::write(mobile.join("Main.kt"), "package com.example\n")?;
     project_paths.push(mobile);
 
-    // Infrastructure - Go
     let infra = base.join("infrastructure");
     fs::create_dir_all(&infra)?;
     fs::write(infra.join("go.mod"), "module github.com/example/infra\n")?;
@@ -83,7 +76,6 @@ actix-web = "4.0"
     Ok(project_paths)
 }
 
-/// Create a large project with many files to stress-test scanning
 fn setup_large_project(
     temp_dir: &TempDir,
     file_count: usize,
@@ -116,7 +108,6 @@ tokio = "1.0"
     Ok(base.to_path_buf())
 }
 
-/// Create a deep nested project structure
 fn setup_deep_nested_project(
     temp_dir: &TempDir,
     depth: usize,
@@ -133,7 +124,6 @@ fn setup_deep_nested_project(
         )?;
     }
 
-    // Add package.json at the deepest level
     fs::write(
         current.join("package.json"),
         r#"{"dependencies": {"react": "^18.0.0"}}"#,
@@ -142,7 +132,6 @@ fn setup_deep_nested_project(
     Ok(current)
 }
 
-/// Benchmark full detection pipeline on monorepo
 fn benchmark_monorepo_detection(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let mut group = c.benchmark_group("monorepo_detection");
 
@@ -171,7 +160,6 @@ fn benchmark_monorepo_detection(c: &mut Criterion) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-/// Benchmark scaling with file count
 fn benchmark_file_count_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let mut group = c.benchmark_group("file_count_scaling");
 
@@ -196,7 +184,6 @@ fn benchmark_file_count_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-/// Benchmark upward traversal performance
 fn benchmark_upward_traversal(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let mut group = c.benchmark_group("upward_traversal");
 
@@ -221,11 +208,9 @@ fn benchmark_upward_traversal(c: &mut Criterion) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-/// Benchmark detection cost on strong vs weak root-indicator projects
 fn benchmark_indicator_strength(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let mut group = c.benchmark_group("indicator_strength");
 
-    // Project with a strong root indicator (Cargo.toml in the scanned directory)
     let temp_dir_strong =
         TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
     fs::write(
@@ -239,7 +224,6 @@ fn benchmark_indicator_strength(c: &mut Criterion) -> Result<(), Box<dyn std::er
     )
     .map_err(|e| format!("Failed to write Cargo.lock: {}", e))?;
 
-    // Bulk files alongside the root indicator to make the scan non-trivial
     let src = temp_dir_strong.path().join("src");
     fs::create_dir_all(&src).map_err(|e| format!("Failed to create src: {}", e))?;
     for i in 0..100 {
@@ -262,7 +246,6 @@ fn benchmark_indicator_strength(c: &mut Criterion) -> Result<(), Box<dyn std::er
         });
     });
 
-    // Project with weak indicators (needs full scan)
     let temp_dir_weak = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
     for i in 0..100 {
         fs::write(
@@ -319,7 +302,6 @@ fn benchmark_cache_effectiveness(c: &mut Criterion) -> Result<(), Box<dyn std::e
 
     c.bench_function("repeated_detection_with_cache", |b| {
         b.iter(|| {
-            // Simulate shell prompt behavior - detect same directory multiple times
             for _ in 0..5 {
                 if let Err(e) = engine.detect(black_box(temp_dir.path())) {
                     eprintln!("Detection failed: {}", e);
@@ -331,7 +313,6 @@ fn benchmark_cache_effectiveness(c: &mut Criterion) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-/// Create a multi-framework Node.js project
 fn create_node_multi_framework_project() -> Result<TempDir, Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
@@ -359,7 +340,6 @@ fn create_node_multi_framework_project() -> Result<TempDir, Box<dyn std::error::
     Ok(temp_dir)
 }
 
-/// Create a Rust project with multiple frameworks
 fn create_rust_multi_framework_project() -> Result<TempDir, Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
@@ -388,7 +368,6 @@ warp = "0.3"
     Ok(temp_dir)
 }
 
-/// Create a Python project with multiple frameworks
 fn create_python_multi_framework_project() -> Result<TempDir, Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
@@ -407,7 +386,6 @@ pydantic==2.0.0
     Ok(temp_dir)
 }
 
-/// Create a polyglot project with multiple languages
 fn create_polyglot_project() -> Result<TempDir, Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
@@ -435,7 +413,6 @@ fn create_polyglot_project() -> Result<TempDir, Box<dyn std::error::Error>> {
     Ok(temp_dir)
 }
 
-/// Benchmark single language detection
 fn benchmark_single_language_detection(
     c: &mut Criterion,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -478,7 +455,6 @@ fn benchmark_single_language_detection(
     Ok(())
 }
 
-/// Benchmark polyglot project detection
 fn benchmark_polyglot_detection(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let config = TemplateGenerator::generate_template(Some("full"))
         .map_err(|e| format!("Failed to generate template: {}", e))?;
@@ -498,7 +474,6 @@ fn benchmark_polyglot_detection(c: &mut Criterion) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-/// Benchmark framework count scaling
 fn benchmark_framework_count_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let config = TemplateGenerator::generate_template(Some("full"))
         .map_err(|e| format!("Failed to generate template: {}", e))?;

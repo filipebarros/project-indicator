@@ -1,4 +1,3 @@
-// Package/manifest files
 pub const PACKAGE_JSON: &str = "package.json";
 pub const CARGO_TOML: &str = "Cargo.toml";
 pub const PYPROJECT_TOML: &str = "pyproject.toml";
@@ -31,7 +30,6 @@ pub const CARGO_LOCK: &str = "Cargo.lock";
 pub const PUBSPEC_LOCK: &str = "pubspec.lock";
 pub const LUAROCKS_LOCK: &str = "luarocks.lock";
 
-// JavaScript/TypeScript
 pub const JS_EXTENSION: &str = "*.js";
 pub const MJS_EXTENSION: &str = "*.mjs";
 pub const CJS_EXTENSION: &str = "*.cjs";
@@ -40,7 +38,6 @@ pub const MTS_EXTENSION: &str = "*.mts";
 pub const CTS_EXTENSION: &str = "*.cts";
 pub const TSX_EXTENSION: &str = "*.tsx";
 
-// Systems languages
 pub const RS_EXTENSION: &str = "*.rs";
 pub const C_EXTENSION: &str = "*.c";
 pub const CPP_EXTENSION: &str = "*.cpp";
@@ -53,13 +50,11 @@ pub const GO_EXTENSION: &str = "*.go";
 pub const ZIG_EXTENSION: &str = "*.zig";
 pub const SWIFT_EXTENSION: &str = "*.swift";
 
-// JVM languages
 pub const JAVA_EXTENSION: &str = "*.java";
 pub const KOTLIN_EXTENSION: &str = "*.kt";
 pub const KOTLIN_SCRIPT_EXTENSION: &str = "*.kts";
 pub const SCALA_EXTENSION: &str = "*.scala";
 
-// Dynamic languages
 pub const PY_EXTENSION: &str = "*.py";
 pub const PYTHON_WINDOWS_EXTENSION: &str = "*.pyw";
 pub const PYTHON_INTERFACE_EXTENSION: &str = "*.pyi";
@@ -67,10 +62,8 @@ pub const RUBY_EXTENSION: &str = "*.rb";
 pub const PHP_EXTENSION: &str = "*.php";
 pub const JULIA_EXTENSION: &str = "*.jl";
 
-// Other
 pub const DART_EXTENSION: &str = "*.dart";
 
-// Project/Build files
 pub const GEMSPEC_EXTENSION: &str = "*.gemspec";
 pub const XCWORKSPACE_EXTENSION: &str = "*.xcworkspace";
 pub const VCXPROJ_EXTENSION: &str = "*.vcxproj";

@@ -67,13 +67,11 @@ pub struct PersistentCache {
 }
 
 impl PersistentCache {
-    /// Cache rooted at an explicit base directory (used by tests).
     pub fn at_base(base: PathBuf) -> Self {
         Self { base }
     }
 
-    /// Cache at the platform default location:
-    /// `$XDG_CACHE_HOME` if set, else `~/.cache`, plus `project-indicator/results`.
+    /// `$XDG_CACHE_HOME` if set, else `~/.cache`.
     pub fn default_location() -> Option<Self> {
         let cache_home = std::env::var_os("XDG_CACHE_HOME")
             .map(PathBuf::from)
@@ -85,10 +83,6 @@ impl PersistentCache {
         ))
     }
 
-    /// Load a cached result for `dir` if present and still valid.
-    ///
-    /// Any error (missing file, corrupt JSON, mtime mismatch, version or
-    /// config change) is a cache miss.
     pub fn load(
         &self,
         dir: &Path,
@@ -226,7 +220,6 @@ impl PersistentCache {
         Ok(write?)
     }
 
-    /// Delete all cached entries.
     pub fn clear(&self) -> crate::Result<()> {
         if self.base.exists() {
             fs::remove_dir_all(&self.base)?;
@@ -520,6 +513,18 @@ mod tests {
             .write(true)
             .open(path)?
             .set_modified(t)?;
+        Ok(())
+    }
+
+    fn set_dir_mtime(path: &Path, t: SystemTime) -> Result<(), Box<dyn std::error::Error>> {
+        let mut options = fs::File::options();
+        // Unix cannot open a directory for writing; Windows needs write access
+        // plus FILE_FLAG_BACKUP_SEMANTICS to open one at all
+        #[cfg(windows)]
+        std::os::windows::fs::OpenOptionsExt::custom_flags(options.write(true), 0x0200_0000);
+        #[cfg(not(windows))]
+        options.read(true);
+        options.open(path)?.set_modified(t)?;
         Ok(())
     }
 
@@ -992,7 +997,7 @@ mod tests {
         let result = rooted(test_result("Cargo.toml"), project.path());
         let long_ago = SystemTime::now() - MTIME_SLACK * 10;
         set_file_mtime(&project.path().join("Cargo.toml"), long_ago)?;
-        fs::File::open(project.path())?.set_modified(long_ago)?;
+        set_dir_mtime(project.path(), long_ago)?;
 
         cache.store(
             project.path(),

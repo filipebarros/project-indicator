@@ -9,7 +9,6 @@ use std::fs;
 use std::hint::black_box;
 use tempfile::TempDir;
 
-/// Pattern matching micro-benchmarks (pure function, no state)
 fn benchmark_pattern_matching(c: &mut Criterion) {
     let mut group = c.benchmark_group("pattern_matching");
 
@@ -47,7 +46,6 @@ fn benchmark_pattern_matching(c: &mut Criterion) {
         });
     });
 
-    // Realistic workload: many files against few patterns
     let filenames: Vec<String> = (0..100)
         .map(|i| format!("src/module_{}/file_{}.rs", i / 10, i))
         .collect();
@@ -65,7 +63,6 @@ fn benchmark_pattern_matching(c: &mut Criterion) {
     group.finish();
 }
 
-/// Create a temp directory with multiple files for testing
 fn create_test_files(count: usize) -> Result<TempDir, Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
@@ -78,13 +75,11 @@ fn create_test_files(count: usize) -> Result<TempDir, Box<dyn std::error::Error>
     Ok(temp_dir)
 }
 
-/// Benchmark cache hit performance (warm cache)
 fn benchmark_cache_hits(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let mut group = c.benchmark_group("cache_hits");
     let cache = FileSystemCache::default();
     let temp_dir = create_test_files(100)?;
 
-    // Warm up cache with all files
     for i in 0..100 {
         let path = temp_dir.path().join(format!("file_{}.txt", i));
         cache.exists(&path);
@@ -103,7 +98,6 @@ fn benchmark_cache_hits(c: &mut Criterion) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-/// Benchmark cache miss performance (cold cache)
 fn benchmark_cache_misses(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let mut group = c.benchmark_group("cache_misses");
     let temp_dir = create_test_files(100)?;
@@ -122,7 +116,6 @@ fn benchmark_cache_misses(c: &mut Criterion) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-/// Benchmark cache performance with different file counts
 fn benchmark_cache_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let mut group = c.benchmark_group("cache_scaling");
 
@@ -130,7 +123,6 @@ fn benchmark_cache_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::
         let temp_dir = create_test_files(*count)?;
         let cache = FileSystemCache::default();
 
-        // Warm up cache
         for i in 0..*count {
             let path = temp_dir.path().join(format!("file_{}.txt", i));
             cache.exists(&path);
@@ -150,13 +142,11 @@ fn benchmark_cache_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-/// Benchmark JSON parsing with caching
 fn benchmark_json_parsing(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let mut group = c.benchmark_group("json_parsing");
 
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
-    // Create a realistic package.json
     let package_json = r#"{
   "name": "test-project",
   "version": "1.0.0",
@@ -190,7 +180,6 @@ fn benchmark_json_parsing(c: &mut Criterion) -> Result<(), Box<dyn std::error::E
     group.bench_function("json_warm_cache", |b| {
         let cache = ParsedFileCache::new();
         let package_json_path = temp_dir.path().join("package.json");
-        // Pre-warm
         if let Err(e) = cache.get_json_value(&package_json_path) {
             eprintln!("JSON parsing failed: {}", e);
         }
@@ -219,13 +208,11 @@ fn benchmark_json_parsing(c: &mut Criterion) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-/// Benchmark TOML parsing with caching
 fn benchmark_toml_parsing(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let mut group = c.benchmark_group("toml_parsing");
 
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
-    // Create a realistic Cargo.toml
     let cargo_toml = r#"[package]
 name = "project-indicator"
 version = "0.3.0"
@@ -267,7 +254,6 @@ tempfile = "3.0"
     group.bench_function("toml_warm_cache", |b| {
         let cache = ParsedFileCache::new();
         let cargo_toml_path = temp_dir.path().join("Cargo.toml");
-        // Pre-warm
         if let Err(e) = cache.get_toml_value(&cargo_toml_path) {
             eprintln!("TOML parsing failed: {}", e);
         }
@@ -296,7 +282,6 @@ tempfile = "3.0"
     Ok(())
 }
 
-/// Benchmark mixed file types
 fn benchmark_mixed_access(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
@@ -346,7 +331,6 @@ version = "0.1.0"
     Ok(())
 }
 
-/// Benchmark parse failure handling
 fn benchmark_parse_failures(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
@@ -365,7 +349,6 @@ fn benchmark_parse_failures(c: &mut Criterion) -> Result<(), Box<dyn std::error:
 
     c.bench_function("parse_failure_json_cached", |b| {
         let cache = ParsedFileCache::new();
-        // First attempt to cache the failure
         let _ = cache.get_json_value(temp_dir.path().join("bad.json"));
 
         b.iter(|| {

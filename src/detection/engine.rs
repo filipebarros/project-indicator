@@ -35,11 +35,6 @@ const ROOT_MATCH_OVERRIDE_CERTAINTY: f32 = 0.8;
 
 /// Detects the project type and frameworks of one directory: root discovery,
 /// scan, indicator resolution, confidence, then framework detection.
-///
-/// ```rust
-/// # use project_indicator::detection::engine::DetectionEngine;
-/// let engine = DetectionEngine::new(vec![/* indicators */], vec![]);
-/// ```
 pub struct DetectionEngine {
     indicators: Vec<Arc<Indicator>>,
     frameworks: Arc<Vec<Framework>>,

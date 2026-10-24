@@ -136,7 +136,6 @@ fn test_binary_end_to_end_cache_behavior() -> Result<(), Box<dyn std::error::Err
         "cached output must be identical to fresh output"
     );
 
-    // --no-cache must not read or write
     fs::remove_dir_all(&results_dir)?;
     let third = run(&["--no-cache"])?;
     assert!(third.status.success());
