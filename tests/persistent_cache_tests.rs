@@ -17,6 +17,9 @@ fn react_project() -> Result<TempDir, Box<dyn std::error::Error>> {
         r#"{"name": "app", "dependencies": {"react": "^18.2.0"}}"#,
     )?;
     fs::write(project.path().join("tsconfig.json"), "{}")?;
+    // The cache won't store a result computed from files modified within a
+    // few ms of the run (coarse mtime clocks): let the files age past that
+    std::thread::sleep(std::time::Duration::from_millis(40));
     Ok(project)
 }
 
@@ -35,7 +38,14 @@ fn test_cached_result_renders_identically() -> Result<(), Box<dyn std::error::Er
     );
 
     let fresh = engine.detect(project.path())?;
-    cache.store(project.path(), None, &fresh, &config.display);
+    cache.store(
+        project.path(),
+        None,
+        &fresh,
+        &config.display,
+        &config.detection,
+        std::time::SystemTime::now(),
+    );
 
     let (cached, display) = cache
         .load(project.path(), None)
@@ -68,7 +78,14 @@ fn test_manifest_edit_invalidates_entry() -> Result<(), Box<dyn std::error::Erro
         fresh.frameworks.iter().any(|f| f.framework.name == "React"),
         "precondition: React detected"
     );
-    cache.store(project.path(), None, &fresh, &config.display);
+    cache.store(
+        project.path(),
+        None,
+        &fresh,
+        &config.display,
+        &config.detection,
+        std::time::SystemTime::now(),
+    );
     assert!(cache.load(project.path(), None).is_some());
 
     std::thread::sleep(std::time::Duration::from_millis(20));
@@ -208,6 +225,219 @@ fn test_unparsable_config_soft_fallback() -> Result<(), Box<dyn std::error::Erro
     assert!(
         stdout.contains("\"indicator\":\"TypeScript\""),
         "fallback template must detect the project, got: {stdout}"
+    );
+    Ok(())
+}
+
+fn engine_with_depth(
+    max_depth: usize,
+) -> Result<(DetectionEngine, project_indicator::config::Config), Box<dyn std::error::Error>> {
+    let mut config = TemplateGenerator::generate_template(Some("full"))?;
+    config.detection.max_depth = max_depth;
+    // Track only the sandbox parent: the shared temp dir above it churns
+    // under parallel tests and would make every load miss for the wrong reason
+    config.detection.max_upward_traversal = 1;
+    let engine = DetectionEngine::with_config(
+        config.indicators.clone(),
+        config.frameworks.clone(),
+        config.detection.clone(),
+    );
+    Ok((engine, config))
+}
+
+fn store_fresh(
+    cache: &PersistentCache,
+    engine: &DetectionEngine,
+    config: &project_indicator::config::Config,
+    dir: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let fresh = engine.detect(dir)?;
+    cache.store(
+        dir,
+        None,
+        &fresh,
+        &config.display,
+        &config.detection,
+        std::time::SystemTime::now(),
+    );
+    assert!(cache.load(dir, None).is_some(), "precondition: stored");
+    // Let mtimes tick past filesystem granularity before the change
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    Ok(())
+}
+
+/// With max_depth > 1 the scan lists subdirectories, so a change inside one
+/// of them can change the result and must invalidate the entry.
+#[test]
+fn test_change_in_scanned_subdirectory_invalidates_entry() -> Result<(), Box<dyn std::error::Error>>
+{
+    let sandbox = TempDir::new()?;
+    let project = sandbox.path().join("proj");
+    fs::create_dir_all(project.join(".git"))?;
+    fs::create_dir(project.join("src"))?;
+    fs::write(project.join("src").join("App.csproj"), "<Project/>")?;
+    let cache_dir = TempDir::new()?;
+    let cache = PersistentCache::at_base(cache_dir.path().join("results"));
+    let (engine, config) = engine_with_depth(3)?;
+    store_fresh(&cache, &engine, &config, &project)?;
+
+    fs::write(project.join("src").join("Cargo.toml"), "[package]")?;
+    assert!(
+        cache.load(&project, None).is_none(),
+        "a new file in a scanned subdirectory must miss"
+    );
+    Ok(())
+}
+
+/// Ignore files shape the walk; editing one in place leaves every directory
+/// mtime untouched.
+#[test]
+fn test_in_place_gitignore_edit_invalidates_entry() -> Result<(), Box<dyn std::error::Error>> {
+    let sandbox = TempDir::new()?;
+    let project = sandbox.path().join("proj");
+    fs::create_dir(&project)?;
+    fs::write(project.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
+    fs::write(project.join(".gitignore"), "target\n")?;
+    let cache_dir = TempDir::new()?;
+    let cache = PersistentCache::at_base(cache_dir.path().join("results"));
+    let (engine, config) = engine_with_depth(1)?;
+    store_fresh(&cache, &engine, &config, &project)?;
+
+    fs::write(project.join(".gitignore"), "target\nbuild\n")?;
+    assert!(
+        cache.load(&project, None).is_none(),
+        "an edited .gitignore must miss"
+    );
+    Ok(())
+}
+
+/// A probed source directory (src/main/java) appearing later changes the
+/// language, but not the project root's mtime.
+#[test]
+fn test_probed_directory_created_later_invalidates_entry() -> Result<(), Box<dyn std::error::Error>>
+{
+    let sandbox = TempDir::new()?;
+    let project = sandbox.path().join("proj");
+    fs::create_dir_all(project.join("src"))?;
+    fs::write(project.join("build.gradle.kts"), "")?;
+    let cache_dir = TempDir::new()?;
+    let cache = PersistentCache::at_base(cache_dir.path().join("results"));
+    let (engine, config) = engine_with_depth(1)?;
+    store_fresh(&cache, &engine, &config, &project)?;
+
+    fs::create_dir_all(project.join("src").join("main").join("java"))?;
+    assert!(
+        cache.load(&project, None).is_none(),
+        "a newly created src/main/java must miss"
+    );
+    Ok(())
+}
+
+/// A tracked file modified after detection began may belong to a result that
+/// was computed from its previous content: such a result must not be stored.
+#[test]
+fn test_change_during_detection_is_not_cached() -> Result<(), Box<dyn std::error::Error>> {
+    let sandbox = TempDir::new()?;
+    let project = sandbox.path().join("proj");
+    fs::create_dir(&project)?;
+    fs::write(project.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
+    let cache_dir = TempDir::new()?;
+    let cache = PersistentCache::at_base(cache_dir.path().join("results"));
+    let (engine, config) = engine_with_depth(1)?;
+    let fresh = engine.detect(&project)?;
+
+    // "Detection started" before the files were last modified
+    cache.store(
+        &project,
+        None,
+        &fresh,
+        &config.display,
+        &config.detection,
+        std::time::UNIX_EPOCH,
+    );
+    assert!(cache.load(&project, None).is_none());
+    Ok(())
+}
+
+/// A framework detected by a file in a subdirectory (Tauri's `src-tauri/`)
+/// appears without touching the project root or any listed directory.
+#[test]
+fn test_file_exists_probe_in_a_subdirectory_invalidates_entry(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let sandbox = TempDir::new()?;
+    let project = sandbox.path().join("proj");
+    fs::create_dir_all(project.join("src-tauri"))?;
+    fs::write(
+        project.join("package.json"),
+        r#"{"dependencies":{"react":"18"}}"#,
+    )?;
+    fs::write(project.join("src-tauri").join("main.rs"), "fn main() {}")?;
+    let cache_dir = TempDir::new()?;
+    let cache = PersistentCache::at_base(cache_dir.path().join("results"));
+    let (engine, config) = engine_with_depth(1)?;
+    store_fresh(&cache, &engine, &config, &project)?;
+
+    fs::write(project.join("src-tauri").join("tauri.conf.json"), "{}")?;
+    assert!(
+        cache.load(&project, None).is_none(),
+        "a new src-tauri/tauri.conf.json must miss"
+    );
+    Ok(())
+}
+
+/// A lockfile only a matcher reads (no indicator pattern lists pubspec.lock)
+/// can change the frameworks when edited in place.
+#[test]
+fn test_file_read_only_by_a_matcher_invalidates_entry() -> Result<(), Box<dyn std::error::Error>> {
+    let sandbox = TempDir::new()?;
+    let project = sandbox.path().join("proj");
+    fs::create_dir(&project)?;
+    fs::write(project.join("pubspec.yaml"), "name: x\n")?;
+    fs::write(
+        project.join("pubspec.lock"),
+        "packages:\n  http:\n    dependency: direct\n",
+    )?;
+    let cache_dir = TempDir::new()?;
+    let cache = PersistentCache::at_base(cache_dir.path().join("results"));
+    let (engine, config) = engine_with_depth(1)?;
+    store_fresh(&cache, &engine, &config, &project)?;
+
+    fs::write(
+        project.join("pubspec.lock"),
+        "packages:\n  flutter:\n    dependency: direct\n",
+    )?;
+    assert!(
+        cache.load(&project, None).is_none(),
+        "an edited pubspec.lock must miss"
+    );
+    Ok(())
+}
+
+/// With require_vcs_root the VCS marker above the root decides whether the
+/// root counts, so removing it must invalidate even a root found at `dir`.
+#[test]
+fn test_vcs_marker_above_the_root_is_watched() -> Result<(), Box<dyn std::error::Error>> {
+    let sandbox = TempDir::new()?;
+    let start = sandbox.path().join("a").join("b");
+    fs::create_dir_all(&start)?;
+    fs::create_dir(sandbox.path().join("a").join(".git"))?;
+    fs::write(start.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
+    let cache_dir = TempDir::new()?;
+    let cache = PersistentCache::at_base(cache_dir.path().join("results"));
+    let (_, mut config) = engine_with_depth(1)?;
+    config.detection.require_vcs_root = true;
+    config.detection.max_upward_traversal = 2;
+    let engine = DetectionEngine::with_config(
+        config.indicators.clone(),
+        config.frameworks.clone(),
+        config.detection.clone(),
+    );
+    store_fresh(&cache, &engine, &config, &start)?;
+
+    fs::remove_dir(sandbox.path().join("a").join(".git"))?;
+    assert!(
+        cache.load(&start, None).is_none(),
+        "removing the .git that validated the root must miss"
     );
     Ok(())
 }

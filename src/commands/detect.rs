@@ -29,15 +29,15 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
 
     if let Some(cache) = &cache {
         if let Some((result, display)) = cache.load(&path, config_path.as_deref()) {
-            // Cache hit: render from the cached result and display snapshot,
-            // skipping config parsing and engine construction.
-            println!("{}", render(&result, format, &display));
+            outln!("{}", render(&result, format, &display));
             return Ok(());
         }
     }
 
+    let started = project_indicator::cache::detection_started();
     let config = ConfigParser::load_default()?;
     let mut detection_config = config.detection;
+    let cached_detection = detection_config.clone();
 
     if let Some(max_depth) = cli.max_depth {
         detection_config.max_depth = max_depth;
@@ -48,15 +48,19 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
 
     let result = engine.detect(&path)?;
 
-    let display_config = config.display;
-
     // A timed-out scan is a partial, load-dependent sample: never persist it
     if let (Some(cache), false) = (&cache, result.evidence.scan_truncated) {
-        cache.store(&path, config_path.as_deref(), &result, &display_config);
+        cache.store(
+            &path,
+            config_path.as_deref(),
+            &result,
+            &config.display,
+            &cached_detection,
+            started,
+        );
     }
 
-    let output = render(&result, format, &display_config);
-    println!("{}", output);
+    outln!("{}", render(&result, format, &config.display));
 
     Ok(())
 }

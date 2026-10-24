@@ -1,11 +1,7 @@
-//! File scanning module with adaptive performance optimization
-//!
-//! This module provides efficient, deterministic file system scanning:
-//! - A sorted walk (stable results across runs and platforms)
-//! - Root-level manifests always kept, ahead of the match cap
-//! - Adaptive timeout management
-//! - A match cap to bound memory and scan time
-//! - GitIgnore support
+//! Deterministic file scanning: a name-sorted, gitignore-aware walk bounded
+//! by a match cap and a size-scaled timeout. Root-level manifests are always
+//! kept ahead of the cap, and root-level files are topped up if a busy
+//! subdirectory exhausts it.
 //!
 //! # Example
 //!
@@ -22,11 +18,16 @@
 //! // Create scanning engine with max depth of 3
 //! let engine = ScanningEngine::new(pattern_processor, 3);
 //!
-//! // Scan a directory for matching files
+//! // Scan a directory for matching files; `truncated` is true when the
+//! // timeout cut the walk short
 //! let path = Path::new("/path/to/project");
-//! let matches = engine.scan(path)?;
+//! let outcome = engine.scan_with_status(path)?;
 //!
-//! println!("Found {} matching files", matches.len());
+//! println!(
+//!     "Found {} matching files (truncated: {})",
+//!     outcome.matches.len(),
+//!     outcome.truncated
+//! );
 //! # Ok(())
 //! # }
 //! ```
@@ -35,6 +36,5 @@ pub mod scanning_engine;
 pub mod timeout_manager;
 pub mod traverser;
 
-pub use scanning_engine::ScanningEngine;
+pub use scanning_engine::{ScanOutcome, ScanningEngine};
 pub use timeout_manager::TimeoutManager;
-pub use traverser::FileSystemTraverser;

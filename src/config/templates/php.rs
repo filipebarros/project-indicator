@@ -1,8 +1,8 @@
 use super::shared::{
-    framework, nerd_icon, root_indicator, root_indicator_grouped, simple_framework,
+    dependency_framework, nerd_icon, root_indicator, root_indicator_grouped, with_roots,
 };
 use crate::constants::{COMPOSER_JSON, COMPOSER_LOCK, PHP_EXTENSION};
-use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
+use crate::types::{Ecosystem, Framework, Indicator, IndicatorContext};
 
 pub fn create_php_indicator() -> Indicator {
     Indicator::with_root_indicators(
@@ -41,48 +41,42 @@ pub fn create_php_indicator() -> Indicator {
 
 pub fn php_frameworks() -> Vec<Framework> {
     vec![
-        framework(
-            "Laravel",
-            vec![Ecosystem::Packagist],
-            DetectionType::Dependencies {
-                dependencies: vec!["laravel/framework".to_string()],
-            },
-            Some(nerd_icon("e73f")),
-            Some("#ff2d20"),
-            1,
+        with_roots(
+            dependency_framework(
+                "Laravel",
+                &[Ecosystem::Packagist],
+                &["laravel/framework"],
+                Some("e73f"),
+                Some("#ff2d20"),
+                1,
+            ),
             vec![root_indicator(
                 "artisan",
                 0.9,
                 IndicatorContext::FrameworkRoot,
             )],
         ),
-        simple_framework(
+        dependency_framework(
             "Symfony",
-            vec![Ecosystem::Packagist],
-            DetectionType::Dependencies {
-                dependencies: vec!["symfony/framework-bundle".to_string()],
-            },
-            Some(nerd_icon("e757")),
-            Some("#000000"),
+            &[Ecosystem::Packagist],
+            &["symfony/framework-bundle"],
+            Some("e757"),
+            Some("#8b949e"),
             2,
         ),
-        simple_framework(
+        dependency_framework(
             "CodeIgniter",
-            vec![Ecosystem::Packagist],
-            DetectionType::Dependencies {
-                dependencies: vec!["codeigniter4/framework".to_string()],
-            },
-            Some(nerd_icon("e780")),
+            &[Ecosystem::Packagist],
+            &["codeigniter4/framework"],
+            Some("e780"),
             Some("#ee4623"),
             3,
         ),
-        simple_framework(
+        dependency_framework(
             "Yii",
-            vec![Ecosystem::Packagist],
-            DetectionType::Dependencies {
-                dependencies: vec!["yiisoft/yii2".to_string()],
-            },
-            Some(nerd_icon("e782")),
+            &[Ecosystem::Packagist],
+            &["yiisoft/yii2"],
+            Some("e782"),
             Some("#0073bb"),
             5,
         ),

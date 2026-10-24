@@ -1,8 +1,5 @@
 # Project Indicator — fish prompt hook
 #
-# Caching is handled by the binary itself (persistent, mtime-invalidated,
-# ~0.2ms warm hits), so this hook just calls it.
-#
 # Install: copy to ~/.config/fish/functions/fish_right_prompt.fish
 # (or call `project_indicator_prompt` from your own fish_right_prompt).
 

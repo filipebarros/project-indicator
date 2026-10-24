@@ -1,6 +1,8 @@
-use super::shared::{framework, nerd_icon, root_indicator, root_indicator_grouped};
+use super::shared::{
+    dependency_framework, nerd_icon, root_indicator, root_indicator_grouped, with_roots,
+};
 use crate::constants::{BUILD_GRADLE, BUILD_GRADLE_KTS, JAVA_EXTENSION, POM_XML};
-use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
+use crate::types::{Ecosystem, Framework, Indicator, IndicatorContext};
 
 pub fn create_java_indicator() -> Indicator {
     Indicator::with_root_indicators(
@@ -10,6 +12,9 @@ pub fn create_java_indicator() -> Indicator {
             POM_XML.to_string(),
             BUILD_GRADLE.to_string(),
             BUILD_GRADLE_KTS.to_string(),
+            // Standard source root: Gradle/Maven are shared build tools, so
+            // the language is decided by what the sources are written in
+            "src/main/java".to_string(),
         ],
         "#ed8b00".to_string(),
         nerd_icon("e738"),
@@ -17,6 +22,7 @@ pub fn create_java_indicator() -> Indicator {
         vec![Ecosystem::Maven],
         vec![
             root_indicator(JAVA_EXTENSION, 0.95, IndicatorContext::LanguageRoot),
+            root_indicator("src/main/java", 0.9, IndicatorContext::LanguageRoot),
             // pom.xml vs build.gradle are alternative build systems: a real
             // Java project uses exactly one, so they contribute their max
             // weight rather than being summed.
@@ -41,20 +47,20 @@ pub fn create_java_indicator() -> Indicator {
 }
 
 pub fn java_frameworks() -> Vec<Framework> {
-    vec![framework(
-        "Spring Boot",
-        vec![Ecosystem::Maven, Ecosystem::Gradle],
-        DetectionType::Dependencies {
-            dependencies: vec![
-                "spring-boot-starter".to_string(),
-                "spring-boot-starter-web".to_string(),
-                "spring-boot-starter-data-jpa".to_string(),
-                "spring-boot-starter-test".to_string(),
+    vec![with_roots(
+        dependency_framework(
+            "Spring Boot",
+            &[Ecosystem::Maven, Ecosystem::Gradle],
+            &[
+                "spring-boot-starter",
+                "spring-boot-starter-web",
+                "spring-boot-starter-data-jpa",
+                "spring-boot-starter-test",
             ],
-        },
-        Some(nerd_icon("e8ac")),
-        Some("#6db33f"),
-        1,
+            Some("e8ac"),
+            Some("#6db33f"),
+            1,
+        ),
         vec![
             root_indicator(
                 "src/main/resources/application.properties",

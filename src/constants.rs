@@ -74,5 +74,3 @@ pub const DART_EXTENSION: &str = "*.dart";
 pub const GEMSPEC_EXTENSION: &str = "*.gemspec";
 pub const XCWORKSPACE_EXTENSION: &str = "*.xcworkspace";
 pub const VCXPROJ_EXTENSION: &str = "*.vcxproj";
-
-pub const FRAMEWORK_DETECTION_PATTERN: &str = "FRAMEWORK_DETECTION";

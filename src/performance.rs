@@ -3,69 +3,31 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-/// Initial capacity for the cache map.
-///
-/// Typical projects touch 50-200 paths during a detection run; pre-allocating
-/// avoids early rehashing without over-allocating.
-const INITIAL_CACHE_CAPACITY: usize = 128;
-
-#[derive(Debug, Clone, Copy)]
-pub struct CachedMetadata {
-    pub exists: bool,
-    pub is_file: bool,
-}
-
-/// Per-run memoization of `fs::metadata` lookups.
+/// Per-run memoization of whether a path exists.
 ///
 /// The cache lives for a single detection run (one CLI invocation), so there
 /// is no TTL and no eviction: the set of paths touched during one run is
 /// naturally bounded by the scan, and the process exits when the run ends.
 #[derive(Debug, Default)]
 pub struct FileSystemCache {
-    metadata_cache: Mutex<HashMap<PathBuf, CachedMetadata>>,
+    exists: Mutex<HashMap<PathBuf, bool>>,
 }
 
 impl FileSystemCache {
-    pub fn new() -> Self {
-        Self {
-            metadata_cache: Mutex::new(HashMap::with_capacity(INITIAL_CACHE_CAPACITY)),
-        }
-    }
-
     /// The lock is only ever held for a lookup or an insert, never across
     /// I/O; a poisoned lock still holds valid data, so recover it.
-    fn map(&self) -> MutexGuard<'_, HashMap<PathBuf, CachedMetadata>> {
-        self.metadata_cache
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    pub fn get_metadata(&self, path: &Path) -> CachedMetadata {
-        if let Some(cached) = self.map().get(path) {
-            return *cached;
-        }
-
-        let metadata = match fs::metadata(path) {
-            Ok(metadata) => CachedMetadata {
-                exists: true,
-                is_file: metadata.is_file(),
-            },
-            Err(_) => CachedMetadata {
-                exists: false,
-                is_file: false,
-            },
-        };
-
-        self.map().insert(path.to_path_buf(), metadata);
-        metadata
+    fn map(&self) -> MutexGuard<'_, HashMap<PathBuf, bool>> {
+        self.exists.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn exists(&self, path: &Path) -> bool {
-        self.get_metadata(path).exists
-    }
+        if let Some(&cached) = self.map().get(path) {
+            return cached;
+        }
 
-    pub fn is_file(&self, path: &Path) -> bool {
-        self.get_metadata(path).is_file
+        let exists = fs::metadata(path).is_ok();
+        self.map().insert(path.to_path_buf(), exists);
+        exists
     }
 }
 
@@ -76,14 +38,13 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn test_metadata_is_memoized_for_the_run() -> Result<(), Box<dyn std::error::Error>> {
-        let cache = FileSystemCache::new();
+    fn test_existence_is_memoized_for_the_run() -> Result<(), Box<dyn std::error::Error>> {
+        let cache = FileSystemCache::default();
         let temp_dir = TempDir::new()?;
         let file_path = temp_dir.path().join("test.txt");
         fs::write(&file_path, "content")?;
 
-        let first = cache.get_metadata(&file_path);
-        assert!(first.exists && first.is_file);
+        assert!(cache.exists(&file_path));
 
         // Memoized: the run sees one consistent snapshot even if the file
         // disappears mid-run
@@ -94,12 +55,11 @@ mod tests {
 
     #[test]
     fn test_missing_path_is_cached_as_missing() -> Result<(), Box<dyn std::error::Error>> {
-        let cache = FileSystemCache::new();
+        let cache = FileSystemCache::default();
         let temp_dir = TempDir::new()?;
         let path = temp_dir.path().join("later.txt");
 
         assert!(!cache.exists(&path));
-        assert!(!cache.is_file(&path));
 
         // Negative results are memoized too
         fs::write(&path, "x")?;
@@ -108,18 +68,15 @@ mod tests {
     }
 
     #[test]
-    fn test_directory_metadata() -> Result<(), Box<dyn std::error::Error>> {
-        let cache = FileSystemCache::new();
+    fn test_directories_exist() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = TempDir::new()?;
-
-        assert!(cache.exists(temp_dir.path()));
-        assert!(!cache.is_file(temp_dir.path()));
+        assert!(FileSystemCache::default().exists(temp_dir.path()));
         Ok(())
     }
 
     #[test]
     fn test_concurrent_access() -> Result<(), Box<dyn std::error::Error>> {
-        let cache = Arc::new(FileSystemCache::new());
+        let cache = Arc::new(FileSystemCache::default());
         let temp_dir = TempDir::new()?;
 
         let mut paths = Vec::new();

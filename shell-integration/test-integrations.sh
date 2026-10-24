@@ -7,7 +7,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export PATH="$SCRIPT_DIR/../target/release:$PATH"
+# A release build if present, else the debug build `cargo test` leaves behind
+export PATH="$SCRIPT_DIR/../target/release:$SCRIPT_DIR/../target/debug:$PATH"
 
 if ! command -v project-indicator >/dev/null 2>&1; then
     echo "Error: project-indicator binary not found — run 'cargo build --release' first" >&2
@@ -19,6 +20,9 @@ cache="$(mktemp -d)"
 trap 'rm -rf "$fixture" "$cache"' EXIT
 printf '{"name":"t","dependencies":{"react":"1"}}' >"$fixture/package.json"
 export XDG_CACHE_HOME="$cache"
+# The binary won't cache a result computed from files modified within a few ms
+# of the run (coarse mtime clocks): let the fixture age past that
+sleep 0.1
 
 fail=0
 
@@ -60,6 +64,41 @@ if command -v fish >/dev/null 2>&1; then
 else
     echo "- fish not available, skipped"
 fi
+
+# Re-sourcing a profile must not stack the hook (the indicator would show twice)
+echo "Testing re-sourcing..."
+count() { grep -o 'project_indicator_prompt' <<<"$1" | wc -l | tr -d ' '; }
+twice="$(bash -c "PS1='\$ '; source '$SCRIPT_DIR/project-indicator.bash'; source '$SCRIPT_DIR/project-indicator.bash'; printf %s \"\$PS1\"")"
+if [[ "$(count "$twice")" == 1 ]]; then echo "✓ bash: sourced twice, hooked once"; else
+    echo "✗ bash hook was added more than once to PS1: $twice"
+    fail=1
+fi
+if command -v zsh >/dev/null 2>&1; then
+    twice="$(zsh -c "source '$SCRIPT_DIR/project-indicator.zsh'; source '$SCRIPT_DIR/project-indicator.zsh'; print -r -- \$RPROMPT")"
+    if [[ "$(count "$twice")" == 1 ]]; then echo "✓ zsh: sourced twice, hooked once"; else
+        echo "✗ zsh hook was added more than once to RPROMPT: $twice"
+        fail=1
+    fi
+fi
+
+# Installing twice (or over an edited copy) must keep the user's ORIGINAL
+# fish prompt as the backup
+echo "Testing install.sh backup..."
+fake_home="$(mktemp -d)"
+target="$fake_home/.config/fish/functions/fish_right_prompt.fish"
+mkdir -p "$(dirname "$target")"
+echo "ORIGINAL" >"$target"
+HOME="$fake_home" "$SCRIPT_DIR/install.sh" fish >/dev/null
+HOME="$fake_home" "$SCRIPT_DIR/install.sh" fish >/dev/null
+echo "# edited" >>"$target"
+HOME="$fake_home" "$SCRIPT_DIR/install.sh" fish >/dev/null
+if [[ "$(cat "$target.pre-project-indicator.bak")" == "ORIGINAL" ]]; then
+    echo "✓ install.sh kept the original fish prompt as the backup"
+else
+    echo "✗ install.sh overwrote the original backup with: $(cat "$target.pre-project-indicator.bak")"
+    fail=1
+fi
+rm -rf "$fake_home"
 
 # The first hook call should have populated the binary's persistent cache
 if [[ -d "$cache/project-indicator/results" ]]; then

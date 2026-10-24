@@ -3,30 +3,47 @@
 //! Caches one detection result per project directory across CLI invocations,
 //! stored as JSON files under `<cache_base>/project-indicator/results/`.
 //!
-//! Invalidation is evidence-keyed: an entry records the mtimes of the
-//! directory, the active config file, and every file that influenced the
-//! result. An entry is served only when all of them are unchanged, the
-//! binary version matches, and the stored directory path matches (which also
-//! makes filename-hash collisions degrade to a miss, never a wrong result).
+//! Invalidation is evidence-keyed (see CLAUDE.md for the full list): an entry
+//! is served only when every recorded mtime is unchanged, the binary build
+//! matches, and the stored directory path matches (which also makes
+//! filename-hash collisions degrade to a miss, never a wrong result).
 //!
 //! Every failure path degrades silently to a cache miss: the cache must
 //! never be able to break a shell prompt.
 
-use crate::types::{DetectionResult, DisplayConfig};
+use crate::types::{DetectionConfig, DetectionEvidence, DetectionResult, DisplayConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeSet;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 /// Opportunistic GC kicks in when the results directory exceeds this count.
 const MAX_ENTRIES_BEFORE_GC: usize = 512;
 
 /// A hit refreshes the entry's mtime only once it is older than this (well
-/// under the GC horizon), keeping the warm path write-free.
+/// under the GC horizon): a write on every hit is the priciest user-space
+/// cost of the warm path.
 const TOUCH_AFTER_SECS: u64 = 24 * 60 * 60;
+
+/// File timestamps can come from a coarser clock than `SystemTime::now()`
+/// (a few ms behind on Linux), so a write right after detection began may be
+/// stamped at or before it. Anything modified this close to the start counts
+/// as modified during detection.
+const MTIME_SLACK: Duration = Duration::from_millis(20);
+
+/// The `started` argument for [`PersistentCache::store`]: call it before
+/// detection begins.
+pub fn detection_started() -> SystemTime {
+    SystemTime::now()
+        .checked_sub(MTIME_SLACK)
+        .unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+/// A temp file older than this was left behind by a crashed writer.
+const TMP_MAX_AGE_SECS: u64 = 10 * 60;
 
 /// GC removes entries whose file mtime is older than this.
 const GC_MAX_AGE_SECS: u64 = 30 * 24 * 60 * 60;
@@ -81,7 +98,7 @@ impl PersistentCache {
         let content = fs::read_to_string(self.entry_path(&dir)).ok()?;
         let entry: CacheEntry = serde_json::from_str(&content).ok()?;
 
-        if entry.dir != dir || entry.binary_version != env!("CARGO_PKG_VERSION") {
+        if entry.dir != dir || entry.binary_version != build_id() {
             return None;
         }
 
@@ -101,16 +118,11 @@ impl PersistentCache {
             }
         }
 
-        // Refresh the entry's mtime so the age-based GC (30 days) treats
-        // actively used projects as fresh. Only entries older than a day need
-        // it — a write on EVERY hit is the priciest user-space cost of the
-        // warm path. Best-effort: a hit must never fail.
+        // Keep actively used entries fresh for the age-based GC; best-effort,
+        // a hit must never fail
         let entry_path = self.entry_path(&dir);
-        let stale = fs::metadata(&entry_path)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| SystemTime::now().duration_since(t).ok())
-            .is_some_and(|age| age.as_secs() > TOUCH_AFTER_SECS);
+        let stale =
+            mtime(&entry_path).is_some_and(|t| age_secs(SystemTime::now(), t) > TOUCH_AFTER_SECS);
         if stale {
             let _ = fs::File::options()
                 .write(true)
@@ -121,16 +133,20 @@ impl PersistentCache {
         Some((entry.result, entry.display))
     }
 
-    /// Store a detection result for `dir`. Failures are logged at debug
-    /// level and otherwise ignored.
+    /// Store a detection result for `dir`. `started` is when detection began:
+    /// anything it depended on that changed after that may not be reflected
+    /// in the result, so such results are not stored. Failures are logged at
+    /// debug level and otherwise ignored.
     pub fn store(
         &self,
         dir: &Path,
         config_path: Option<&Path>,
         result: &DetectionResult,
         display: &DisplayConfig,
+        detection: &DetectionConfig,
+        started: SystemTime,
     ) {
-        if let Err(e) = self.try_store(dir, config_path, result, display) {
+        if let Err(e) = self.try_store(dir, config_path, result, display, detection, started) {
             log::debug!("persistent cache write skipped: {}", e);
         }
         self.gc();
@@ -142,43 +158,55 @@ impl PersistentCache {
         config_path: Option<&Path>,
         result: &DetectionResult,
         display: &DisplayConfig,
+        detection: &DetectionConfig,
+        started: SystemTime,
     ) -> crate::Result<()> {
         let dir = canonical(dir);
 
+        // Listing more directories than this on every hit would cost more
+        // than the scan the cache saves
+        if result.evidence.watched_dirs.len() > DetectionEvidence::MAX_WATCHED_DIRS {
+            return Ok(());
+        }
+
+        // A config the caller names but we cannot stat: don't cache
         let config = match config_path {
-            Some(p) => match mtime(p) {
-                Some(t) => Some((p.to_path_buf(), t)),
-                // Config exists per caller but is not stat-able: don't cache
-                None => return Ok(()),
-            },
+            Some(p) => {
+                let Some(t) = mtime(p) else { return Ok(()) };
+                Some((p.to_path_buf(), t))
+            }
             None => None,
         };
-
-        let dir_mtime = match mtime(&dir) {
-            Some(t) => t,
-            None => return Ok(()),
+        let Some(dir_mtime) = mtime(&dir) else {
+            return Ok(());
         };
-
-        let evidence = collect_evidence(&dir, result)
-            .into_iter()
-            .filter_map(|p| mtime(&p).map(|t| (p, t)))
-            .collect();
-
-        let ancestors = ancestor_chain(&dir, result)
-            .into_iter()
-            .filter_map(|p| mtime(&p).map(|t| (p, t)))
-            .collect();
 
         let entry = CacheEntry {
             dir: dir.clone(),
-            binary_version: env!("CARGO_PKG_VERSION").to_string(),
+            binary_version: build_id().to_string(),
             config,
             dir_mtime,
-            ancestors,
-            evidence,
+            ancestors: stamped(ancestor_chain(
+                &dir,
+                result,
+                detection.max_upward_traversal,
+                detection.require_vcs_root,
+            )),
+            evidence: stamped(collect_evidence(&dir, result)),
             result: result.clone(),
             display: display.clone(),
         };
+
+        let stamps = entry
+            .config
+            .iter()
+            .map(|(_, t)| t)
+            .chain(entry.ancestors.iter().map(|(_, t)| t))
+            .chain(entry.evidence.iter().map(|(_, t)| t))
+            .chain(std::iter::once(&entry.dir_mtime));
+        if stamps.into_iter().any(|t| *t > started) {
+            return Ok(());
+        }
 
         fs::create_dir_all(&self.base)?;
         let final_path = self.entry_path(&dir);
@@ -228,25 +256,35 @@ impl PersistentCache {
         self.base.join(format!("{:016x}.json", hasher.finish()))
     }
 
-    /// Remove entries older than the GC age when the dir has grown large.
-    /// Best-effort: all errors ignored.
+    /// Remove abandoned temp files, and (once the directory has grown large)
+    /// entries older than the GC age or beyond the cap. Best-effort: all
+    /// errors ignored. Below the cap only temp files are stat-ed.
     fn gc(&self) {
-        let Ok(entries) = fs::read_dir(&self.base) else {
+        let Ok(dir_entries) = fs::read_dir(&self.base) else {
             return;
         };
-        let mut paths: Vec<(PathBuf, SystemTime)> = entries
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter_map(|p| mtime(&p).map(|t| (p, t)))
-            .collect();
-        if paths.len() <= MAX_ENTRIES_BEFORE_GC {
+        let now = SystemTime::now();
+        let mut entries = Vec::new();
+        for path in dir_entries.filter_map(|e| e.ok().map(|e| e.path())) {
+            match path.extension().and_then(|e| e.to_str()) {
+                Some("json") => entries.push(path),
+                // A writer's temp file lives for milliseconds: one that has
+                // been around for minutes belongs to a crashed process
+                Some("tmp")
+                    if mtime(&path).is_some_and(|t| age_secs(now, t) > TMP_MAX_AGE_SECS) =>
+                {
+                    let _ = fs::remove_file(&path);
+                }
+                _ => {}
+            }
+        }
+        if entries.len() <= MAX_ENTRIES_BEFORE_GC {
             return;
         }
 
-        let now = SystemTime::now();
-        paths.retain(|(path, t)| {
-            let expired = now
-                .duration_since(*t)
-                .is_ok_and(|age| age.as_secs() > GC_MAX_AGE_SECS);
+        let mut entries = stamped(entries);
+        entries.retain(|(path, t)| {
+            let expired = age_secs(now, *t) > GC_MAX_AGE_SECS;
             if expired {
                 let _ = fs::remove_file(path);
             }
@@ -255,13 +293,42 @@ impl PersistentCache {
 
         // Age alone frees nothing when the cap is reached by entries used
         // within the horizon (hits refresh mtimes): evict oldest beyond cap
-        if paths.len() > MAX_ENTRIES_BEFORE_GC {
-            paths.sort_by_key(|(_, t)| *t);
-            for (path, _) in &paths[..paths.len() - MAX_ENTRIES_BEFORE_GC] {
+        if entries.len() > MAX_ENTRIES_BEFORE_GC {
+            entries.sort_by_key(|(_, t)| *t);
+            for (path, _) in &entries[..entries.len() - MAX_ENTRIES_BEFORE_GC] {
                 let _ = fs::remove_file(path);
             }
         }
     }
+}
+
+/// Seconds from `t` to `now` (0 for timestamps in the future)
+fn age_secs(now: SystemTime, t: SystemTime) -> u64 {
+    now.duration_since(t).map_or(0, |age| age.as_secs())
+}
+
+/// Identifies the running binary: the package version plus the executable's
+/// size and mtime, so rebuilding from source without a version bump doesn't
+/// serve entries written by the previous build. Computed once per process.
+fn build_id() -> &'static str {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| {
+        let version = env!("CARGO_PKG_VERSION");
+        let exe = std::env::current_exe()
+            .ok()
+            .and_then(|path| fs::metadata(path).ok());
+        match exe {
+            Some(meta) => {
+                let nanos = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_nanos());
+                format!("{version}+{}.{nanos}", meta.len())
+            }
+            None => version.to_string(),
+        }
+    })
 }
 
 fn canonical(dir: &Path) -> PathBuf {
@@ -272,28 +339,46 @@ fn mtime(path: &Path) -> Option<SystemTime> {
     fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
-/// Upward-traversal depth assumed when no root was found (matches the
-/// default `max_upward_traversal`)
-const NO_ROOT_ANCESTOR_DEPTH: usize = 10;
+/// Each path with its mtime; paths that cannot be stat-ed are dropped
+fn stamped(paths: impl IntoIterator<Item = PathBuf>) -> Vec<(PathBuf, SystemTime)> {
+    paths
+        .into_iter()
+        .filter_map(|p| mtime(&p).map(|t| (p, t)))
+        .collect()
+}
 
-/// Directories above `dir` that root discovery consulted: up to and including
-/// the discovered root (the parent of the absolute root-discovery item), or a
-/// bounded number of ancestors when no root was found.
-fn ancestor_chain(dir: &Path, result: &DetectionResult) -> Vec<PathBuf> {
-    let root = result
+/// The directory root discovery settled on: the parent of the first
+/// (absolute) root-discovery item. Scan and framework evidence is relative
+/// to it, and it can be an ancestor of the invocation directory.
+fn discovered_root(result: &DetectionResult) -> Option<&Path> {
+    result
         .evidence
         .root_discovery
         .first()
         .map(|item| Path::new(&item.file_path))
         .and_then(Path::parent)
         .filter(|p| p.is_absolute())
-        // Canonical like `dir` (/var vs /private/var on macOS), or the
-        // equality checks below would never fire
-        .map(canonical);
+}
+
+/// Directories above `dir` that root discovery consulted: up to and including
+/// the discovered root (the parent of the absolute root-discovery item), or
+/// the `max_upward` ancestors discovery was allowed to visit when none was
+/// found. A config change misses via the config mtime, so the limit is fixed
+/// for the life of an entry.
+fn ancestor_chain(
+    dir: &Path,
+    result: &DetectionResult,
+    max_upward: usize,
+    require_vcs_root: bool,
+) -> Vec<PathBuf> {
+    // Canonical like `dir` (/var vs /private/var on macOS), or the equality
+    // checks below would never fire
+    let root = discovered_root(result).map(canonical);
     let root = root.as_deref();
 
-    // Root found in `dir` itself: nothing above it was consulted
-    if root == Some(dir) {
+    // Root found in `dir` itself: nothing above it was consulted, unless
+    // require_vcs_root sent discovery looking upward for a VCS marker
+    if root == Some(dir) && !require_vcs_root {
         return Vec::new();
     }
 
@@ -307,7 +392,7 @@ fn ancestor_chain(dir: &Path, result: &DetectionResult) -> Vec<PathBuf> {
             break;
         }
         chain.push(ancestor.to_path_buf());
-        if root == Some(ancestor) || (root.is_none() && chain.len() >= NO_ROOT_ANCESTOR_DEPTH) {
+        if root == Some(ancestor) || chain.len() >= max_upward {
             break;
         }
     }
@@ -320,18 +405,31 @@ fn ancestor_chain(dir: &Path, result: &DetectionResult) -> Vec<PathBuf> {
 fn collect_evidence(dir: &Path, result: &DetectionResult) -> BTreeSet<PathBuf> {
     let mut paths = BTreeSet::new();
 
-    // Scan and framework evidence is relative to the DISCOVERED project
-    // root, which can be an ancestor of `dir` (upward traversal). The
-    // root-discovery item is stored absolute by the engine; its parent is
-    // that root. No root discovery → the scan ran in `dir` itself.
-    let base = result
-        .evidence
-        .root_discovery
-        .first()
-        .map(|item| Path::new(&item.file_path))
-        .and_then(Path::parent)
-        .filter(|p| p.is_absolute())
-        .unwrap_or(dir);
+    // No root discovery → the scan ran in `dir` itself
+    let base = discovered_root(result).unwrap_or(dir);
+
+    // Ignore files shape the walk, and editing one in place leaves every
+    // directory mtime untouched (missing ones are dropped by the caller)
+    let ignore_files = [".gitignore", ".ignore"];
+    for name in ignore_files {
+        paths.insert(base.join(name));
+    }
+    paths.insert(base.join(".git").join("info").join("exclude"));
+    for watched in &result.evidence.watched_dirs {
+        let dir = base.join(watched);
+        for name in ignore_files {
+            paths.insert(dir.join(name));
+        }
+        paths.insert(dir);
+    }
+
+    paths.extend(
+        result
+            .evidence
+            .read_files
+            .iter()
+            .map(|file| base.join(file)),
+    );
 
     let items = result
         .evidence
@@ -361,6 +459,10 @@ fn collect_evidence(dir: &Path, result: &DetectionResult) -> BTreeSet<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    fn max_upward() -> usize {
+        crate::types::DetectionConfig::default().max_upward_traversal
+    }
+
     use super::*;
     use crate::types::Indicator;
     use std::sync::Arc;
@@ -381,12 +483,10 @@ mod tests {
         result
             .evidence
             .indicator_evidence
-            .push(crate::types::EvidenceItem::new(
-                crate::types::EvidenceType::ManifestFile,
+            .push(crate::types::EvidenceItem::manifest_file(
                 evidence_file.to_string(),
                 evidence_file.to_string(),
                 0.8,
-                "test evidence".to_string(),
             ));
         result
     }
@@ -396,15 +496,13 @@ mod tests {
         result
             .evidence
             .root_discovery
-            .push(crate::types::EvidenceItem::new(
-                crate::types::EvidenceType::RootIndicator,
+            .push(crate::types::EvidenceItem::root_indicator(
                 canonical(dir)
                     .join("Cargo.toml")
                     .to_string_lossy()
                     .to_string(),
                 "Cargo.toml".to_string(),
                 0.95,
-                "root".to_string(),
             ));
         result
     }
@@ -422,6 +520,67 @@ mod tests {
             .write(true)
             .open(path)?
             .set_modified(t)?;
+        Ok(())
+    }
+
+    fn write_tmp(
+        base: &Path,
+        name: &str,
+        age: Duration,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        fs::create_dir_all(base)?;
+        let path = base.join(name);
+        fs::write(&path, "partial")?;
+        set_file_mtime(&path, SystemTime::now() - age)?;
+        Ok(path)
+    }
+
+    #[test]
+    fn test_gc_removes_abandoned_temp_files_but_keeps_in_flight_ones(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (_c, project, cache) = setup()?;
+        let result = rooted(test_result("Cargo.toml"), project.path());
+        cache.store(
+            project.path(),
+            None,
+            &result,
+            &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            SystemTime::now(),
+        );
+        let abandoned = write_tmp(&cache.base, "a.json.1.1.tmp", Duration::from_secs(3600))?;
+        let in_flight = write_tmp(&cache.base, "b.json.2.1.tmp", Duration::from_secs(1))?;
+
+        cache.gc();
+
+        assert!(!abandoned.exists(), "a crashed writer's temp file lingers");
+        assert!(
+            in_flight.exists(),
+            "another process's live temp file removed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_temp_files_do_not_count_toward_the_entry_cap() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (_c, _project, cache) = setup()?;
+        let temps: Vec<PathBuf> = (0..MAX_ENTRIES_BEFORE_GC + 5)
+            .map(|i| {
+                write_tmp(
+                    &cache.base,
+                    &format!("{i}.json.9.1.tmp"),
+                    Duration::from_secs(1),
+                )
+            })
+            .collect::<Result<_, _>>()?;
+
+        cache.gc();
+
+        assert!(
+            temps.iter().all(|t| t.exists()),
+            "GC evicted live temp files"
+        );
         Ok(())
     }
 
@@ -446,6 +605,8 @@ mod tests {
             None,
             &rooted(test_result("Cargo.toml"), project.path()),
             &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
         );
 
         let count = fs::read_dir(&base)?.count();
@@ -472,6 +633,8 @@ mod tests {
             None,
             &rooted(test_result("Cargo.toml"), project.path()),
             &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
         );
 
         // Age the entry past the GC horizon, then hit it: a daily-used
@@ -502,7 +665,14 @@ mod tests {
     fn test_store_then_load_hits() -> Result<(), Box<dyn std::error::Error>> {
         let (_c, project, cache) = setup()?;
         let result = rooted(test_result("Cargo.toml"), project.path());
-        cache.store(project.path(), None, &result, &DisplayConfig::default());
+        cache.store(
+            project.path(),
+            None,
+            &result,
+            &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
+        );
 
         let (loaded, display) = cache
             .load(project.path(), None)
@@ -516,7 +686,14 @@ mod tests {
     fn test_touched_evidence_file_invalidates() -> Result<(), Box<dyn std::error::Error>> {
         let (_c, project, cache) = setup()?;
         let result = rooted(test_result("Cargo.toml"), project.path());
-        cache.store(project.path(), None, &result, &DisplayConfig::default());
+        cache.store(
+            project.path(),
+            None,
+            &result,
+            &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
+        );
 
         sleep(Duration::from_millis(20));
         fs::write(project.path().join("Cargo.toml"), "[package]\nname=\"x\"")?;
@@ -529,7 +706,14 @@ mod tests {
     fn test_new_root_file_invalidates_via_dir_mtime() -> Result<(), Box<dyn std::error::Error>> {
         let (_c, project, cache) = setup()?;
         let result = rooted(test_result("Cargo.toml"), project.path());
-        cache.store(project.path(), None, &result, &DisplayConfig::default());
+        cache.store(
+            project.path(),
+            None,
+            &result,
+            &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
+        );
 
         sleep(Duration::from_millis(20));
         fs::write(project.path().join("package.json"), "{}")?;
@@ -551,6 +735,8 @@ mod tests {
             Some(&config_path),
             &result,
             &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
         );
         assert!(cache.load(project.path(), Some(&config_path)).is_some());
 
@@ -570,7 +756,14 @@ mod tests {
         fs::write(&config_path, "x")?;
 
         let result = rooted(test_result("Cargo.toml"), project.path());
-        cache.store(project.path(), None, &result, &DisplayConfig::default());
+        cache.store(
+            project.path(),
+            None,
+            &result,
+            &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
+        );
 
         // Cached without a config; now one exists → miss
         assert!(cache.load(project.path(), Some(&config_path)).is_none());
@@ -581,7 +774,14 @@ mod tests {
     fn test_corrupt_entry_is_a_miss() -> Result<(), Box<dyn std::error::Error>> {
         let (_c, project, cache) = setup()?;
         let result = rooted(test_result("Cargo.toml"), project.path());
-        cache.store(project.path(), None, &result, &DisplayConfig::default());
+        cache.store(
+            project.path(),
+            None,
+            &result,
+            &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
+        );
 
         let entry_path = cache.entry_path(&canonical(project.path()));
         fs::write(&entry_path, "not json at all {{{")?;
@@ -594,7 +794,14 @@ mod tests {
     fn test_version_mismatch_is_a_miss() -> Result<(), Box<dyn std::error::Error>> {
         let (_c, project, cache) = setup()?;
         let result = rooted(test_result("Cargo.toml"), project.path());
-        cache.store(project.path(), None, &result, &DisplayConfig::default());
+        cache.store(
+            project.path(),
+            None,
+            &result,
+            &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
+        );
 
         let entry_path = cache.entry_path(&canonical(project.path()));
         let content = fs::read_to_string(&entry_path)?;
@@ -609,7 +816,14 @@ mod tests {
     fn test_clear_and_stats() -> Result<(), Box<dyn std::error::Error>> {
         let (_c, project, cache) = setup()?;
         let result = rooted(test_result("Cargo.toml"), project.path());
-        cache.store(project.path(), None, &result, &DisplayConfig::default());
+        cache.store(
+            project.path(),
+            None,
+            &result,
+            &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
+        );
 
         let (count, bytes) = cache.stats()?;
         assert_eq!(count, 1);
@@ -633,6 +847,8 @@ mod tests {
             None,
             &test_result("Cargo.toml"),
             &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
         );
         // (No is_some() precondition: with no root found the chain reaches the
         // shared system temp dir, whose mtime parallel tests churn.)
@@ -657,17 +873,22 @@ mod tests {
         result
             .evidence
             .root_discovery
-            .push(crate::types::EvidenceItem::new(
-                crate::types::EvidenceType::RootIndicator,
+            .push(crate::types::EvidenceItem::root_indicator(
                 canonical(&root)
                     .join("Cargo.toml")
                     .to_string_lossy()
                     .to_string(),
                 "Cargo.toml".to_string(),
                 0.95,
-                "root".to_string(),
             ));
-        cache.store(&sub, None, &result, &DisplayConfig::default());
+        cache.store(
+            &sub,
+            None,
+            &result,
+            &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
+        );
 
         // Above the root: irrelevant to the result, must NOT invalidate
         std::thread::sleep(Duration::from_millis(20));
@@ -684,8 +905,8 @@ mod tests {
     fn test_ancestor_chain_is_capped_without_a_root() {
         let deep = Path::new("/a/b/c/d/e/f/g/h/i/j/k/l/m/n");
         let result = test_result("Cargo.toml");
-        let chain = ancestor_chain(deep, &result);
-        assert_eq!(chain.len(), NO_ROOT_ANCESTOR_DEPTH);
+        let chain = ancestor_chain(deep, &result, max_upward(), false);
+        assert_eq!(chain.len(), max_upward());
         assert_eq!(
             chain.first().map(|p| p.as_path()),
             Some(Path::new("/a/b/c/d/e/f/g/h/i/j/k/l/m"))
@@ -695,11 +916,130 @@ mod tests {
     }
 
     #[test]
+    fn test_entry_written_by_another_build_of_the_same_version_is_a_miss(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (_c, project, cache) = setup()?;
+        let result = rooted(test_result("Cargo.toml"), project.path());
+        cache.store(
+            project.path(),
+            None,
+            &result,
+            &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
+        );
+        assert!(cache.load(project.path(), None).is_some());
+
+        // What a build without a binary id (or another binary) would have
+        // written: the bare package version
+        let entry_path = cache.entry_path(&canonical(project.path()));
+        let mut entry: serde_json::Value = serde_json::from_str(&fs::read_to_string(&entry_path)?)?;
+        entry["binary_version"] = env!("CARGO_PKG_VERSION").into();
+        fs::write(&entry_path, serde_json::to_vec(&entry)?)?;
+
+        assert!(cache.load(project.path(), None).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_entry_recorded_for_another_directory_is_a_miss(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // A filename-hash collision must degrade to a miss, never a wrong result
+        let (_c, project, cache) = setup()?;
+        let result = rooted(test_result("Cargo.toml"), project.path());
+        cache.store(
+            project.path(),
+            None,
+            &result,
+            &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            SystemTime::now(),
+        );
+        let entry_path = cache.entry_path(&canonical(project.path()));
+        let mut entry: serde_json::Value = serde_json::from_str(&fs::read_to_string(&entry_path)?)?;
+        entry["dir"] = "/some/other/project".into();
+        fs::write(&entry_path, serde_json::to_vec(&entry)?)?;
+
+        assert!(cache.load(project.path(), None).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_file_modified_within_the_clock_slack_of_the_start_is_not_stored(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Coarse filesystem clocks can stamp a write just after detection
+        // began with a time at or before `started`
+        let (_c, project, cache) = setup()?;
+        let result = rooted(test_result("Cargo.toml"), project.path());
+        fs::write(project.path().join("Cargo.toml"), "[package]\nname = \"y\"")?;
+
+        cache.store(
+            project.path(),
+            None,
+            &result,
+            &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            detection_started(),
+        );
+        assert!(cache.load(project.path(), None).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_file_modified_long_before_the_start_is_stored() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (_c, project, cache) = setup()?;
+        let result = rooted(test_result("Cargo.toml"), project.path());
+        let long_ago = SystemTime::now() - MTIME_SLACK * 10;
+        set_file_mtime(&project.path().join("Cargo.toml"), long_ago)?;
+        fs::File::open(project.path())?.set_modified(long_ago)?;
+
+        cache.store(
+            project.path(),
+            None,
+            &result,
+            &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            detection_started(),
+        );
+        assert!(cache.load(project.path(), None).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_scan_with_too_many_watched_dirs_is_not_stored() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (_c, project, cache) = setup()?;
+        let mut result = rooted(test_result("Cargo.toml"), project.path());
+        result.evidence.watched_dirs = (0..=DetectionEvidence::MAX_WATCHED_DIRS)
+            .map(|i| format!("d{i}"))
+            .collect();
+        cache.store(
+            project.path(),
+            None,
+            &result,
+            &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
+        );
+        assert!(cache.load(project.path(), None).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_ancestor_chain_cap_follows_configured_traversal() {
+        let deep = Path::new("/a/b/c/d/e/f/g/h/i/j/k/l/m/n");
+        let result = test_result("Cargo.toml");
+        assert_eq!(ancestor_chain(deep, &result, 3, false).len(), 3);
+        assert_eq!(ancestor_chain(deep, &result, 12, false).len(), 12);
+    }
+
+    #[test]
     fn test_ancestor_chain_stops_before_home() {
         if let Some(home) = std::env::home_dir().map(|h| canonical(&h)) {
             let dir = home.join("proj").join("sub");
             let result = test_result("Cargo.toml");
-            let chain = ancestor_chain(&dir, &result);
+            let chain = ancestor_chain(&dir, &result, max_upward(), false);
             assert!(chain.contains(&home.join("proj")));
             assert!(
                 !chain.contains(&home),
@@ -720,7 +1060,14 @@ mod tests {
                     (cache.clone(), result.clone(), project.path().to_path_buf());
                 std::thread::spawn(move || {
                     for _ in 0..10 {
-                        cache.store(&dir, None, &result, &DisplayConfig::default());
+                        cache.store(
+                            &dir,
+                            None,
+                            &result,
+                            &DisplayConfig::default(),
+                            &DetectionConfig::default(),
+                            std::time::SystemTime::now(),
+                        );
                     }
                 })
             })
@@ -746,6 +1093,8 @@ mod tests {
             None,
             &rooted(test_result("Cargo.toml"), project.path()),
             &DisplayConfig::default(),
+            &DetectionConfig::default(),
+            std::time::SystemTime::now(),
         );
         let entry = fs::read_dir(cache_dir.path().join("results"))?
             .filter_map(|e| e.ok())

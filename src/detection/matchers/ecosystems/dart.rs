@@ -1,43 +1,39 @@
 use super::helpers::{
-    check_pubspec_dependencies, check_pubspec_lock_dependencies, try_config_file_deps,
+    check_pubspec_dependencies, check_pubspec_lock_dependencies, first_hit,
+    pubspec_declares_dependencies,
 };
 use crate::constants::{PUBSPEC_LOCK, PUBSPEC_YAML};
 use crate::detection::caches::ParsedFileCache;
 use crate::Result;
 use std::path::Path;
 
-/// Detect Dart ecosystem dependencies
-pub fn check_dart_ecosystem<P: AsRef<Path>>(
-    path: P,
+pub fn check_dart_ecosystem(
+    path: &Path,
     dependencies: &[String],
     parsed_cache: &ParsedFileCache,
-) -> Result<(Vec<String>, Vec<String>)> {
-    let mut found_deps = Vec::new();
-    let mut evidence = Vec::new();
-
-    if try_config_file_deps(
+) -> Result<Option<String>> {
+    if let Some(file) = first_hit(
         parsed_cache,
-        &path,
-        PUBSPEC_YAML,
+        path,
+        &[(PUBSPEC_YAML, check_pubspec_dependencies)],
         dependencies,
-        check_pubspec_dependencies,
-        &mut found_deps,
-        &mut evidence,
     )? {
-        return Ok((found_deps, evidence));
+        return Ok(Some(file));
     }
 
-    if try_config_file_deps(
-        parsed_cache,
-        &path,
-        PUBSPEC_LOCK,
-        dependencies,
-        check_pubspec_lock_dependencies,
-        &mut found_deps,
-        &mut evidence,
-    )? {
-        return Ok((found_deps, evidence));
+    // A pubspec.yaml that declares dependencies is authoritative: the lock
+    // also lists transitive packages, which must not count
+    if parsed_cache
+        .get_file_content(path.join(PUBSPEC_YAML))?
+        .is_some_and(|content| pubspec_declares_dependencies(&content))
+    {
+        return Ok(None);
     }
 
-    Ok((found_deps, evidence))
+    first_hit(
+        parsed_cache,
+        path,
+        &[(PUBSPEC_LOCK, check_pubspec_lock_dependencies)],
+        dependencies,
+    )
 }

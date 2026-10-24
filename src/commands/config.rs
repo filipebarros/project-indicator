@@ -17,6 +17,43 @@ fn split_editor(editor: &str) -> (String, Vec<String>) {
     (program, parts.collect())
 }
 
+/// Where a config file sits relative to the default save path in the
+/// resolution order.
+enum Relation {
+    IsDefault,
+    /// Earlier in the order, so it outranks the default
+    Shadows,
+    /// Later in the order (or unknown), so the default outranks it
+    Shadowed,
+}
+
+fn relation_to_default(config_path: &std::path::Path) -> Relation {
+    let paths = ConfigParser::default_config_paths();
+    let position = |p: &std::path::Path| paths.iter().position(|c| c == p);
+    let default_pos = ConfigParser::default_save_path()
+        .ok()
+        .and_then(|p| position(&p));
+    match (position(config_path), default_pos) {
+        (Some(a), Some(d)) if a == d => Relation::IsDefault,
+        (Some(a), Some(d)) if a < d => Relation::Shadows,
+        _ => Relation::Shadowed,
+    }
+}
+
+fn ensure_parent_dir(path: &std::path::Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("Failed to create config directory: {}", e))?;
+    }
+    Ok(())
+}
+
+fn print_templates() {
+    for (name, description) in TemplateGenerator::list_templates() {
+        outln!("   • {}: {}", name, description);
+    }
+}
+
 pub fn handle_config_command(action: ConfigAction) -> Result<()> {
     match action {
         ConfigAction::Validate => {
@@ -25,56 +62,56 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             // load_default's soft fallback would swallow the parse error
             // this command exists to surface.
             let Some(config_path) = ConfigParser::active_config_path() else {
-                println!("❌ No configuration file found");
-                println!(
-                    "💡 Run 'project-indicator config init' to create a default configuration"
-                );
+                outln!("❌ No configuration file found");
+                outln!("💡 Run 'project-indicator config init' to create a default configuration");
                 std::process::exit(1);
             };
 
             match ConfigParser::load_from_file(&config_path) {
                 Ok(config) => match validate_config(&config) {
                     Ok(()) => {
-                        println!("✅ Configuration is valid");
-                        println!("📍 Config file: {}", config_path.display());
-                        println!("📊 Indicators configured: {}", config.indicators.len());
-                        println!("🏗️  Total frameworks: {}", config.frameworks.len());
+                        outln!("✅ Configuration is valid");
+                        outln!("📍 Config file: {}", config_path.display());
+                        outln!("📊 Indicators configured: {}", config.indicators.len());
+                        outln!("🏗️  Total frameworks: {}", config.frameworks.len());
                         Ok(())
                     }
                     Err(validation_error) => {
-                        println!("❌ Configuration validation failed:");
-                        println!("   {}", validation_error);
-                        println!("📍 Config file: {}", config_path.display());
-                        println!("💡 Run 'project-indicator config edit' to fix the issues");
+                        outln!("❌ Configuration validation failed:");
+                        outln!("   {}", validation_error);
+                        outln!("📍 Config file: {}", config_path.display());
+                        match relation_to_default(&config_path) {
+                            Relation::IsDefault => {
+                                outln!("💡 Run 'project-indicator config edit' to fix the issues")
+                            }
+                            _ => outln!(
+                                "💡 Fix this file directly — 'config edit' opens the default \
+                                 config location, which is a different file"
+                            ),
+                        }
                         std::process::exit(1);
                     }
                 },
                 Err(load_error) => {
-                    println!("❌ Failed to parse configuration:");
-                    println!("   {:#}", load_error);
-                    println!("📍 Config file: {}", config_path.display());
+                    outln!("❌ Failed to parse configuration:");
+                    outln!("   {:#}", load_error);
+                    outln!("📍 Config file: {}", config_path.display());
                     // 'config edit' and 'config init --force' both target the
                     // default XDG path. Whether that helps depends on where the
                     // failing file sits in the resolution order: a cwd file
                     // outranks (shadows) the default, a home-dir fallback is
                     // outranked by it.
-                    let paths = ConfigParser::default_config_paths();
-                    let position = |p: &std::path::Path| paths.iter().position(|c| c == p);
-                    let default_pos = ConfigParser::default_save_path()
-                        .ok()
-                        .and_then(|p| position(&p));
-                    let active_pos = position(&config_path);
-                    match (active_pos, default_pos) {
-                        (Some(a), Some(d)) if a == d => println!(
+                    match relation_to_default(&config_path) {
+                        Relation::IsDefault => outln!(
                             "💡 Fix the file ('config edit') or regenerate it ('config init --force'); \
                              until then, detection uses the built-in template"
                         ),
-                        (Some(a), Some(d)) if a < d => println!(
+                        Relation::Shadows => outln!(
                             "💡 Fix this file directly — it shadows the default config location, so \
                              'config edit'/'config init' won't touch it; until then, detection uses \
                              the built-in template"
                         ),
-                        _ => println!(
+                        Relation::Shadowed => outln!(
                             "💡 Fix this file, or run 'config init' to create the default config, \
                              which takes precedence over it; until then, detection uses the \
                              built-in template"
@@ -85,7 +122,7 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             }
         }
         ConfigAction::Show => {
-            println!("🔍 Project Indicator Configuration Discovery\n");
+            outln!("🔍 Project Indicator Configuration Discovery\n");
 
             // Same paths, same order, as the parser (first existing wins)
             let config_paths = ConfigParser::default_config_paths();
@@ -109,21 +146,21 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                     } else {
                         " (shadowed)"
                     };
-                    println!("✅ Found{}: {}", marker, absolute(path).display());
+                    outln!("✅ Found{}: {}", marker, absolute(path).display());
 
                     if let Ok(metadata) = std::fs::metadata(path) {
-                        println!("   📊 Size: {} bytes", metadata.len());
+                        outln!("   📊 Size: {} bytes", metadata.len());
                         if let Ok(modified) = metadata.modified() {
                             if let Ok(duration) = modified.elapsed() {
-                                println!("   🕐 Modified: {} seconds ago", duration.as_secs());
+                                outln!("   🕐 Modified: {} seconds ago", duration.as_secs());
                             }
                         }
                     }
 
-                    println!();
+                    outln!();
                 } else {
-                    println!("❌ Not found: {}", absolute(path).display());
-                    println!();
+                    outln!("❌ Not found: {}", absolute(path).display());
+                    outln!();
                 }
             }
 
@@ -133,43 +170,45 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                 // template's counts as if they came from this file.
                 match ConfigParser::load_from_file(&active) {
                     Ok(config) => {
-                        println!("📦 Active Configuration:");
-                        println!("   Indicators: {}", config.indicators.len());
-                        println!("   Total frameworks: {}", config.frameworks.len());
-                        println!();
-                        println!(
-                            "💡 Run 'project-indicator config validate' to check configuration"
-                        );
+                        outln!("📦 Active Configuration:");
+                        outln!("   Indicators: {}", config.indicators.len());
+                        outln!("   Total frameworks: {}", config.frameworks.len());
+                        outln!();
+                        outln!("💡 Run 'project-indicator config validate' to check configuration");
                     }
                     Err(e) => {
-                        println!(
+                        outln!(
                             "⚠️  Active config fails to parse; detection uses the built-in template:"
                         );
-                        println!("   {:#}", e);
-                        println!("💡 Run 'project-indicator config validate' for details");
+                        outln!("   {:#}", e);
+                        outln!("💡 Run 'project-indicator config validate' for details");
                     }
                 }
             } else {
-                println!("ℹ️  No configuration files found. Using fallback configuration.");
-                println!("💡 Run 'project-indicator config init' to create a configuration file");
+                outln!("ℹ️  No configuration files found. Using fallback configuration.");
+                outln!("💡 Run 'project-indicator config init' to create a configuration file");
             }
 
             Ok(())
         }
         ConfigAction::Edit => {
             let config_path = ConfigParser::default_save_path()?;
-            println!("📍 Configuration file location: {}", config_path.display());
+            outln!("📍 Configuration file location: {}", config_path.display());
 
             if let Ok(editor) = env::var("EDITOR") {
                 let (program, editor_args) = split_editor(&editor);
-                std::process::Command::new(&program)
+                ensure_parent_dir(&config_path)?;
+                let status = std::process::Command::new(&program)
                     .args(&editor_args)
                     .arg(&config_path)
                     .status()
                     .map_err(|e| anyhow::anyhow!("Failed to open editor: {}", e))?;
+                if !status.success() {
+                    anyhow::bail!("Editor exited with {}", status);
+                }
             } else {
-                println!("❗ Set EDITOR environment variable to edit configuration");
-                println!("💡 Example: export EDITOR=nano");
+                outln!("❗ Set EDITOR environment variable to edit configuration");
+                outln!("💡 Example: export EDITOR=nano");
             }
             Ok(())
         }
@@ -192,33 +231,26 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             }
 
             if config_path.exists() && !force {
-                println!(
+                outln!(
                     "❗ Configuration file already exists at: {}",
                     config_path.display()
                 );
-                println!("💡 Use --force to overwrite or try a different template");
-                println!("💡 Available templates:");
-                for (name, description) in TemplateGenerator::list_templates() {
-                    println!("   • {}: {}", name, description);
-                }
+                outln!("💡 Use --force to overwrite or try a different template");
+                outln!("💡 Available templates:");
+                print_templates();
                 std::process::exit(1);
             }
 
             if template.is_none() {
-                println!("📋 Available templates:");
-                for (name, description) in TemplateGenerator::list_templates() {
-                    println!("   • {}: {}", name, description);
-                }
-                println!("💡 Use --template <name> to select a template, or run without to use 'minimal'");
-                println!();
+                outln!("📋 Available templates:");
+                print_templates();
+                outln!("💡 Use --template <name> to select a template, or run without to use 'minimal'");
+                outln!();
             }
 
             let config = TemplateGenerator::generate_template(template.as_deref())?;
 
-            if let Some(parent) = config_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| anyhow::anyhow!("Failed to create config directory: {}", e))?;
-            }
+            ensure_parent_dir(&config_path)?;
 
             let config_content = toml::to_string_pretty(&config)
                 .map_err(|e| anyhow::anyhow!("Failed to serialize config: {}", e))?;
@@ -227,16 +259,16 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                 .map_err(|e| anyhow::anyhow!("Failed to write config file: {}", e))?;
 
             let template_name = template.as_deref().unwrap_or("minimal");
-            println!("✅ Configuration created successfully!");
-            println!("📍 Location: {}", config_path.display());
-            println!("📋 Template: {}", template_name);
-            println!("🔧 Indicators: {}", config.indicators.len());
+            outln!("✅ Configuration created successfully!");
+            outln!("📍 Location: {}", config_path.display());
+            outln!("📋 Template: {}", template_name);
+            outln!("🔧 Indicators: {}", config.indicators.len());
 
             if let Err(e) = validate_config(&config) {
-                println!("⚠️  Warning: Generated config has validation issues: {}", e);
+                outln!("⚠️  Warning: Generated config has validation issues: {}", e);
             }
 
-            println!("💡 Run 'project-indicator config validate' to verify your configuration");
+            outln!("💡 Run 'project-indicator config validate' to verify your configuration");
             Ok(())
         }
     }

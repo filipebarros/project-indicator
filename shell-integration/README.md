@@ -4,8 +4,7 @@ Prompt hooks for fish, zsh, bash, and PowerShell. Each hook is ~15 lines: it cal
 `project-indicator` and wraps the output in prompt colors. That's all it
 needs to do — **caching lives in the binary**, which keeps a persistent,
 mtime-invalidated result cache under `$XDG_CACHE_HOME/project-indicator/`
-(default `~/.cache`). Warm invocations do ~0.2ms of work; total prompt cost
-is dominated by process spawn.
+(default `~/.cache`); total prompt cost is dominated by process spawn.
 
 ## Install
 

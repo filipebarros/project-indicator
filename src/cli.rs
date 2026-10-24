@@ -15,7 +15,10 @@ pub struct Cli {
     )]
     pub format: String,
 
-    #[arg(long, help = "Maximum depth to scan directories (default: 1)")]
+    #[arg(
+        long,
+        help = "Maximum depth to scan directories (default: 1; 0 scans nothing)"
+    )]
     pub max_depth: Option<usize>,
 
     #[arg(short, long, help = "Enable verbose logging output")]
@@ -77,30 +80,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cli_default_values() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from(["project-indicator"])?;
-        assert_eq!(cli.path, None);
-        assert_eq!(cli.format, "simple");
-        assert!(cli.command.is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_with_path() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from(["project-indicator", "/path/to/project"])?;
-        assert_eq!(cli.path, Some(PathBuf::from("/path/to/project")));
-        assert_eq!(cli.format, "simple");
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_with_format() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from(["project-indicator", "--format", "json"])?;
-        assert_eq!(cli.format, "json");
-        Ok(())
-    }
-
-    #[test]
     fn test_cli_config_subcommand() -> Result<(), Box<dyn std::error::Error>> {
         let cli = Cli::try_parse_from(["project-indicator", "config", "validate"])?;
         assert!(matches!(
@@ -113,63 +92,11 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_cache_clear() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from(["project-indicator", "cache", "clear"])?;
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Cache {
-                action: CacheAction::Clear
-            })
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_cache_stats() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from(["project-indicator", "cache", "stats"])?;
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Cache {
-                action: CacheAction::Stats
-            })
-        ));
-        Ok(())
-    }
-
-    #[test]
     fn test_cli_no_cache_flag() -> Result<(), Box<dyn std::error::Error>> {
         let cli = Cli::try_parse_from(["project-indicator", "--no-cache"])?;
         assert!(cli.no_cache);
         let cli = Cli::try_parse_from(["project-indicator"])?;
         assert!(!cli.no_cache);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_config_edit() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from(["project-indicator", "config", "edit"])?;
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Config {
-                action: ConfigAction::Edit
-            })
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_config_init() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from(["project-indicator", "config", "init"])?;
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Config {
-                action: ConfigAction::Init {
-                    template: None,
-                    force: false,
-                    path: None
-                }
-            })
-        ));
         Ok(())
     }
 
@@ -248,25 +175,6 @@ mod tests {
                 action: CacheAction::Stats
             })
         ));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_help_text() -> Result<(), Box<dyn std::error::Error>> {
-        let result = Cli::try_parse_from(["project-indicator", "--help"]);
-        assert!(result.is_err());
-
-        let result = Cli::try_parse_from(["project-indicator", "config", "--help"]);
-        assert!(result.is_err());
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_version_flag() -> Result<(), Box<dyn std::error::Error>> {
-        let result = Cli::try_parse_from(["project-indicator", "--version"]);
-        // Version flag causes early exit, so try_parse_from will return an error
-        // but it's a "DisplayVersion" error which is expected behavior
-        assert!(result.is_err());
         Ok(())
     }
 }

@@ -1,0 +1,4 @@
+packages:
+  flutter:
+    dependency: "direct main"
+    description: flutter

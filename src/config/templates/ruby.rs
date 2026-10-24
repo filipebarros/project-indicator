@@ -1,6 +1,6 @@
-use super::shared::{framework, nerd_icon, root_indicator};
+use super::shared::{dependency_framework, nerd_icon, root_indicator, with_roots};
 use crate::constants::{GEMFILE, GEMFILE_LOCK, GEMSPEC_EXTENSION, RUBY_EXTENSION};
-use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
+use crate::types::{Ecosystem, Framework, Indicator, IndicatorContext};
 
 pub fn create_ruby_indicator() -> Indicator {
     Indicator::with_root_indicators(
@@ -28,15 +28,15 @@ pub fn create_ruby_indicator() -> Indicator {
 }
 
 pub fn ruby_frameworks() -> Vec<Framework> {
-    vec![framework(
-        "Rails",
-        vec![Ecosystem::Rubygems],
-        DetectionType::Dependencies {
-            dependencies: vec!["rails".to_string()],
-        },
-        Some(nerd_icon("e73b")),
-        Some("#cc0000"),
-        1,
+    vec![with_roots(
+        dependency_framework(
+            "Rails",
+            &[Ecosystem::Rubygems],
+            &["rails"],
+            Some("e73b"),
+            Some("#cc0000"),
+            1,
+        ),
         vec![
             root_indicator(
                 "config/application.rb",

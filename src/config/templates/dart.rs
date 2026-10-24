@@ -1,6 +1,6 @@
-use super::shared::{framework, nerd_icon, root_indicator};
+use super::shared::{dependency_framework, nerd_icon, root_indicator, with_roots};
 use crate::constants::{DART_EXTENSION, PUBSPEC_YAML};
-use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
+use crate::types::{Ecosystem, Framework, Indicator, IndicatorContext};
 
 pub fn create_dart_indicator() -> Indicator {
     Indicator::with_root_indicators(
@@ -27,19 +27,15 @@ pub fn create_dart_indicator() -> Indicator {
 }
 
 pub fn dart_frameworks() -> Vec<Framework> {
-    vec![framework(
-        "Flutter",
-        vec![Ecosystem::Pub],
-        DetectionType::Dependencies {
-            dependencies: vec![
-                "flutter".to_string(),
-                "flutter_test".to_string(),
-                "cupertino_icons".to_string(),
-            ],
-        },
-        Some(nerd_icon("e7dd")),
-        Some("#02569b"),
-        1,
+    vec![with_roots(
+        dependency_framework(
+            "Flutter",
+            &[Ecosystem::Pub],
+            &["flutter", "flutter_test", "cupertino_icons"],
+            Some("e7dd"),
+            Some("#02569b"),
+            1,
+        ),
         vec![
             root_indicator("lib/main.dart", 0.9, IndicatorContext::FrameworkRoot),
             root_indicator("android/", 0.8, IndicatorContext::FrameworkRoot),

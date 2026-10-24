@@ -4,38 +4,29 @@ use std::path::Path;
 
 /// Detect Deno ecosystem dependencies via the `imports` map in
 /// deno.json/deno.jsonc (the parse cache tolerates comments in `.jsonc`).
-pub fn check_deno_ecosystem<P: AsRef<Path>>(
-    path: P,
+pub fn check_deno_ecosystem(
+    path: &Path,
     dependencies: &[String],
     parsed_cache: &ParsedFileCache,
-) -> Result<(Vec<String>, Vec<String>)> {
+) -> Result<Option<String>> {
     for config in ["deno.json", "deno.jsonc"] {
-        if let Some(json) = parsed_cache.get_json_value(path.as_ref().join(config))? {
-            let found = imports_dependencies(&json, dependencies);
-            if !found.is_empty() {
-                return Ok((found, vec![config.to_string()]));
+        if let Some(json) = parsed_cache.get_json_value(path.join(config))? {
+            if imports_dependencies(&json, dependencies) {
+                return Ok(Some(config.to_owned()));
             }
         }
     }
 
-    Ok((Vec::new(), Vec::new()))
+    Ok(None)
 }
 
-/// The dependencies named by a deno.json `imports` map (see
-/// [`imports_match`] for what counts). Shared with the npm matcher's
-/// `npm:` import fallback.
-pub(super) fn imports_dependencies(
-    json: &serde_json::Value,
-    dependencies: &[String],
-) -> Vec<String> {
-    let Some(imports) = json.get("imports").and_then(|v| v.as_object()) else {
-        return Vec::new();
-    };
-    dependencies
-        .iter()
-        .filter(|dep| imports_match(imports, dep))
-        .cloned()
-        .collect()
+/// Whether a deno.json `imports` map names any of `dependencies` (see
+/// [`imports_match`] for what counts). Shared with the npm matcher's `npm:`
+/// import fallback.
+pub(super) fn imports_dependencies(json: &serde_json::Value, dependencies: &[String]) -> bool {
+    json.get("imports")
+        .and_then(|v| v.as_object())
+        .is_some_and(|imports| dependencies.iter().any(|dep| imports_match(imports, dep)))
 }
 
 /// The package name inside `rest` of a `jsr:@scope/name[@ver][/path]` or
@@ -91,17 +82,22 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    /// The dependencies of `deps` the imports map names (each checked alone)
     fn check(deno_json: &str, deps: &[&str]) -> Vec<String> {
         let dir = TempDir::new().unwrap_or_else(|e| panic!("tempdir: {e}"));
         if let Err(e) = fs::write(dir.path().join("deno.json"), deno_json) {
             panic!("write fixture: {e}");
         }
         let cache = ParsedFileCache::new();
-        let deps: Vec<String> = deps.iter().map(|s| s.to_string()).collect();
-        match check_deno_ecosystem(dir.path(), &deps, &cache) {
-            Ok((found, _)) => found,
-            Err(e) => panic!("matcher failed: {e}"),
-        }
+        deps.iter()
+            .filter(
+                |dep| match check_deno_ecosystem(dir.path(), &[dep.to_string()], &cache) {
+                    Ok(found) => found.is_some(),
+                    Err(e) => panic!("matcher failed: {e}"),
+                },
+            )
+            .map(|dep| dep.to_string())
+            .collect()
     }
 
     #[test]

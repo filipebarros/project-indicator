@@ -1,0 +1,52 @@
+name: Security Audit
+
+# Weekly, for advisories published while nobody is pushing (ci.yml audits
+# every push). Dependency updates themselves come from Dependabot.
+on:
+  schedule:
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+
+jobs:
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-audit
+      uses: taiki-e/install-action@v2.87.28
+      with:
+        tool: cargo-audit
+
+    - name: Run security audit
+      id: audit
+      run: cargo audit
+
+    # Only when the audit itself failed, not on a flaky checkout or install
+    - name: Create issue on security vulnerability
+      if: failure() && steps.audit.outcome == 'failure'
+      uses: actions/github-script@v9
+      with:
+        script: |
+          const title = '🚨 Security vulnerability detected';
+          const { owner, repo } = context.repo;
+          const open = await github.rest.issues.listForRepo({
+            owner, repo, state: 'open', labels: 'security', per_page: 100,
+          });
+          // One open issue is enough; don't file another every week
+          if (open.data.some((issue) => issue.title === title)) return;
+          await github.rest.issues.create({
+            owner, repo, title,
+            body: 'A security vulnerability was detected in the dependencies. Please check the security audit logs and update the affected dependencies.',
+            labels: ['security', 'dependencies'],
+          });

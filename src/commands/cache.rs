@@ -7,15 +7,15 @@ pub fn handle_cache_command(action: CacheAction) -> Result<()> {
     match action {
         CacheAction::Clear => {
             cache.clear()?;
-            println!("✅ Cache cleared");
+            outln!("✅ Cache cleared");
             Ok(())
         }
         CacheAction::Stats => {
             let (entries, bytes) = cache.stats()?;
-            println!("Cache Statistics");
-            println!("================");
-            println!("📊 Entries: {}", entries);
-            println!("💾 Size: {} KiB", bytes / 1024);
+            outln!("Cache Statistics");
+            outln!("================");
+            outln!("📊 Entries: {}", entries);
+            outln!("💾 Size: {} KiB", bytes / 1024);
             Ok(())
         }
     }

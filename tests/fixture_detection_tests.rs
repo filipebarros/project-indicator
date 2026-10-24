@@ -29,11 +29,14 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("bun-ts-noreact", "Bun", &[]),
     ("cpp", "C++", &[]),
     ("csharp-aspnet", "C#", &["ASP.NET Core"]),
+    ("csharp-xamarin", "C#", &["Xamarin"]),
     // A bare Web SDK project (the modern template) has no PackageReference
     ("csharp-web-sdk-only", "C#", &["ASP.NET Core"]),
     ("csharp-global-json-only", "C#", &[]),
     ("dart-analysis-options-only", "Dart", &[]),
     ("dart-flutter", "Dart", &["Flutter"]),
+    // pubspec.yaml declares deps, so the lock (transitive) is not consulted
+    ("dart-lock-not-authoritative", "Dart", &[]),
     ("deno", "Deno", &[]),
     ("deno-fresh", "Deno", &["Fresh"]),
     // Fresh 2 declares jsr:@fresh/core instead of the $fresh/ alias
@@ -53,7 +56,12 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("js-astro", "JavaScript", &["Astro"]),
     ("js-solid", "JavaScript", &["SolidJS"]),
     ("php-symfony", "PHP", &["Symfony"]),
+    ("php-codeigniter", "PHP", &["CodeIgniter"]),
+    ("php-yii", "PHP", &["Yii"]),
     ("python-flask", "Python", &["Flask"]),
+    ("python-tornado", "Python", &["Tornado"]),
+    ("python-pyramid", "Python", &["Pyramid"]),
+    ("python-sanic", "Python", &["Sanic"]),
     ("rust-actix", "Rust", &["Actix Web"]),
     ("rust-rocket", "Rust", &["Rocket"]),
     ("ts-nestjs", "TypeScript", &["NestJS"]),
@@ -68,16 +76,24 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("js-plain-nodep", "JavaScript", &[]),
     ("js-runtime-config-only", "JavaScript", &[]),
     ("js-react", "JavaScript", &["React"]),
-    // One stray .gleam file must not override a real JavaScript project
     // vite appears only transitively in the lockfile (vitest depends on it)
     ("js-transitive-lock", "JavaScript", &[]),
+    // One stray .gleam file must not override a real JavaScript project
     ("js-stray-gleam", "JavaScript", &["React"]),
     ("js-svelte", "JavaScript", &["Svelte", "Vite"]),
     ("js-vue-plain", "JavaScript", &["Vue"]),
     ("jvm-gradle-groovy-kotlin-src", "Kotlin", &[]),
     ("jvm-gradle-kts-android", "Kotlin", &["Android"]),
+    // Real Gradle layouts keep the manifest under src/main/, not at the root
+    ("jvm-gradle-kts-android-app", "Kotlin", &["Android"]),
+    ("jvm-gradle-kts-android-module", "Kotlin", &["Android"]),
     ("jvm-gradle-kts-bare", "Kotlin", &[]),
     ("jvm-gradle-kts-java-src", "Java", &[]),
+    // Gradle is a build tool: the standard source dirs decide the language
+    ("jvm-gradle-kts-java-dir", "Java", &[]),
+    ("jvm-gradle-kts-kotlin-dir", "Kotlin", &[]),
+    ("jvm-gradle-kts-scala-dir", "Scala", &[]),
+    ("jvm-maven-scala-dir", "Scala", &[]),
     ("jvm-gradle-kts-kotlin-src", "Kotlin", &[]),
     ("jvm-gradle-mixed-src", "Java", &[]),
     ("jvm-pom-spring-bare", "Java", &["Spring Boot"]),
@@ -98,7 +114,6 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("odin-sources-only", "Odin", &[]),
     ("php-laravel", "PHP", &["Laravel"]),
     ("php-phpunit-only", "PHP", &[]),
-    // PyPI names are case-insensitive: "Django==4.2" is Django
     // Makefile is generic build glue, not evidence of C++
     ("makefile-only", "<none>", &[]),
     ("makefile-with-lone-source", "<none>", &[]),
@@ -107,6 +122,7 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("python-pyproject-with-js-tooling", "Python", &["Django"]),
     ("python-pyproject-with-pnpm-lock", "Python", &["Django"]),
     ("python-with-makefile", "Python", &["Flask"]),
+    // PyPI names are case-insensitive: "Django==4.2" is Django
     ("python-django-capitalized", "Python", &["Django"]),
     ("python-django", "Python", &["Django"]),
     // A pyenv version pin alone, with zero other Python evidence, is a
@@ -117,8 +133,6 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("ruby-rails", "Ruby", &["Rails"]),
     ("ruby-version-only", "Ruby", &[]),
     ("rust", "Rust", &[]),
-    // *.v is also a Verilog extension; a stray .v must not outrank Cargo.toml
-    // axum appears only transitively in Cargo.lock (tonic depends on it)
     // A manifest that declares NO dependencies of its own (virtual workspace,
     // bare `gemspec` Gemfile, empty composer.json, tool-only pyproject) does
     // not shadow its lockfile
@@ -128,14 +142,17 @@ const EXPECTATIONS: &[(&str, &str, &[&str])] = &[
     ("ruby-gemspec-gemfile", "Ruby", &["Rails"]),
     ("php-empty-composer", "PHP", &["Laravel"]),
     ("python-poetry-lock-only-deps", "Python", &["Django"]),
+    // axum appears only transitively in Cargo.lock (tonic depends on it)
     ("rust-transitive-lock", "Rust", &[]),
     ("rust-workspace-deps", "Rust", &["Axum"]),
+    // *.v is also a Verilog extension; a stray .v must not outrank Cargo.toml
     ("rust-stray-v", "Rust", &[]),
     ("rust-toolchain-only", "Rust", &[]),
     ("rust-axum", "Rust", &["Axum"]),
     ("scala-akka", "Scala", &["Akka HTTP"]),
     // akka-actor alone is Akka, not Akka HTTP
     ("scala-akka-actor-only", "Scala", &[]),
+    ("scala-mill", "Scala", &["Akka HTTP"]),
     ("swift", "Swift", &["Vapor"]),
     ("swift-package-resolved-only", "Swift", &[]),
     // Tauri keeps its config in src-tauri/ under a JavaScript-rooted project
@@ -237,6 +254,31 @@ fn test_every_fixture_has_an_expectation() -> Result<(), Box<dyn std::error::Err
     assert!(
         missing.is_empty(),
         "fixtures without expectations: {missing:?}"
+    );
+    Ok(())
+}
+
+/// A framework no fixture expects is a framework nothing proves can be
+/// detected: add a minimal fixture for it.
+#[test]
+fn test_every_catalog_framework_has_a_fixture() -> Result<(), Box<dyn std::error::Error>> {
+    use std::collections::HashSet;
+
+    let covered: HashSet<&str> = EXPECTATIONS
+        .iter()
+        .flat_map(|(_, _, frameworks)| frameworks.iter().copied())
+        .collect();
+    let config = project_indicator::config::TemplateGenerator::generate_template(Some("full"))?;
+    let uncovered: Vec<&str> = config
+        .frameworks
+        .iter()
+        .map(|f| f.name.as_str())
+        .filter(|name| !covered.contains(name))
+        .collect();
+
+    assert!(
+        uncovered.is_empty(),
+        "frameworks without a fixture: {uncovered:?}"
     );
     Ok(())
 }

@@ -23,30 +23,42 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: project-indicator-linux-x86_64
             asset_name: project-indicator-linux-x86_64.tar.gz
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            artifact_name: project-indicator-linux-aarch64
             asset_name: project-indicator-linux-aarch64.tar.gz
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact_name: project-indicator-macos-x86_64
             asset_name: project-indicator-macos-x86_64.tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact_name: project-indicator-macos-aarch64
             asset_name: project-indicator-macos-aarch64.tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: project-indicator-windows-x86_64.exe
             asset_name: project-indicator-windows-x86_64.zip
 
     runs-on: ${{ matrix.os }}
 
     steps:
+    - name: Get release info
+      id: release
+      shell: bash
+      env:
+        INPUT_TAG: ${{ github.event.inputs.tag }}
+        PAYLOAD_TAG: ${{ github.event.client_payload.tag }}
+      run: |
+        TAG_NAME="${INPUT_TAG:-$PAYLOAD_TAG}"
+        if ! [[ "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+          echo "Invalid or missing tag: '$TAG_NAME'" >&2
+          exit 1
+        fi
+        echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+        echo "Tag name: $TAG_NAME"
+
     - name: Checkout code
       uses: actions/checkout@v7
+      with:
+        ref: ${{ steps.release.outputs.tag_name }}
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -67,18 +79,6 @@ jobs:
           ~/.cargo/git
           target
         key: ${{ runner.os }}-${{ matrix.target }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Get release info
-      id: release
-      shell: bash
-      run: |
-        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          TAG_NAME="${{ github.event.inputs.tag }}"
-        else
-          TAG_NAME="${{ github.event.client_payload.tag }}"
-        fi
-        echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-        echo "Tag name: $TAG_NAME"
 
     - name: Build release binary
       shell: bash
@@ -109,7 +109,7 @@ jobs:
     - name: Upload Release Asset
       shell: bash
       run: |
-        gh release upload ${{ steps.release.outputs.tag_name }} ${{ matrix.asset_name }} \
-          --clobber
+        gh release upload "$TAG_NAME" ${{ matrix.asset_name }} --clobber
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG_NAME: ${{ steps.release.outputs.tag_name }}

@@ -1,5 +1,5 @@
-use super::shared::{nerd_icon, root_indicator, simple_framework};
-use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
+use super::shared::{file_framework, nerd_icon, root_indicator};
+use crate::types::{Ecosystem, Framework, Indicator, IndicatorContext};
 
 pub fn create_lua_indicator() -> Indicator {
     Indicator::with_root_indicators(
@@ -28,12 +28,10 @@ pub fn create_lua_indicator() -> Indicator {
 }
 
 pub fn lua_frameworks() -> Vec<Framework> {
-    vec![simple_framework(
+    vec![file_framework(
         "LÖVE",
-        vec![Ecosystem::Luarocks],
-        DetectionType::FileExists {
-            files: vec!["conf.lua".to_string()],
-        },
+        &[Ecosystem::Luarocks],
+        &["conf.lua"],
         None,
         Some("#e74a99"),
         1,

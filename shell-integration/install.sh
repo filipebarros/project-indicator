@@ -22,9 +22,12 @@ fi
 case "$shell_type" in
 fish)
     target="$HOME/.config/fish/functions/fish_right_prompt.fish"
-    if [[ -e "$target" ]]; then
-        cp "$target" "$target.pre-project-indicator.bak"
-        echo "ℹ Existing fish_right_prompt backed up to $target.pre-project-indicator.bak"
+    backup="$target.pre-project-indicator.bak"
+    # Back up once: a rerun (or an edited copy of the hook) must not replace
+    # the user's original prompt with ours
+    if [[ -e "$target" && ! -e "$backup" ]] && ! cmp -s "$target" "$SCRIPT_DIR/project-indicator.fish"; then
+        cp "$target" "$backup"
+        echo "ℹ Existing fish_right_prompt backed up to $backup"
     fi
     mkdir -p "$(dirname "$target")"
     cp "$SCRIPT_DIR/project-indicator.fish" "$target"

@@ -7,19 +7,13 @@
 
 Project Indicator is a high-performance replacement for shell-based project detection tools, designed to be integrated into your shell prompt or status line. It quickly identifies what type of project you're working on and displays relevant information with customizable formatting and colors.
 
-## Key Features
-
-- 🔒 **Read-only & safe by construction**: never modifies project files, never runs a shell, no `unsafe` code
-- 🧪 **Property-Based Testing**: Extensive test suite including rigorous property-based testing with proptest
-- 🔗 **Symlink Handling**: Comprehensive edge case handling for Unix symlinks
-
 ## Features
 
-- 🔍 **Multi-language Detection**: Supports 26 languages and toolchains (Rust, JavaScript/TypeScript, Python, Go, Deno, Bun, Gleam, Terraform, Nix, and more)
-- 🏗️ **Framework Recognition**: Detects 40 popular frameworks like React, Svelte, Axum, Django, Gin, Spring Boot, Laravel, Rails, Fresh
+- 🔍 **Multi-language Detection**: Rust, JavaScript/TypeScript, Python, Go, Deno, Bun, Gleam, Terraform, Nix and more
+- 🏗️ **Framework Recognition**: React, Svelte, Axum, Django, Gin, Spring Boot, Laravel, Rails, Fresh and more
+- 🔒 **Read-only & safe by construction**: never modifies project files, never runs a shell, no `unsafe` code
 - ⚡ **Blazing Performance**: 3-5ms typical detection
 - 🎨 **Multiple Output Formats**: Simple, Full, JSON, and Debug formats
-- 🔧 **CLI**: Configuration and cache management, plus a full-evidence debug format
 - 🧠 **Advanced Detection**: Confidence-based scoring with weighted root indicators
 - 🔧 **Configuration Templates**: Pre-built templates for different development environments
 - 🐚 **Shell Integration**: Ready-to-use hooks for Bash, Zsh, Fish and PowerShell (plus Starship and tmux snippets)
@@ -93,8 +87,8 @@ project-indicator [OPTIONS] [PATH]
 **Options:**
 - `--format <FORMAT>` - Output format: simple (default), full, json, debug
 - `--no-cache` - Skip the persistent result cache for this invocation
-- `--max-depth <N>` - Maximum scan depth (default: 1)
-- `-v, --verbose` - Enable verbose logging
+- `--max-depth <N>` - Maximum scan depth (default: 1; 0 scans nothing, so nothing is detected)
+- `-v, --verbose` - Enable verbose logging (also `RUST_LOG=debug`). Expected conditions such as an unparsable manifest or running in `$HOME` are silent by default and only logged here, so a prompt never shows them
 
 ### Subcommands
 
@@ -106,27 +100,13 @@ project-indicator config edit
 project-indicator config show
 ```
 
-**Debugging:**
-```bash
-project-indicator --format debug   # full evidence and confidence breakdown
-```
-
 ## Output Examples
 
+`simple` (the default) prints one colored glyph — the framework's if one was
+detected, otherwise the language's — so it fits in a prompt. `full` prints
+`icon|color` pairs separated by `•`, and `debug` dumps the evidence.
+
 ```bash
-# TypeScript React project
-$ project-indicator
-󰛦 TypeScript ·  React
-
-# Rust project
-$ project-indicator
- Rust · Rocket
-
-# Python Django project
-$ project-indicator
- Python ·  Django
-
-# JSON format
 $ project-indicator --format json
 {"indicator":"TypeScript","frameworks":["React"],"icon":"","color":"#61dafb","confidence":0.85,"evidence":["package.json"]}
 ```
@@ -136,17 +116,14 @@ $ project-indicator --format json
 Detection results are cached persistently across invocations, so shell
 prompt redraws cost almost nothing:
 
-- Warm (cached) invocation: ~0.2ms of work — total wall time is dominated
-  by OS process spawn
-- Fresh detection (first visit or after a change): typically 3-5ms
+- Cache hit: about 3ms wall time including process spawn
+- Fresh detection (first visit or after a change): about the same on a typical project
 - Worst case (deep nesting, cold): ~20-30ms
 
 The cache lives under `$XDG_CACHE_HOME/project-indicator/` (default
-`~/.cache`) and invalidates automatically when the project root, the
-manifests that produced the result, your config file, or the binary version
-change. Changes deep in subdirectories are only picked up when something at
-the project root changes — use `--no-cache` or `cache clear` if you hit
-that edge.
+`~/.cache`) and invalidates automatically when the project directory, the
+manifests and ignore files that produced the result, the directories the
+scan listed, your config file, or the binary itself change.
 
 ```bash
 project-indicator cache stats   # entry count and disk usage
@@ -262,7 +239,7 @@ JavaScript-family languages share the npm framework set).
 
 | Language   | Frameworks Detected |
 |------------|---------------------|
-| Bun        | React, Vue, Angular, Svelte, SolidJS, Hono, Next.js, Astro, NestJS, Vite |
+| Bun        | React, Vue, Angular, Svelte, SolidJS, Hono, Next.js, Astro, NestJS, Tauri, Vite |
 | C#         | ASP.NET Core, Xamarin |
 | C++        | — |
 | Dart       | Flutter |
@@ -271,7 +248,7 @@ JavaScript-family languages share the npm framework set).
 | Gleam      | — |
 | Go         | Gin, Echo, Fiber |
 | Java       | Spring Boot |
-| JavaScript | React, Vue, Angular, Svelte, SolidJS, Hono, Next.js, Astro, NestJS, Vite |
+| JavaScript | React, Vue, Angular, Svelte, SolidJS, Hono, Next.js, Astro, NestJS, Tauri, Vite |
 | Julia      | — |
 | Kotlin     | Spring Boot, Ktor, Android |
 | Lua        | LÖVE |
@@ -285,7 +262,7 @@ JavaScript-family languages share the npm framework set).
 | Scala      | Akka HTTP |
 | Swift      | Vapor |
 | Terraform  | — |
-| TypeScript | React, Vue, Angular, Svelte, SolidJS, Hono, Next.js, Astro, NestJS, Vite |
+| TypeScript | React, Vue, Angular, Svelte, SolidJS, Hono, Next.js, Astro, NestJS, Tauri, Vite |
 | V          | — |
 | Zig        | — |
 
@@ -326,57 +303,18 @@ Detection uses weighted scoring based on:
   - Test dirs: 0.2
   - Build output: 0.1
   - Dependencies: 0.05
-- **Pattern importance**:
-  - Core configs (package.json, Cargo.toml): 2.0
-  - Build files (Makefile, tsconfig.json): 1.5
-  - Source patterns (*.rs, *.ts): 1.0
+- **Pattern importance**: the declared root-indicator weight times its context authority (default 0.5 for plain source globs)
 - **Root indicator bonus**: Weighted contribution from root indicators
 
 Implementation: `src/types/matched_file.rs`, `src/detection/confidence_scorer.rs`, `src/detection/engine.rs`
 
 ## Development
 
-### Building
-
 ```bash
-# Debug build
-cargo build
-
-# Release build
-cargo build --release
-
-# Run tests
-cargo test
-
-# Run benchmarks
-cargo bench
+cargo test                                                  # all suites
+cargo clippy --all-targets --all-features -- -D warnings    # lint (unwrap/expect are denied)
+cargo bench                                                 # criterion benchmarks
 ```
-
-### Testing
-
-```bash
-# All tests
-cargo test
-
-# Specific test
-cargo test test_name
-
-# With output
-cargo test -- --nocapture
-
-# Library tests only
-cargo test --lib
-
-# Property-based tests only
-cargo test --test property_tests
-```
-
-**Test Coverage**: extensive suite across multiple categories:
-- Unit tests: Core functionality and edge cases
-- Integration tests: End-to-end CLI behavior, persistent cache, fixture snapshots
-- Property-based tests: Invariant validation with proptest
-- Symlink handling tests: Unix symlink edge cases
-- Concurrent stress tests: Thread safety verification
 
 ### Contributing
 
@@ -386,62 +324,22 @@ cargo test --test property_tests
 4. Ensure CI passes: `cargo test && cargo clippy`
 5. Submit a pull request with appropriate semver label
 
-#### Semver Labels
+#### Releases
 
-PRs must include one of:
+Merging to `main` triggers an automated release with cross-platform binaries.
+Label every PR with one of:
 - `major` - Breaking changes
 - `minor` - New features
 - `patch` - Bug fixes
 - `no-release` - No version bump
 
-Or use title prefixes: `feat:`, `fix:`, `breaking:`, `docs:`
-
-### Release Process
-
-Releases are automated:
-1. Create PR with semver label
-2. Merge triggers auto-release
-3. Cross-platform binaries built automatically
-4. GitHub release created with artifacts
+Labels are the only thing that selects the bump (PR titles are not read). A
+merge without a label, or a direct push to `main`, ships a **patch** release
+by default; use `no-release` for docs and test-only changes.
 
 ## Architecture
 
-### Module Structure
-
-```
-src/
-├── cli.rs              # CLI argument parsing
-├── main.rs             # Entry point
-├── lib.rs              # Library interface
-├── config.rs           # Configuration types
-├── performance.rs      # FileSystemCache
-├── detection/
-│   ├── engine.rs       # Main detection engine
-│   ├── confidence_scorer.rs
-│   ├── framework_detector.rs
-│   ├── pattern_matching.rs
-│   ├── root_indicators.rs
-│   ├── caches/         # Cache implementations
-│   └── scanner/        # File scanning
-├── cache.rs            # Persistent cross-invocation result cache
-├── commands/           # CLI command implementations
-├── output/             # Output formatting
-├── types/              # Core type definitions
-└── config/
-    ├── parser.rs       # Config parsing
-    ├── validator.rs    # Config validation
-    └── templates/      # Config templates
-```
-
-### Key Components
-
-- **DetectionEngine**: Orchestrates detection workflow
-- **Pattern matching**: `patterns::matches_pattern`, a plain function (no cache — a memo was benchmarked and removed)
-- **ParsedFileCache**: Per-run manifest parse memoization (JSON/TOML)
-- **FileSystemCache**: Per-run metadata memoization
-- **PersistentCache**: Cross-invocation result cache with mtime invalidation
-- **ConfidenceScorer**: Calculates detection confidence with root indicators
-- **FrameworkDetector**: Ecosystem-aware framework detection
+See [CLAUDE.md](CLAUDE.md) for the detection pipeline, caching design and module map.
 
 ## Exit Codes
 
@@ -489,10 +387,3 @@ The tool includes built-in safeguards against path traversal attacks:
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
-## Acknowledgments
-
-- Inspired by shell-based project detection tools
-- Built with ❤️ in Rust
-- Performance optimized for daily developer use
-- Community contributions welcome

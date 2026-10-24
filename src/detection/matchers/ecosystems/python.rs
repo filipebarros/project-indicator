@@ -1,85 +1,52 @@
 use super::helpers::{
     check_poetry_lock_dependencies, check_pyproject_dependencies, check_python_text_dependencies,
-    try_config_file_deps,
+    first_hit, TextCheck,
 };
 use crate::constants::{PIPFILE, POETRY_LOCK, PYPROJECT_TOML, REQUIREMENTS_TXT};
 use crate::detection::caches::ParsedFileCache;
 use crate::Result;
 use std::path::Path;
 
-/// Detect Python ecosystem dependencies
-pub fn check_python_ecosystem<P: AsRef<Path>>(
-    path: P,
+pub fn check_python_ecosystem(
+    path: &Path,
     dependencies: &[String],
     parsed_cache: &ParsedFileCache,
-) -> Result<(Vec<String>, Vec<String>)> {
-    let mut found_deps = Vec::new();
-    let mut evidence = Vec::new();
-
-    let pyproject_path = path.as_ref().join(PYPROJECT_TOML);
+) -> Result<Option<String>> {
     let mut pyproject_declares_deps = false;
-    if let Some(toml_value) = parsed_cache.get_toml_value(&pyproject_path)? {
-        let pyproject_deps = check_pyproject_dependencies(&toml_value, dependencies);
-        if !pyproject_deps.is_empty() {
-            found_deps.extend(pyproject_deps);
-            evidence.push(PYPROJECT_TOML.to_owned());
-            return Ok((found_deps, evidence));
+    if let Some(manifest) = parsed_cache.get_toml_value(path.join(PYPROJECT_TOML))? {
+        if check_pyproject_dependencies(&manifest, dependencies) {
+            return Ok(Some(PYPROJECT_TOML.to_owned()));
         }
         // A tool-only pyproject (just [tool.ruff]) declares no dependencies
-        pyproject_declares_deps = toml_value.get("project").is_some()
-            || toml_value.get("dependency-groups").is_some()
-            || toml_value
-                .get("tool")
-                .and_then(|t| t.get("poetry"))
-                .is_some();
+        pyproject_declares_deps = manifest.get("project").is_some()
+            || manifest.get("dependency-groups").is_some()
+            || manifest.get("tool").and_then(|t| t.get("poetry")).is_some();
     }
 
-    if try_config_file_deps(
-        parsed_cache,
-        &path,
-        REQUIREMENTS_TXT,
-        dependencies,
-        check_python_text_dependencies,
-        &mut found_deps,
-        &mut evidence,
-    )? {
-        return Ok((found_deps, evidence));
-    }
-
-    if try_config_file_deps(
-        parsed_cache,
-        &path,
-        PIPFILE,
-        dependencies,
-        check_python_text_dependencies,
-        &mut found_deps,
-        &mut evidence,
-    )? {
-        return Ok((found_deps, evidence));
+    let text_manifests: [(&str, TextCheck); 2] = [
+        (REQUIREMENTS_TXT, check_python_text_dependencies),
+        (PIPFILE, check_python_text_dependencies),
+    ];
+    if let Some(file) = first_hit(parsed_cache, path, &text_manifests, dependencies)? {
+        return Ok(Some(file));
     }
 
     // Manifests that declare dependencies are authoritative; poetry.lock
     // lists transitive packages too, so it is only a fallback when none do.
     // (Presence checks go through the parse cache: no extra syscalls.)
-    if pyproject_declares_deps
-        || parsed_cache
-            .get_file_content(path.as_ref().join(REQUIREMENTS_TXT))?
-            .is_some()
-        || parsed_cache
-            .get_file_content(path.as_ref().join(PIPFILE))?
-            .is_some()
-    {
-        return Ok((found_deps, evidence));
-    }
-
-    let poetry_lock_path = path.as_ref().join(POETRY_LOCK);
-    if let Some(content) = parsed_cache.get_file_content(&poetry_lock_path)? {
-        let poetry_deps = check_poetry_lock_dependencies(&content, dependencies);
-        if !poetry_deps.is_empty() {
-            found_deps.extend(poetry_deps);
-            evidence.push(POETRY_LOCK.to_owned());
+    for (file, _) in &text_manifests {
+        if parsed_cache.get_file_content(path.join(file))?.is_some() {
+            return Ok(None);
         }
     }
+    if pyproject_declares_deps {
+        return Ok(None);
+    }
 
-    Ok((found_deps, evidence))
+    first_hit(
+        parsed_cache,
+        path,
+        &[(POETRY_LOCK, check_poetry_lock_dependencies)],
+        dependencies,
+    )
 }

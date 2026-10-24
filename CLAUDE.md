@@ -98,18 +98,36 @@ The detection flow follows this path:
    - Wires the per-run caches and components together
 
 2. **RootIndicatorEngine** - Project root discovery
-   - Walks upward from the start path looking for high-confidence root
+   - Walks upward from the start path (the start directory plus up to
+     `max_upward_traversal` levels above it) looking for high-confidence root
      files (`.git`, `Cargo.toml`, etc.) to pick the directory to scan
    - Refuses to scan from boundary directories (home, system dirs)
+   - Wildcard markers (`*.csproj`) need a directory listing, so they are not
+     looked for in directories with more than 500 entries (literal markers
+     are still found by `stat`)
 
 3. **ScanningEngine** (`src/detection/scanner/`) - File discovery
-   - Traverses directory with configurable depth
+   - Traverses directory with configurable depth: a single sequential,
+     name-sorted walk (deterministic; no parallel path)
+   - Exact patterns that are relative paths (`src/main/java`,
+     `src/main/kotlin`, `src/main/scala`) are probed with one `stat` each, so
+     a shared build tool (Gradle/Maven) is classified by its source language
+     even though the default depth never reaches those files
+   - Root exact-name manifests are seeded first and don't count against the
+     15-match cap; if the cap is hit, a root-only pass tops up root-level
+     matches (`App.csproj` after a busy `Controllers/`). Only ignore files
+     inside the scan root apply, and `max_depth = 0` scans nothing
+   - Exact-name root manifests (and the oversized-root check) are literal
+     lookups that deliberately ignore .gitignore, so an ignored `go.work`
+     or `Cargo.toml` still counts; the walk and the top-up honour it
+   - Oversized roots (>500 entries) only get the root-level check; an
+     adaptive timeout cuts long walks short (such results are not cached)
    - Uses `PatternProcessor` for efficient pattern matching
-   - Adaptive performance (different strategies for small/large projects)
 
 4. **IndicatorResolver** - Conflict resolution
    - Handles multi-indicator projects (e.g., TypeScript + Rust)
-   - Uses priority and file count for resolution
+   - Candidates scoring >= 0.5 compete on score (priority only breaks
+     ties); below that the declared priority decides (lower number wins)
 
 5. **ConfidenceScorer** - Score calculation
    - Depth-based scoring (root files weighted highest)
@@ -117,7 +135,7 @@ The detection flow follows this path:
    - Pattern importance factors (package.json > *.js)
    - Root indicator bonus
 
-6. **FrameworkDetector** - Framework identification
+6. **Framework detection** (`src/detection/framework_detector.rs`) - Framework identification
    - Candidates scoped by ecosystem intersection with the winning indicator
    - Ecosystem-specific matchers (`src/detection/matchers/ecosystems/`)
    - Dependency analysis from package.json, Cargo.toml, deno.json, etc.
@@ -136,7 +154,18 @@ The detection flow follows this path:
   config parsing and engine construction entirely
 - **Invalidation**: evidence-keyed mtimes — the entry stores mtimes of the
   directory, active config file, and every file that influenced the result,
-  plus the binary version; any mismatch is a miss
+  plus the binary build (package version + executable size/mtime, so a
+  rebuild without a version bump misses), the directories above it that
+  root discovery consulted (bounded by the configured `max_upward_traversal`),
+  the subdirectories the scan listed (`max_depth > 1`, `watched_dirs`; a scan
+  that listed more than 256 is not stored), the nearest existing parent of
+  each probed source dir, and the `.gitignore`/`.ignore`/`.git/info/exclude`
+  files that shaped the walk, every file a matcher read (lockfiles no
+  indicator pattern lists), the nearest existing parent of every
+  `FileExists` probe path, and — with `require_vcs_root` — the ancestors up
+  to the traversal bound; any mismatch is a miss. A result is not stored if
+  anything it depends on changed after detection started (or within 20 ms
+  before it: file timestamps can come from a coarser clock)
 - **Failure policy**: every error degrades silently to a fresh detection
   (`log::debug` only) — the cache must never break a prompt
 - **Bypass**: `--no-cache`, or automatically when a `--max-depth` override
@@ -162,7 +191,7 @@ end-to-end detection ~70%. Don't reintroduce it without new numbers.)
 
 ### Configuration System
 
-**Template-based**: 26 indicator templates (`src/config/templates/`) plus a
+**Template-based**: one indicator template per language (`src/config/templates/`) plus a
 single ecosystem-keyed framework catalog (`src/config/templates/frameworks.rs`)
 
 - Each indicator module (e.g., `rust.rs`, `deno.rs`) defines file patterns,
@@ -255,16 +284,14 @@ pub fn create_mylang_indicator() -> Indicator {
    per-language `*_frameworks()` fn that the catalog extends:
 
 ```rust
-simple_framework(
+dependency_framework(
     "MyFramework",
-    vec![Ecosystem::Npm], // scoping: surfaced by indicators sharing an ecosystem
-    DetectionType::Dependencies {
-        dependencies: vec!["my-framework".to_string()],
-    },
-    None,
+    &[Ecosystem::Npm], // scoping: surfaced by indicators sharing an ecosystem
+    &["my-framework"],
+    None,              // nerd-font code point in hex, e.g. Some("e7ba")
     Some("#COLOR"),
     PRIORITY,
-)
+) // file_framework(...) detects by file presence; with_roots(...) adds root indicators
 ```
 
 2. New package ecosystem? Add an `Ecosystem` variant, a matcher in
@@ -278,7 +305,7 @@ simple_framework(
 1. Add a render function in `src/output/render.rs`:
 
 ```rust
-pub fn render_mine(result: &DetectionResult, config: &DisplayConfig) -> String {
+pub fn render_mine(result: &DetectionResult) -> String {
     // Implementation
 }
 ```
@@ -290,10 +317,12 @@ pub fn render_mine(result: &DetectionResult, config: &DisplayConfig) -> String {
 
 For ecosystem-specific dependency matching:
 
-1. Create matcher: `src/detection/matchers/ecosystems/<ecosystem>.rs`
-2. Implement parsing logic (use `ParsedFileCache` for performance)
-3. Add to `DependencyMatcher` dispatch: `src/detection/matchers/dependency_matcher.rs`
-4. Add confidence calculation helpers to `src/detection/matchers/common.rs`
+1. Create matcher: `src/detection/matchers/ecosystems/<ecosystem>.rs`. Most are
+   one `first_hit(...)` call over `(file, check_fn)` probes (`helpers.rs`);
+   manifests that declare dependencies are authoritative, so a lockfile probe
+   only runs when the manifest declares none
+2. Read files through `ParsedFileCache` (parsed at most once per run)
+3. Add to the `check_ecosystem` dispatch: `src/detection/matchers/dependency_matcher.rs`
 
 ## Performance Optimization Guidelines
 
@@ -328,8 +357,9 @@ For ecosystem-specific dependency matching:
 
 Automated via GitHub Actions:
 
-- PRs require semver label: `major`, `minor`, `patch`, or `no-release`
-- Or use title prefix: `feat:`, `fix:`, `breaking:`, `docs:`
+- The PR's semver label picks the bump: `major`, `minor`, `patch`, or
+  `no-release`. Titles are not read; an unlabeled merge or a direct push to
+  `main` defaults to a patch release
 - Merge to main triggers auto-release with cross-platform binaries
 - Binaries built for: Linux x86_64/ARM64, macOS Intel/Apple Silicon, Windows
 

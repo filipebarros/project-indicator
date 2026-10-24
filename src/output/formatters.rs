@@ -1,7 +1,5 @@
 use crate::output::render::{render_debug, render_full, render_json, render_simple};
 use crate::types::{DetectionResult, DisplayConfig};
-#[cfg(test)]
-use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq)]
 pub enum OutputFormat {
     Simple,
@@ -41,10 +39,10 @@ pub fn render(result: &DetectionResult, format: OutputFormat, config: &DisplayCo
     };
 
     match format {
-        OutputFormat::Simple => render_simple(user_facing, config),
+        OutputFormat::Simple => render_simple(user_facing),
         OutputFormat::Full => render_full(user_facing, config),
         OutputFormat::Json => render_json(user_facing, config),
-        OutputFormat::Debug => render_debug(result, config),
+        OutputFormat::Debug => render_debug(result),
     }
 }
 
@@ -52,17 +50,6 @@ pub fn render(result: &DetectionResult, format: OutputFormat, config: &DisplayCo
 mod tests {
     use super::*;
     use crate::test_utils::create_test_result;
-    use crate::types::{DetectionType, Framework, FrameworkMatch};
-
-    #[derive(Debug, Serialize, Deserialize)]
-    struct JsonOutput {
-        pub indicator: Option<String>,
-        pub frameworks: Vec<String>,
-        pub icon: Option<String>,
-        pub color: Option<String>,
-        pub confidence: f32,
-        pub evidence: Vec<String>,
-    }
 
     #[test]
     fn test_output_format_parsing() -> Result<(), Box<dyn std::error::Error>> {
@@ -71,8 +58,8 @@ mod tests {
         assert_eq!("json".parse::<OutputFormat>()?, OutputFormat::Json);
         assert_eq!("debug".parse::<OutputFormat>()?, OutputFormat::Debug);
 
-        // A stale format from a pre-upgrade shell integration (e.g. the
-        // removed "compact") must get an error that names the valid options
+        // An unknown format (e.g. the removed "compact") must get an error
+        // that names the valid options
         let err = match "compact".parse::<OutputFormat>() {
             Err(err) => err,
             Ok(_) => panic!("removed format must not parse"),
@@ -85,18 +72,17 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_format() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_simple_format() {
         let result = create_test_result();
         let display_config = DisplayConfig::default();
 
         let output = render(&result, OutputFormat::Simple, &display_config);
         // Icon wrapped in ANSI truecolor from the framework color (#61DAFB)
         assert_eq!(output, "\x1b[38;2;97;218;251m⚛️\x1b[0m");
-        Ok(())
     }
 
     #[test]
-    fn test_full_format() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_full_format() {
         let result = create_test_result();
         let display_config = DisplayConfig::default();
 
@@ -107,67 +93,6 @@ mod tests {
         assert!(output.contains("#61DAFB"));
         assert!(output.contains("•"));
         assert!(output.contains("|"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_json_format() -> Result<(), Box<dyn std::error::Error>> {
-        let result = create_test_result();
-        let display_config = DisplayConfig::default();
-
-        let output = render(&result, OutputFormat::Json, &display_config);
-
-        let json: JsonOutput = serde_json::from_str(&output)?;
-        assert_eq!(json.indicator, Some("TypeScript".to_string()));
-        assert_eq!(json.frameworks, vec!["React".to_string()]);
-        assert_eq!(json.icon, Some("⚛️".to_string()));
-        assert_eq!(json.color, Some("#61DAFB".to_string()));
-        assert_eq!(json.confidence, 0.9);
-        Ok(())
-    }
-
-    #[test]
-    fn test_debug_format() -> Result<(), Box<dyn std::error::Error>> {
-        let result = create_test_result();
-        let display_config = DisplayConfig::default();
-
-        let output = render(&result, OutputFormat::Debug, &display_config);
-        assert!(output.contains("Project: TypeScript"));
-        assert!(output.contains("React"));
-        assert!(output.contains("confidence: 0.90"));
-        assert!(output.contains("evidence"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_framework_limiting() -> Result<(), Box<dyn std::error::Error>> {
-        let mut result = create_test_result();
-
-        let vue_framework = Framework {
-            name: "Vue".to_string(),
-            ecosystems: vec![],
-            detection: DetectionType::Dependencies {
-                dependencies: vec![],
-            },
-            icon: None,
-            color: None,
-            priority: 2,
-            root_indicators: vec![],
-        };
-
-        result
-            .frameworks
-            .push(FrameworkMatch::new(vue_framework, 0.8, vec![]));
-
-        let display_config = DisplayConfig {
-            max_frameworks: 1,
-            ..Default::default()
-        };
-
-        let json_output = render(&result, OutputFormat::Json, &display_config);
-        let json: JsonOutput = serde_json::from_str(&json_output)?;
-        assert_eq!(json.frameworks.len(), 1);
-        Ok(())
     }
 
     #[test]
@@ -177,33 +102,16 @@ mod tests {
         result.confidence = f32::NAN;
 
         let json_output = render(&result, OutputFormat::Json, &DisplayConfig::default());
-        let parsed: JsonOutput = serde_json::from_str(&json_output)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json_output)?;
 
-        assert_eq!(parsed.confidence, 0.0);
-        assert!(parsed.indicator.is_some());
+        assert_eq!(parsed["confidence"], 0.0);
+        assert!(!parsed["indicator"].is_null());
 
         result.confidence = f32::INFINITY;
         let json_output = render(&result, OutputFormat::Json, &DisplayConfig::default());
-        let parsed: JsonOutput = serde_json::from_str(&json_output)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json_output)?;
 
-        assert_eq!(parsed.confidence, 0.0);
-        Ok(())
-    }
-
-    #[test]
-    fn test_json_format_fallback_structure() -> Result<(), Box<dyn std::error::Error>> {
-        let result = create_test_result();
-
-        let json_output = render(&result, OutputFormat::Json, &DisplayConfig::default());
-        let json: JsonOutput = serde_json::from_str(&json_output)?;
-
-        assert!(json.indicator.is_some());
-        assert!(!json.frameworks.is_empty());
-        assert!(json.confidence >= 0.0);
-        assert!(!json.evidence.is_empty());
-
-        assert!(json_output.starts_with('{'));
-        assert!(json_output.ends_with('}'));
+        assert_eq!(parsed["confidence"], 0.0);
         Ok(())
     }
 

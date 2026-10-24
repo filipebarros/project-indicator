@@ -38,7 +38,7 @@ impl PatternProcessor {
             return true;
         }
 
-        if let Some(ext) = filename.split('.').next_back() {
+        if let Some((_, ext)) = filename.rsplit_once('.') {
             if self.extension_filter.contains(ext) {
                 return true;
             }
@@ -59,7 +59,7 @@ impl PatternProcessor {
     ) -> Option<MatchedFile> {
         let relative_path = file_path.strip_prefix(base_path).ok()?;
         let filename = relative_path.file_name().and_then(|n| n.to_str())?;
-        let relative_str = normalized_relative(relative_path)?;
+        let relative_str = join_components(relative_path)?;
 
         self.unique_patterns
             .iter()
@@ -72,8 +72,13 @@ impl PatternProcessor {
     }
 }
 
+/// `path` relative to `base`, joined with `/` (None for non-UTF-8 components)
+pub(crate) fn normalized_relative(path: &Path, base: &Path) -> Option<String> {
+    join_components(path.strip_prefix(base).ok()?)
+}
+
 /// Join path components with `/` (None for non-UTF-8 components)
-fn normalized_relative(relative_path: &Path) -> Option<String> {
+fn join_components(relative_path: &Path) -> Option<String> {
     let parts: Option<Vec<&str>> = relative_path
         .components()
         .map(|c| c.as_os_str().to_str())
@@ -83,6 +88,25 @@ fn normalized_relative(relative_path: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_fast_path_agrees_with_full_matcher() {
+        let processor = PatternProcessor::new(Arc::new(vec!["*.rs".to_string()]));
+        for name in [".rs", "..rs", "a.rs", "a.b.rs", "rs.", "x.rs.bak", ".rs.rs"] {
+            assert_eq!(
+                processor.should_scan_file(name),
+                matches_pattern(name, "*.rs"),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_bare_extension_name_is_not_an_extension_match() {
+        let processor = PatternProcessor::new(Arc::new(vec!["*.rs".to_string()]));
+        assert!(!processor.should_scan_file("rs"));
+        assert!(processor.should_scan_file("main.rs"));
+    }
+
     use super::*;
 
     fn processor(patterns: &[&str]) -> PatternProcessor {

@@ -1,29 +1,18 @@
-use super::helpers::{check_mix_dependencies, try_config_file_deps};
+use super::helpers::{check_mix_dependencies, first_hit};
 use crate::constants::MIX_EXS;
 use crate::detection::caches::ParsedFileCache;
 use crate::Result;
 use std::path::Path;
 
-/// Detect Elixir ecosystem dependencies
-pub fn check_elixir_ecosystem<P: AsRef<Path>>(
-    path: P,
+pub fn check_elixir_ecosystem(
+    path: &Path,
     dependencies: &[String],
     parsed_cache: &ParsedFileCache,
-) -> Result<(Vec<String>, Vec<String>)> {
-    let mut found_deps = Vec::new();
-    let mut evidence = Vec::new();
-
-    if try_config_file_deps(
+) -> Result<Option<String>> {
+    first_hit(
         parsed_cache,
-        &path,
-        MIX_EXS,
+        path,
+        &[(MIX_EXS, check_mix_dependencies)],
         dependencies,
-        check_mix_dependencies,
-        &mut found_deps,
-        &mut evidence,
-    )? {
-        return Ok((found_deps, evidence));
-    }
-
-    Ok((found_deps, evidence))
+    )
 }

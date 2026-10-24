@@ -1,25 +1,11 @@
-use super::shared::{nerd_icon, root_indicator, simple_framework};
+use super::shared::{dependency_framework, nerd_icon, root_indicator};
 use crate::constants::{GO_EXTENSION, GO_MOD};
-use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
+use crate::types::{Ecosystem, Framework, Indicator, IndicatorContext};
 
-fn go_framework(
-    name: &str,
-    modules: &[&str],
-    color: &str,
-    priority: u8,
-) -> crate::types::Framework {
-    simple_framework(
-        name,
-        vec![Ecosystem::Go],
-        DetectionType::Dependencies {
-            // Major-version module paths (…/vN) are listed explicitly: go.mod
-            // matching is line-anchored, so a bare prefix won't match them
-            dependencies: modules.iter().map(|m| m.to_string()).collect(),
-        },
-        None,
-        Some(color),
-        priority,
-    )
+/// Major-version module paths (…/vN) are listed explicitly: go.mod matching
+/// is line-anchored, so a bare prefix won't match them
+fn go_framework(name: &str, modules: &[&str], color: &str, priority: u8) -> Framework {
+    dependency_framework(name, &[Ecosystem::Go], modules, None, Some(color), priority)
 }
 
 pub fn create_go_indicator() -> Indicator {

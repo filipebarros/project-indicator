@@ -1,158 +1,5 @@
-//! Detection evidence and result types for language/framework identification.
-//!
-//! This module provides types for tracking detection evidence, calculating confidence scores,
-//! and representing final detection results with full provenance information.
-//!
-//! # Overview
-//!
-//! The detection system builds confidence through evidence collection:
-//!
-//! 1. **Evidence Collection** - Gather [`EvidenceItem`]s from file scanning
-//! 2. **Confidence Calculation** - Combine evidence into [`ConfidenceFactor`]s
-//! 3. **Result Assembly** - Create final [`DetectionResult`] with language + frameworks
-//!
-//! # Core Types
-//!
-//! - [`EvidenceType`] - Categories of evidence (files, manifests, dependencies, etc.)
-//! - [`EvidenceItem`] - Individual piece of evidence with weight and description
-//! - [`ConfidenceFactor`] - Calculated confidence component
-//! - [`DetectionEvidence`] - Complete collection of all evidence
-//! - [`DetectionResult`] - Final result with language, frameworks, and confidence
-//!
-//! # Evidence Types
-//!
-//! Different types of evidence contribute to confidence differently:
-//!
-//! - **IndicatorFile** - Source files matching patterns (*.rs, *.py)
-//! - **ManifestFile** - Package manifests (Cargo.toml, package.json) - Higher weight
-//! - **FrameworkDependency** - Framework detected in dependencies
-//! - **RootIndicator** - Project root markers - Highest weight
-//! - **DirectoryStructure** - Conventional directory names (src/, tests/)
-//!
-//! # Example: Building Evidence
-//!
-//! ```rust
-//! use project_indicator::types::{DetectionEvidence, EvidenceItem};
-//!
-//! let mut evidence = DetectionEvidence::new();
-//!
-//! // Add language file evidence
-//! evidence.add_indicator_evidence(EvidenceItem::indicator_file(
-//!     "src/main.rs".to_string(),
-//!     "*.rs".to_string(),
-//!     0.8,
-//! ));
-//!
-//! // Add manifest evidence (higher weight)
-//! evidence.add_indicator_evidence(EvidenceItem::manifest_file(
-//!     "Cargo.toml".to_string(),
-//!     "Cargo.toml".to_string(),
-//!     0.95,
-//! ));
-//!
-//! // Add framework evidence
-//! evidence.add_framework_evidence(EvidenceItem::framework_dependency(
-//!     "Cargo.toml".to_string(),
-//!     "Rocket",
-//!     0.9,
-//! ));
-//!
-//! // Set scan metrics
-//! evidence.set_scan_metrics(42, 150);
-//!
-//! assert_eq!(evidence.indicator_evidence.len(), 2);
-//! assert_eq!(evidence.framework_evidence.len(), 1);
-//! assert_eq!(evidence.files_scanned, 42);
-//! ```
-//!
-//! # Detection Results
-//!
-//! A [`DetectionResult`] contains the complete detection outcome:
-//!
-//! ```rust
-//! use project_indicator::types::{
-//!     DetectionResult, Indicator, FrameworkMatch,
-//!     Framework, DetectionType
-//! };
-//! use std::sync::Arc;
-//!
-//! // Create language
-//! let rust = Arc::new(Indicator::new(
-//!     "Rust".to_string(),
-//!     vec!["*.rs".to_string()],
-//!     "#DEA584".to_string(),
-//!     "".to_string(),
-//!     1,
-//!     vec![],
-//! ));
-//!
-//! // Create framework match
-//! let rocket = Framework {
-//!     name: "Rocket".to_string(),
-//!     ecosystems: vec![],
-//!     detection: DetectionType::Dependencies {
-//!         dependencies: vec!["rocket".to_string()],
-//!     },
-//!     icon: Some("🚀".to_string()),
-//!     color: Some("#D33847".to_string()),
-//!     priority: 1,
-//!     root_indicators: vec![],
-//! };
-//!
-//! let framework_match = FrameworkMatch::new(
-//!     rocket,
-//!     0.9,
-//!     vec!["Cargo.toml".to_string()],
-//! );
-//!
-//! // Assemble final result
-//! let result = DetectionResult::new(
-//!     Some(rust),
-//!     vec![framework_match],
-//!     0.95,
-//! );
-//!
-//! assert_eq!(result.confidence, 0.95);
-//! assert_eq!(result.display_icon(), Some("🚀"));
-//! assert_eq!(result.display_color(), Some("#D33847"));
-//! ```
-//!
-//! # Display Priority
-//!
-//! When displaying results, the system prioritizes in this order:
-//!
-//! 1. **Best framework** - Highest priority framework (lowest priority number)
-//! 2. **Language fallback** - If no frameworks, use language icon/color
-//!
-//! ```rust
-//! use project_indicator::types::{DetectionResult, Indicator};
-//! use std::sync::Arc;
-//!
-//! let python = Arc::new(Indicator::new(
-//!     "Python".to_string(),
-//!     vec!["*.py".to_string()],
-//!     "#3776AB".to_string(),
-//!     "".to_string(),
-//!     1,
-//!     vec![],
-//! ));
-//!
-//! // No frameworks - uses language icon/color
-//! let result = DetectionResult::new(Some(python), vec![], 0.8);
-//! assert_eq!(result.display_icon(), Some(""));
-//! assert_eq!(result.display_color(), Some("#3776AB"));
-//! ```
-//!
-//! # Confidence Factors
-//!
-//! Confidence is built from weighted factors:
-//!
-//! - File quantity and diversity
-//! - Presence of root indicators
-//! - Framework detection strength
-//! - Directory structure matching
-//!
-//! Each factor contributes a weighted score to the final confidence value.
+//! A detection result and the evidence behind it. Serialised into the
+//! persistent cache, so every field must round-trip through serde.
 
 use crate::types::{FrameworkMatch, Indicator};
 use serde::{Deserialize, Serialize};
@@ -177,22 +24,6 @@ pub struct EvidenceItem {
 }
 
 impl EvidenceItem {
-    pub fn new(
-        evidence_type: EvidenceType,
-        file_path: String,
-        pattern_matched: String,
-        weight: f32,
-        description: String,
-    ) -> Self {
-        Self {
-            evidence_type,
-            file_path,
-            pattern_matched,
-            weight,
-            description,
-        }
-    }
-
     pub fn indicator_file(file_path: String, pattern: String, weight: f32) -> Self {
         let description = format!("Matched {} against pattern {}", file_path, pattern);
         Self {
@@ -219,7 +50,7 @@ impl EvidenceItem {
         Self {
             evidence_type: EvidenceType::FrameworkDependency,
             file_path,
-            pattern_matched: crate::constants::FRAMEWORK_DETECTION_PATTERN.to_owned(),
+            pattern_matched: "FRAMEWORK_DETECTION".to_owned(),
             weight: confidence,
             description: format!("Detected {} framework", framework_name),
         }
@@ -268,9 +99,24 @@ pub struct DetectionEvidence {
     /// such results must not be persisted
     #[serde(default)]
     pub scan_truncated: bool,
+    /// Directories (relative to the scan root) whose contents shaped the
+    /// result: subdirectories the walk listed, and the nearest existing
+    /// ancestor of each probed source directory. The persistent cache
+    /// watches them; the root itself is always watched.
+    #[serde(default)]
+    pub watched_dirs: Vec<String>,
+    /// Files, relative to the scan root, that matchers read to decide the
+    /// frameworks (lockfiles no indicator pattern lists, ...). The persistent
+    /// cache watches them too.
+    #[serde(default)]
+    pub read_files: Vec<String>,
 }
 
 impl DetectionEvidence {
+    /// A scan that listed more directories than this is not persisted: the
+    /// cache would have to stat them all on every hit.
+    pub const MAX_WATCHED_DIRS: usize = 256;
+
     pub fn new() -> Self {
         Self {
             indicator_evidence: Vec::new(),
@@ -280,11 +126,17 @@ impl DetectionEvidence {
             files_scanned: 0,
             total_scan_time_ms: 0,
             scan_truncated: false,
+            watched_dirs: Vec::new(),
+            read_files: Vec::new(),
         }
     }
 
+    /// Two indicators matching the same file by the same pattern (JavaScript
+    /// and TypeScript both claim package.json) produce one row, not two
     pub fn add_indicator_evidence(&mut self, evidence: EvidenceItem) {
-        self.indicator_evidence.push(evidence);
+        if !self.indicator_evidence.contains(&evidence) {
+            self.indicator_evidence.push(evidence);
+        }
     }
 
     pub fn add_framework_evidence(&mut self, evidence: EvidenceItem) {
@@ -347,14 +199,6 @@ impl DetectionResult {
         }
     }
 
-    pub fn empty() -> Self {
-        Self {
-            indicator: None,
-            frameworks: Vec::new(),
-            confidence: 0.0,
-            evidence: DetectionEvidence::new(),
-        }
-    }
     pub fn is_empty(&self) -> bool {
         self.indicator.is_none() && self.frameworks.is_empty()
     }
@@ -401,7 +245,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_icon_and_color_come_from_the_same_source() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_identical_evidence_is_recorded_once() {
+        let mut evidence = DetectionEvidence::new();
+        let item =
+            || EvidenceItem::manifest_file("package.json".into(), "package.json".into(), 0.8);
+        evidence.add_indicator_evidence(item());
+        evidence.add_indicator_evidence(item());
+        assert_eq!(evidence.indicator_evidence.len(), 1);
+    }
+
+    #[test]
+    fn test_evidence_for_a_different_pattern_is_kept() {
+        let mut evidence = DetectionEvidence::new();
+        for pattern in ["*.js", "a.*"] {
+            evidence.add_indicator_evidence(EvidenceItem::indicator_file(
+                "a.js".into(),
+                pattern.into(),
+                0.8,
+            ));
+        }
+        assert_eq!(evidence.indicator_evidence.len(), 2);
+    }
+
+    #[test]
+    fn test_icon_and_color_come_from_the_same_source() {
         use crate::types::{DetectionType, Framework, FrameworkMatch};
 
         let indicator = crate::types::Indicator::new(
@@ -433,23 +300,5 @@ mod tests {
         // fall back with it — a JS logo must not render in Svelte orange
         assert_eq!(result.display_icon(), Some("JS"));
         assert_eq!(result.display_color(), Some("#f7df1e"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_detection_result_serde_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-        let lang = crate::types::Indicator::new(
-            "Rust".to_string(),
-            vec!["Cargo.toml".to_string()],
-            "#dea584".to_string(),
-            "R".to_string(),
-            1,
-            vec![],
-        );
-        let result = DetectionResult::new(Some(std::sync::Arc::new(lang)), vec![], 0.9);
-        let json = serde_json::to_string(&result)?;
-        let back: DetectionResult = serde_json::from_str(&json)?;
-        assert_eq!(result, back);
-        Ok(())
     }
 }

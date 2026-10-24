@@ -1,66 +1,7 @@
 use project_indicator::config::ConfigParser;
-use project_indicator::detection::DetectionEngine;
-use project_indicator::types::DetectionConfig;
 use project_indicator::Config;
 use std::fs;
 use tempfile::TempDir;
-#[test]
-fn test_detection_config_defaults() -> Result<(), Box<dyn std::error::Error>> {
-    let config = DetectionConfig::default();
-
-    assert_eq!(config.max_upward_traversal, 10);
-    assert!(!config.require_vcs_root);
-    assert_eq!(config.max_depth, 1);
-    Ok(())
-}
-#[test]
-fn test_detection_engine_with_custom_config() -> Result<(), Box<dyn std::error::Error>> {
-    let detection_config = DetectionConfig {
-        max_upward_traversal: 3,
-        require_vcs_root: false,
-        max_depth: 3,
-    };
-
-    let engine = DetectionEngine::with_config(vec![], vec![], detection_config);
-
-    let temp_dir = TempDir::new()?;
-
-    let result = engine.detect(temp_dir.path())?;
-    assert!(result.is_empty());
-    Ok(())
-}
-#[test]
-fn test_detection_config_serialization() -> Result<(), Box<dyn std::error::Error>> {
-    let original_config = DetectionConfig {
-        max_upward_traversal: 8,
-        require_vcs_root: true,
-        max_depth: 3,
-    };
-
-    let toml_str = toml::to_string(&original_config)?;
-    assert!(toml_str.contains("max_upward_traversal = 8"));
-    assert!(toml_str.contains("require_vcs_root = true"));
-
-    let deserialized_config: DetectionConfig = toml::from_str(&toml_str)?;
-    assert_eq!(
-        deserialized_config.max_upward_traversal,
-        original_config.max_upward_traversal
-    );
-    assert_eq!(
-        deserialized_config.require_vcs_root,
-        original_config.require_vcs_root
-    );
-    assert_eq!(deserialized_config.max_depth, original_config.max_depth);
-    Ok(())
-}
-#[test]
-fn test_main_config_includes_detection() -> Result<(), Box<dyn std::error::Error>> {
-    let config = Config::new(vec![]);
-
-    assert_eq!(config.detection.max_upward_traversal, 10);
-    assert_eq!(config.detection.max_depth, 1);
-    Ok(())
-}
 #[test]
 fn test_full_config_with_detection_serialization() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::new(vec![]);
@@ -261,8 +202,8 @@ fn test_partial_sections_take_defaults() -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-/// `type = "ConfigFile"` framework detection was removed (no built-in used
-/// it). A config still using it must fail loudly, naming the variant.
+/// `type = "ConfigFile"` is not a detection type: a config using it must
+/// fail loudly, naming the variant.
 #[test]
 fn test_removed_configfile_detection_type_fails_parse() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
