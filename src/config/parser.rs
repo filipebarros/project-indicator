@@ -31,7 +31,7 @@ impl ConfigParser {
         paths.push(PathBuf::from(".project-indicator.toml"));
 
         if let Some(config_dir) = Self::xdg_config_dir() {
-            paths.push(config_dir.join("project-indicator/config.toml"));
+            paths.push(config_dir.join("project-indicator").join("config.toml"));
             paths.push(config_dir.join("project-indicator.toml"));
         }
 
@@ -101,7 +101,7 @@ impl ConfigParser {
     }
     pub fn default_save_path() -> Result<PathBuf> {
         if let Some(config_dir) = Self::xdg_config_dir() {
-            Ok(config_dir.join("project-indicator/config.toml"))
+            Ok(config_dir.join("project-indicator").join("config.toml"))
         } else {
             anyhow::bail!("Could not determine config directory");
         }
