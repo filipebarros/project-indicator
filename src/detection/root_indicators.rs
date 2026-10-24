@@ -98,12 +98,12 @@ impl RootIndicatorEngine {
             if vcs_pending.is_some() {
                 // The deepest indicator root wins; higher levels are only
                 // consulted for the VCS marker that validates it
-                if self.has_vcs_marker(&current, file_cache) {
+                if Self::has_vcs_marker(&current, file_cache) {
                     return vcs_pending.take();
                 }
             } else if let Some(indicator) = self.check_root_indicators_at_path(&current, file_cache)
             {
-                if !self.config.require_vcs_root || self.has_vcs_marker(&current, file_cache) {
+                if !self.config.require_vcs_root || Self::has_vcs_marker(&current, file_cache) {
                     log::debug!(
                         "Found project root at {} (pattern: {}, certainty: {:.2})",
                         current.display(),
@@ -153,7 +153,7 @@ impl RootIndicatorEngine {
         )
     }
 
-    fn has_vcs_marker(&self, path: &Path, file_cache: &FileSystemCache) -> bool {
+    fn has_vcs_marker(path: &Path, file_cache: &FileSystemCache) -> bool {
         VCS_MARKERS
             .iter()
             .any(|marker| file_cache.exists(&path.join(marker)))
@@ -209,7 +209,7 @@ impl RootIndicatorEngine {
 
                 if let Some(matched_name) = matched_name {
                     let indicator_path = path.join(&matched_name);
-                    let certainty = self.calculate_indicator_certainty(
+                    let certainty = Self::calculate_indicator_certainty(
                         &indicator_path,
                         root_indicator,
                         indicator,
@@ -217,7 +217,7 @@ impl RootIndicatorEngine {
                     );
 
                     if certainty > 0.2 {
-                        let specificity = self.get_pattern_specificity(&root_indicator.pattern);
+                        let specificity = Self::get_pattern_specificity(&root_indicator.pattern);
 
                         // Report the concrete file: evidence and the cache's
                         // mtime-invalidation set need a real path
@@ -245,32 +245,36 @@ impl RootIndicatorEngine {
             }
         }
 
-        self.resolve_indicator_conflicts(&found_indicators).cloned()
+        Self::resolve_indicator_conflicts(&found_indicators).cloned()
     }
 
     fn calculate_indicator_certainty(
-        &self,
         file_path: &Path,
         root_indicator: &crate::types::RootIndicator,
-        indicator: &Arc<Indicator>,
+        indicator: &Indicator,
         ts_deps: &OnceCell<bool>,
     ) -> f32 {
         let has_typescript =
-            || *ts_deps.get_or_init(|| self.has_typescript_dependencies(file_path));
+            || *ts_deps.get_or_init(|| Self::has_typescript_dependencies(file_path));
         match root_indicator.pattern.as_str() {
-            CARGO_TOML if self.is_valid_cargo_toml(file_path) => 0.95,
-            CARGO_TOML => 0.1,
+            CARGO_TOML if Self::is_valid_cargo_toml(file_path) => 0.95,
+            PYPROJECT_TOML if Self::is_valid_python_project(file_path) => 0.90,
+            CARGO_TOML | PYPROJECT_TOML => 0.1,
             GO_MOD => 0.95,
-            PYPROJECT_TOML if self.is_valid_python_project(file_path) => 0.90,
-            PYPROJECT_TOML => 0.1,
             TSCONFIG_JSON => 0.90,
-            PACKAGE_JSON => match indicator.name.as_str() {
-                "TypeScript" if has_typescript() => 0.85,
-                "TypeScript" => 0.1,
-                "JavaScript" if has_typescript() => 0.1,
-                "JavaScript" => 0.70,
-                _ => 0.0,
-            },
+            // A tsconfig.json marker makes an indicator the TypeScript flavour
+            // of a shared package.json; anything else claiming it is plain JS
+            PACKAGE_JSON => {
+                let typescript_flavour = indicator
+                    .root_indicators
+                    .iter()
+                    .any(|r| r.pattern == TSCONFIG_JSON);
+                match (typescript_flavour, has_typescript()) {
+                    (true, true) => 0.85,
+                    (true, false) | (false, true) => 0.1,
+                    (false, false) => 0.70,
+                }
+            }
             // Data-driven fallback: the indicator's declared weight scaled
             // by its context class base priority (RuntimeRoot, ToolchainRoot, …),
             // so patterns without a hardcoded validator (deno.json, flake.nix,
@@ -279,21 +283,19 @@ impl RootIndicatorEngine {
         }
     }
 
-    fn resolve_indicator_conflicts<'a>(
-        &self,
-        indicators: &'a [FoundRootIndicator],
-    ) -> Option<&'a FoundRootIndicator> {
+    fn resolve_indicator_conflicts(
+        indicators: &[FoundRootIndicator],
+    ) -> Option<&FoundRootIndicator> {
         indicators.iter().max_by(|a, b| {
             a.certainty
-                .partial_cmp(&b.certainty)
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .total_cmp(&b.certainty)
                 .then(a.specificity.cmp(&b.specificity))
                 // lower priority number wins, as everywhere else
                 .then(b.indicator.priority.cmp(&a.indicator.priority))
         })
     }
 
-    fn get_pattern_specificity(&self, pattern: &str) -> u8 {
+    fn get_pattern_specificity(pattern: &str) -> u8 {
         match pattern {
             CARGO_TOML | GO_MOD | TSCONFIG_JSON => 10,
             PYPROJECT_TOML => 8,
@@ -302,11 +304,11 @@ impl RootIndicatorEngine {
         }
     }
 
-    fn is_valid_cargo_toml(&self, path: &Path) -> bool {
+    fn is_valid_cargo_toml(path: &Path) -> bool {
         read_text(path).is_ok_and(|c| c.contains("[package]") || c.contains("[workspace]"))
     }
 
-    fn is_valid_python_project(&self, path: &Path) -> bool {
+    fn is_valid_python_project(path: &Path) -> bool {
         // [project] is the PEP 621 table: a pyproject that declares a
         // project is Python even without a build-system section
         read_text(path).is_ok_and(|c| {
@@ -321,7 +323,7 @@ impl RootIndicatorEngine {
     /// (`typescript`, `ts-node`, or any `@types/*`) in any dependency section.
     /// Reads the parsed keys, not the raw text, so a prose mention or an ESM
     /// `"type": "module"` marker can't count.
-    fn has_typescript_dependencies(&self, path: &Path) -> bool {
+    fn has_typescript_dependencies(path: &Path) -> bool {
         let Ok(content) = read_text(path) else {
             return false;
         };
@@ -521,10 +523,8 @@ mod tests {
         let file_cache = FileSystemCache::default();
         let result = engine.find_project_root(&subdir, &file_cache);
 
-        let (root_path, found) = match result {
-            Some(r) => r,
-            None => panic!("wildcard root indicator must fire during upward traversal"),
-        };
+        let (root_path, found) =
+            result.ok_or("wildcard root indicator must fire during upward traversal")?;
         assert_eq!(root_path, temp_dir.path());
         assert_eq!(
             found.pattern, "MyApp.csproj",
@@ -558,10 +558,8 @@ mod tests {
         let file_cache = FileSystemCache::default();
         let result = engine.find_project_root(&proj, &file_cache);
 
-        let (root_path, found) = match result {
-            Some(r) => r,
-            None => panic!("manifest under a VCS ancestor must satisfy require_vcs_root"),
-        };
+        let (root_path, found) =
+            result.ok_or("manifest under a VCS ancestor must satisfy require_vcs_root")?;
         assert_eq!(root_path, proj, "project root is the manifest's directory");
         assert_eq!(found.pattern, "Cargo.toml");
         Ok(())
@@ -809,7 +807,6 @@ mod tests {
 
     #[test]
     fn test_utf16_root_manifests_are_validated() -> Result<(), Box<dyn std::error::Error>> {
-        let engine = engine_for(vec![], DetectionConfig::default());
         let dir = TempDir::new()?;
         let utf16 = |text: &str| -> Vec<u8> {
             let mut bytes = vec![0xFF, 0xFE];
@@ -820,10 +817,10 @@ mod tests {
         };
         let cargo = dir.path().join("Cargo.toml");
         fs::write(&cargo, utf16("[package]\nname = \"x\"\n"))?;
-        assert!(engine.is_valid_cargo_toml(&cargo));
+        assert!(RootIndicatorEngine::is_valid_cargo_toml(&cargo));
         let pyproject = dir.path().join("pyproject.toml");
         fs::write(&pyproject, utf16("[project]\nname = \"x\"\n"))?;
-        assert!(engine.is_valid_python_project(&pyproject));
+        assert!(RootIndicatorEngine::is_valid_python_project(&pyproject));
         Ok(())
     }
 
@@ -915,9 +912,66 @@ mod tests {
         Ok(())
     }
 
+    /// `package.json` certainty follows what the indicator claims (a
+    /// `tsconfig.json` marker makes it the TypeScript flavour), not what the
+    /// user happened to name it.
+    fn package_json_certainty(
+        indicator_name: &str,
+        markers: Vec<(&str, f32)>,
+        manifest: &str,
+    ) -> Result<f32, Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let file = dir.path().join("package.json");
+        fs::write(&file, manifest)?;
+        let indicator = Arc::new(create_test_indicator_with_indicators(
+            indicator_name,
+            markers,
+        ));
+        let root = indicator
+            .root_indicators
+            .iter()
+            .find(|r| r.pattern == "package.json")
+            .ok_or("no package.json marker")?;
+        Ok(RootIndicatorEngine::calculate_indicator_certainty(
+            &file,
+            root,
+            &indicator,
+            &std::cell::OnceCell::new(),
+        ))
+    }
+
+    const TS_MANIFEST: &str = r#"{"devDependencies":{"typescript":"^5"}}"#;
+    const JS_MANIFEST: &str = r#"{"dependencies":{"express":"4"}}"#;
+
+    #[test]
+    fn test_renamed_typescript_indicator_keeps_typescript_certainty(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let markers = vec![("tsconfig.json", 0.95), ("package.json", 0.9)];
+        assert_eq!(
+            package_json_certainty("Typed", markers.clone(), TS_MANIFEST)?,
+            0.85
+        );
+        assert_eq!(package_json_certainty("Typed", markers, JS_MANIFEST)?, 0.1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_renamed_javascript_indicator_keeps_javascript_certainty(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let markers = vec![("package.json", 0.95)];
+        assert_eq!(
+            package_json_certainty("Scripts", markers.clone(), JS_MANIFEST)?,
+            0.70
+        );
+        assert_eq!(
+            package_json_certainty("Scripts", markers, TS_MANIFEST)?,
+            0.1
+        );
+        Ok(())
+    }
+
     #[test]
     fn test_typescript_detected_in_utf16_package_json() -> Result<(), Box<dyn std::error::Error>> {
-        let engine = engine_for(vec![], DetectionConfig::default());
         let dir = TempDir::new()?;
         let p = dir.path().join("package.json");
         let mut bytes = vec![0xFF, 0xFE];
@@ -925,19 +979,18 @@ mod tests {
             bytes.extend(unit.to_le_bytes());
         }
         fs::write(&p, bytes)?;
-        assert!(engine.has_typescript_dependencies(&p));
+        assert!(RootIndicatorEngine::has_typescript_dependencies(&p));
         Ok(())
     }
 
     #[test]
     fn test_typescript_detected_from_dependency_keys_only() -> Result<(), Box<dyn std::error::Error>>
     {
-        let engine = engine_for(vec![], DetectionConfig::default());
         let dir = TempDir::new()?;
         let check = |json: &str| -> Result<bool, Box<dyn std::error::Error>> {
             let p = dir.path().join("package.json");
             fs::write(&p, json)?;
-            Ok(engine.has_typescript_dependencies(&p))
+            Ok(RootIndicatorEngine::has_typescript_dependencies(&p))
         };
 
         // Real TypeScript signals, in any dependency section

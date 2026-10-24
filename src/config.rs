@@ -2,7 +2,7 @@ mod parser;
 mod templates;
 mod validator;
 
-pub use self::parser::{ConfigError, ConfigParser};
+pub use self::parser::ConfigParser;
 pub use self::templates::TemplateGenerator;
 pub use self::validator::validate_config;
 
@@ -42,7 +42,7 @@ mod tests {
     fn test_config_serialization() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::new(vec![create_test_indicator_with_priority(
             "Test",
-            vec!["test.file"],
+            &["test.file"],
             1,
         )]);
 

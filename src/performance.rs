@@ -1,30 +1,24 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// Per-run memoization of whether a path exists.
 ///
-/// No TTL or eviction: lives for a single CLI invocation.
+/// No TTL or eviction: lives for a single detection run, on one thread.
 #[derive(Debug, Default)]
 pub struct FileSystemCache {
-    exists: Mutex<HashMap<PathBuf, bool>>,
+    exists: RefCell<HashMap<PathBuf, bool>>,
 }
 
 impl FileSystemCache {
-    /// The lock is only ever held for a lookup or an insert, never across
-    /// I/O; a poisoned lock still holds valid data, so recover it.
-    fn map(&self) -> MutexGuard<'_, HashMap<PathBuf, bool>> {
-        self.exists.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
     pub fn exists(&self, path: &Path) -> bool {
-        if let Some(&cached) = self.map().get(path) {
+        if let Some(&cached) = self.exists.borrow().get(path) {
             return cached;
         }
 
         let exists = fs::metadata(path).is_ok();
-        self.map().insert(path.to_path_buf(), exists);
+        self.exists.borrow_mut().insert(path.to_path_buf(), exists);
         exists
     }
 }
@@ -32,7 +26,6 @@ impl FileSystemCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use tempfile::TempDir;
 
     #[test]
@@ -68,37 +61,6 @@ mod tests {
     fn test_directories_exist() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = TempDir::new()?;
         assert!(FileSystemCache::default().exists(temp_dir.path()));
-        Ok(())
-    }
-
-    #[test]
-    fn test_concurrent_access() -> Result<(), Box<dyn std::error::Error>> {
-        let cache = Arc::new(FileSystemCache::default());
-        let temp_dir = TempDir::new()?;
-
-        let mut paths = Vec::new();
-        for i in 0..20 {
-            let path = temp_dir.path().join(format!("file_{}.txt", i));
-            fs::write(&path, "x")?;
-            paths.push(path);
-        }
-
-        let mut handles = Vec::new();
-        for _ in 0..4 {
-            let cache = Arc::clone(&cache);
-            let paths = paths.clone();
-            handles.push(std::thread::spawn(move || {
-                for path in &paths {
-                    assert!(cache.exists(path));
-                }
-            }));
-        }
-
-        for handle in handles {
-            handle
-                .join()
-                .map_err(|_| "concurrent access thread panicked")?;
-        }
         Ok(())
     }
 }

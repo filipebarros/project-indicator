@@ -16,7 +16,7 @@ pub fn render_simple(result: &DetectionResult) -> String {
     icon.into()
 }
 
-/// NO_COLOR (https://no-color.org) disables color when set to a non-empty value
+/// NO_COLOR (<https://no-color.org>) disables color when set to a non-empty value
 fn color_enabled(no_color: Option<&std::ffi::OsStr>) -> bool {
     no_color.is_none_or(|value| value.is_empty())
 }
@@ -159,12 +159,8 @@ pub fn render_debug(result: &DetectionResult) -> String {
         debug_info.push("Confidence Calculation:".to_string());
         for factor in &result.evidence.confidence_factors {
             debug_info.push(format!(
-                "  • {}: {:.2} × {:.2} = {:.2} ({})",
-                factor.factor_type,
-                factor.value,
-                factor.weight,
-                factor.value * factor.weight,
-                factor.description
+                "  • {}: {:.2} ({})",
+                factor.factor_type, factor.value, factor.description
             ));
         }
     }

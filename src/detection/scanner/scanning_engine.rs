@@ -1,7 +1,6 @@
 use super::{traverser::build_walker, TimeoutManager};
 use crate::detection::pattern_processor::{normalized_relative, PatternProcessor};
 use crate::types::{DetectionEvidence, MatchedFile};
-use crate::Result;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -141,10 +140,10 @@ impl ScanningEngine {
     /// system dir) only get a root-level check, and `max_depth == 0` scans
     /// nothing. Also reports whether the timeout cut the walk short (the
     /// matches are then a partial sample) and the directories it depended on.
-    pub fn scan_with_status(&self, path: &Path) -> Result<ScanOutcome> {
+    pub fn scan_with_status(&self, path: &Path) -> ScanOutcome {
         log::trace!("Starting scan for path: {}", path.display());
         if self.max_depth == 0 {
-            return Ok(ScanOutcome::default());
+            return ScanOutcome::default();
         }
         let (entry_count, root_names) = Self::list_root(path);
 
@@ -161,21 +160,21 @@ impl ScanningEngine {
             matches.extend(self.root_wildcard_matches(&root_names, &matches));
             let (probed, watched_dirs) = self.probe_paths(path);
             matches.extend(probed);
-            return Ok(ScanOutcome {
+            return ScanOutcome {
                 matches,
                 truncated: false,
                 watched_dirs,
-            });
+            };
         }
 
         let (probed, probe_dirs) = self.probe_paths(path);
         let mut seeded = self.root_manifest_matches(&root_names);
         seeded.extend(probed);
-        let mut outcome = self.scan_sequential(path, TimeoutManager::new(entry_count), seeded)?;
+        let mut outcome = self.scan_sequential(path, TimeoutManager::new(entry_count), seeded);
         outcome.watched_dirs.extend(probe_dirs);
         outcome.watched_dirs.sort();
         outcome.watched_dirs.dedup();
-        Ok(outcome)
+        outcome
     }
 
     fn prefilter_entry(pattern_processor: &PatternProcessor, entry: &ignore::DirEntry) -> bool {
@@ -193,11 +192,7 @@ impl ScanningEngine {
             return false;
         };
 
-        if !pattern_processor.should_scan_file(filename) {
-            return false;
-        }
-
-        true
+        pattern_processor.should_scan_file(filename)
     }
 
     fn collect_match(&self, entry: &ignore::DirEntry, base: &Path, matched: &mut Vec<MatchedFile>) {
@@ -223,7 +218,7 @@ impl ScanningEngine {
         path: &Path,
         timeout_mgr: TimeoutManager,
         root_manifests: Vec<MatchedFile>,
-    ) -> Result<ScanOutcome> {
+    ) -> ScanOutcome {
         let scan_start = std::time::Instant::now();
         let mut timed_out = false;
         let mut watched_dirs = Vec::new();
@@ -244,19 +239,24 @@ impl ScanningEngine {
                 break;
             }
 
-            if let Ok(entry) = result {
-                // A listed subdirectory (depth 1..max_depth) shapes the result
-                if entry.depth() >= 1
-                    && entry.depth() < self.max_depth
-                    && watched_dirs.len() <= DetectionEvidence::MAX_WATCHED_DIRS
-                    && entry.file_type().is_some_and(|ft| ft.is_dir())
-                {
-                    if let Some(relative) = normalized_relative(entry.path(), path) {
-                        watched_dirs.push(relative);
-                    }
+            let entry = match result {
+                Ok(entry) => entry,
+                Err(e) => {
+                    log::debug!("Scan: skipped an unreadable entry: {e}");
+                    continue;
                 }
-                self.collect_match(&entry, path, &mut matched_files);
+            };
+            // A listed subdirectory (depth 1..max_depth) shapes the result
+            if entry.depth() >= 1
+                && entry.depth() < self.max_depth
+                && watched_dirs.len() <= DetectionEvidence::MAX_WATCHED_DIRS
+                && entry.file_type().is_some_and(|ft| ft.is_dir())
+            {
+                if let Some(relative) = normalized_relative(entry.path(), path) {
+                    watched_dirs.push(relative);
+                }
             }
+            self.collect_match(&entry, path, &mut matched_files);
         }
 
         // The walk is name-sorted, so a busy subdirectory can use up the cap
@@ -280,11 +280,11 @@ impl ScanningEngine {
             elapsed
         );
 
-        Ok(ScanOutcome {
+        ScanOutcome {
             matches: matched_files,
             truncated: timed_out,
             watched_dirs,
-        })
+        }
     }
 }
 
@@ -292,16 +292,17 @@ impl ScanningEngine {
 mod tests {
     use super::*;
     use crate::test_utils::create_test_rust_project;
+    use crate::Result;
     use std::fs;
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    fn scan(engine: &ScanningEngine, path: &Path) -> Result<Vec<MatchedFile>> {
-        engine.scan_with_status(path).map(|outcome| outcome.matches)
+    fn scan(engine: &ScanningEngine, path: &Path) -> Vec<MatchedFile> {
+        engine.scan_with_status(path).matches
     }
 
     fn create_test_engine() -> ScanningEngine {
-        let patterns = Arc::new(vec![
+        let patterns = Arc::from(vec![
             "*.rs".to_string(),
             "Cargo.toml".to_string(),
             "*.js".to_string(),
@@ -315,7 +316,7 @@ mod tests {
     #[test]
     fn test_root_wildcard_marker_survives_match_cap() -> Result<()> {
         let processor =
-            PatternProcessor::new(Arc::new(vec!["*.cs".to_string(), "*.csproj".to_string()]));
+            PatternProcessor::new(Arc::from(vec!["*.cs".to_string(), "*.csproj".to_string()]));
         let engine = ScanningEngine::new(processor, 3);
         let temp_dir = TempDir::new()?;
         let controllers = temp_dir.path().join("Controllers");
@@ -325,7 +326,7 @@ mod tests {
         }
         fs::write(temp_dir.path().join("MyApp.csproj"), "")?;
 
-        let matches = scan(&engine, temp_dir.path())?;
+        let matches = scan(&engine, temp_dir.path());
         assert!(
             matches.iter().any(|m| m.relative_path == "MyApp.csproj"),
             "root *.csproj must not be crowded out by a busy subdirectory"
@@ -334,7 +335,7 @@ mod tests {
     }
 
     fn js_engine(max_depth: usize) -> ScanningEngine {
-        let patterns = Arc::new(vec!["*.js".to_string(), "package.json".to_string()]);
+        let patterns = Arc::from(vec!["*.js".to_string(), "package.json".to_string()]);
         ScanningEngine::new(PatternProcessor::new(patterns), max_depth)
     }
 
@@ -343,7 +344,7 @@ mod tests {
         let temp_dir = TempDir::new()?;
         fs::write(temp_dir.path().join("package.json"), "{}")?;
 
-        let names: Vec<String> = scan(&js_engine(2), temp_dir.path())?
+        let names: Vec<String> = scan(&js_engine(2), temp_dir.path())
             .into_iter()
             .map(|m| m.relative_path)
             .collect();
@@ -358,7 +359,7 @@ mod tests {
         fs::write(temp_dir.path().join("bundle.js"), "")?;
         fs::write(temp_dir.path().join("app.js"), "")?;
 
-        let names: Vec<String> = scan(&js_engine(2), temp_dir.path())?
+        let names: Vec<String> = scan(&js_engine(2), temp_dir.path())
             .into_iter()
             .map(|m| m.filename)
             .collect();
@@ -372,7 +373,7 @@ mod tests {
         fs::write(temp_dir.path().join("package.json"), "{}")?;
         fs::write(temp_dir.path().join("app.js"), "")?;
 
-        assert!(scan(&js_engine(0), temp_dir.path())?.is_empty());
+        assert!(scan(&js_engine(0), temp_dir.path()).is_empty());
         Ok(())
     }
 
@@ -388,7 +389,7 @@ mod tests {
             fs::write(temp_dir.path().join("src").join(format!("m{i:02}.js")), "")?;
         }
 
-        let matches = scan(&js_engine(2), temp_dir.path())?;
+        let matches = scan(&js_engine(2), temp_dir.path());
         // exact manifest + walk cap + root-level top-up
         assert_eq!(matches.len(), 1 + 2 * MAX_MATCHES);
         let unique: std::collections::HashSet<_> =
@@ -409,13 +410,13 @@ mod tests {
         fs::create_dir_all(project.join("src"))?;
         fs::write(project.join("src").join("m.js"), "")?;
 
-        let matches = scan(&js_engine(2), &project)?;
+        let matches = scan(&js_engine(2), &project);
         assert!(matches.iter().any(|m| m.relative_path == "src/m.js"));
         Ok(())
     }
 
     fn probe_engine(max_depth: usize) -> ScanningEngine {
-        let patterns = Arc::new(vec![
+        let patterns = Arc::from(vec![
             "src/main/kotlin".to_string(),
             "src/main/java".to_string(),
         ]);
@@ -428,7 +429,7 @@ mod tests {
         fs::create_dir_all(temp_dir.path().join("src/main/kotlin"))?;
         fs::create_dir_all(temp_dir.path().join("src/main/java"))?;
 
-        let paths: Vec<String> = scan(&probe_engine(1), temp_dir.path())?
+        let paths: Vec<String> = scan(&probe_engine(1), temp_dir.path())
             .into_iter()
             .map(|m| m.relative_path)
             .collect();
@@ -441,7 +442,7 @@ mod tests {
         let temp_dir = TempDir::new()?;
         fs::create_dir_all(temp_dir.path().join("src/main/java"))?;
 
-        assert!(scan(&probe_engine(0), temp_dir.path())?.is_empty());
+        assert!(scan(&probe_engine(0), temp_dir.path()).is_empty());
         Ok(())
     }
 
@@ -451,12 +452,28 @@ mod tests {
         fs::create_dir_all(temp_dir.path().join("a/b/c"))?;
 
         // depth 3 lists a (1) and a/b (2); a/b/c is yielded but not listed
-        let outcome = js_engine(3).scan_with_status(temp_dir.path())?;
+        let outcome = js_engine(3).scan_with_status(temp_dir.path());
         assert_eq!(outcome.watched_dirs, vec!["a", "a/b"]);
 
         // depth 1 lists only the root, which the cache always watches
-        let outcome = js_engine(1).scan_with_status(temp_dir.path())?;
+        let outcome = js_engine(1).scan_with_status(temp_dir.path());
         assert!(outcome.watched_dirs.is_empty());
+        Ok(())
+    }
+
+    /// `.git` changes on every git operation: watching it would invalidate the
+    /// persistent cache constantly, and its contents never hold project files.
+    #[test]
+    fn test_git_directory_is_neither_walked_nor_watched() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        fs::create_dir_all(temp_dir.path().join(".git/objects/ab"))?;
+        fs::write(temp_dir.path().join(".git/objects/ab/package.json"), "")?;
+        fs::create_dir_all(temp_dir.path().join("src"))?;
+
+        let outcome = js_engine(4).scan_with_status(temp_dir.path());
+
+        assert_eq!(outcome.watched_dirs, vec!["src"]);
+        assert!(outcome.matches.is_empty(), "{:?}", outcome.matches);
         Ok(())
     }
 
@@ -466,11 +483,11 @@ mod tests {
         fs::create_dir_all(temp_dir.path().join("src"))?;
 
         // src exists, src/main does not: creating it changes src's mtime
-        let outcome = probe_engine(1).scan_with_status(temp_dir.path())?;
+        let outcome = probe_engine(1).scan_with_status(temp_dir.path());
         assert_eq!(outcome.watched_dirs, vec!["src"]);
 
         fs::create_dir_all(temp_dir.path().join("src/main"))?;
-        let outcome = probe_engine(1).scan_with_status(temp_dir.path())?;
+        let outcome = probe_engine(1).scan_with_status(temp_dir.path());
         assert_eq!(outcome.watched_dirs, vec!["src/main"]);
         Ok(())
     }
@@ -482,7 +499,7 @@ mod tests {
 
         fs::write(temp_dir.path().join("readme.txt"), "text")?;
 
-        let matches = scan(&engine, temp_dir.path())?;
+        let matches = scan(&engine, temp_dir.path());
         assert!(matches.is_empty());
 
         Ok(())
@@ -513,7 +530,7 @@ mod tests {
 
     #[test]
     fn test_oversized_directory_still_detects_root_manifests() -> Result<()> {
-        let patterns = Arc::new(vec!["special.config".to_string(), "*.xyz".to_string()]);
+        let patterns = Arc::from(vec!["special.config".to_string(), "*.xyz".to_string()]);
         // Detection must survive the extreme-size bailout via the root
         // exact-pattern check
         let pattern_processor = PatternProcessor::new(patterns);
@@ -526,7 +543,7 @@ mod tests {
         }
         fs::write(root.join("special.config"), "cfg")?;
 
-        let matches = scan(&engine, root)?;
+        let matches = scan(&engine, root);
         assert!(matches.iter().any(|m| m.filename == "special.config"));
 
         Ok(())
@@ -542,7 +559,7 @@ mod tests {
         fs::create_dir(&src)?;
         fs::write(src.join("lib.rs"), "// lib")?;
 
-        let matches = scan(&engine, root)?;
+        let matches = scan(&engine, root);
         assert!(
             matches.iter().any(|m| m.relative_path == "src/lib.rs"),
             "nested file within max_depth must be found: {matches:?}"
@@ -558,10 +575,10 @@ mod tests {
 
         let paths =
             |v: Vec<MatchedFile>| v.into_iter().map(|m| m.relative_path).collect::<Vec<_>>();
-        let first = paths(scan(&engine, temp_dir.path())?);
+        let first = paths(scan(&engine, temp_dir.path()));
         assert!(!first.is_empty());
         for _ in 0..3 {
-            assert_eq!(first, paths(scan(&engine, temp_dir.path())?));
+            assert_eq!(first, paths(scan(&engine, temp_dir.path())));
         }
 
         Ok(())
@@ -569,7 +586,7 @@ mod tests {
 
     #[test]
     fn test_scan_ignores_files_beyond_max_depth() -> Result<()> {
-        let patterns = Arc::new(vec!["*.rs".to_string()]);
+        let patterns = Arc::from(vec!["*.rs".to_string()]);
         let pattern_processor = PatternProcessor::new(patterns);
 
         let engine = ScanningEngine::new(pattern_processor, 1);
@@ -589,7 +606,7 @@ mod tests {
         }
 
         // lib.rs files sit three levels down, beyond max_depth = 1
-        let matches = scan(&engine, root)?;
+        let matches = scan(&engine, root);
         assert!(matches.is_empty(), "files beyond max_depth: {matches:?}");
 
         Ok(())
@@ -599,7 +616,7 @@ mod tests {
     fn test_busy_directory_scan_is_deterministic_and_keeps_root_manifest() -> Result<()> {
         // 60 matching sources + a root manifest: the match cap must never
         // crowd the manifest out, and repeated scans must agree
-        let patterns = Arc::new(vec![
+        let patterns = Arc::from(vec![
             "*.js".to_string(),
             "*.rs".to_string(),
             "Cargo.toml".to_string(),
@@ -616,13 +633,13 @@ mod tests {
         }
         fs::write(root.join("Cargo.toml"), "[package]")?;
 
-        let first = scan(&engine, root)?;
+        let first = scan(&engine, root);
         assert!(
             first.iter().any(|m| m.filename == "Cargo.toml"),
             "root manifest must survive the match cap"
         );
         for _ in 0..20 {
-            let again = scan(&engine, root)?;
+            let again = scan(&engine, root);
             let names = |v: &[MatchedFile]| {
                 v.iter()
                     .map(|m| m.relative_path.clone())
@@ -635,7 +652,7 @@ mod tests {
 
     #[test]
     fn test_oversized_directory_keeps_wildcard_root_markers() -> Result<()> {
-        let patterns = Arc::new(vec!["*.csproj".to_string(), "go.mod".to_string()]);
+        let patterns = Arc::from(vec!["*.csproj".to_string(), "go.mod".to_string()]);
         let engine = ScanningEngine::new(PatternProcessor::new(patterns), 1);
 
         let temp_dir = TempDir::new()?;
@@ -646,7 +663,7 @@ mod tests {
         fs::write(root.join("App.csproj"), "<Project/>")?;
         fs::write(root.join("go.mod"), "module x")?;
 
-        let names: Vec<String> = scan(&engine, root)?
+        let names: Vec<String> = scan(&engine, root)
             .into_iter()
             .map(|m| m.filename)
             .collect();
@@ -660,7 +677,7 @@ mod tests {
 
     #[test]
     fn test_timed_out_scan_is_reported_truncated() -> Result<()> {
-        let patterns = Arc::new(vec!["*.rs".to_string()]);
+        let patterns = Arc::from(vec!["*.rs".to_string()]);
         let engine = ScanningEngine::new(PatternProcessor::new(patterns), 1);
         let temp_dir = TempDir::new()?;
         for i in 0..20 {
@@ -671,14 +688,14 @@ mod tests {
             temp_dir.path(),
             TimeoutManager::with_timeout(std::time::Duration::ZERO),
             Vec::new(),
-        )?;
+        );
         assert!(timed.truncated, "an expired timeout must be reported");
 
         let ScanOutcome {
             matches,
             truncated: timed_out,
             ..
-        } = engine.scan_with_status(temp_dir.path())?;
+        } = engine.scan_with_status(temp_dir.path());
         assert!(!timed_out && !matches.is_empty());
         Ok(())
     }

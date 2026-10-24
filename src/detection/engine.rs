@@ -2,13 +2,12 @@ use crate::detection::caches::ParsedFileCache;
 use crate::detection::confidence_scorer::ConfidenceScorer;
 use crate::detection::framework_detector;
 use crate::detection::indicator_resolver::IndicatorResolver;
-use crate::detection::pattern_processor::PatternProcessor;
+use crate::detection::pattern_processor::{normalized_relative, PatternProcessor};
 use crate::detection::root_indicators::RootIndicatorEngine;
 use crate::detection::scanner::ScanningEngine;
 use crate::performance::FileSystemCache;
 use crate::types::{DetectionConfig, DetectionEvidence, DetectionResult, Framework, Indicator};
 use crate::Result;
-use anyhow::Context;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -37,10 +36,8 @@ const ROOT_MATCH_OVERRIDE_CERTAINTY: f32 = 0.8;
 /// scan, indicator resolution, confidence, then framework detection.
 pub struct DetectionEngine {
     indicators: Vec<Arc<Indicator>>,
-    frameworks: Arc<Vec<Framework>>,
+    frameworks: Arc<[Framework]>,
 
-    file_cache: FileSystemCache,
-    parsed_cache: ParsedFileCache,
     confidence_scorer: ConfidenceScorer,
     indicator_resolver: IndicatorResolver,
     scanning_engine: ScanningEngine,
@@ -58,22 +55,18 @@ impl DetectionEngine {
         detection_config: DetectionConfig,
     ) -> Self {
         let indicators: Vec<Arc<Indicator>> = indicators.into_iter().map(Arc::new).collect();
-        let frameworks = Arc::new(frameworks);
+        let frameworks: Arc<[Framework]> = Arc::from(frameworks);
 
-        let file_cache = FileSystemCache::default();
-        let parsed_cache = ParsedFileCache::new();
         let confidence_scorer = ConfidenceScorer::with_catalog(frameworks.clone());
         let indicator_resolver = IndicatorResolver::with_catalog(frameworks.clone());
 
         // Deduplicated set of every file pattern the indicators reference
-        let unique_patterns: Arc<Vec<String>> = Arc::new(
-            indicators
-                .iter()
-                .flat_map(|i| i.files.iter().cloned())
-                .collect::<std::collections::HashSet<_>>()
-                .into_iter()
-                .collect(),
-        );
+        let unique_patterns: Arc<[String]> = indicators
+            .iter()
+            .flat_map(|i| i.files.iter().cloned())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
 
         let scanning_engine = ScanningEngine::new(
             PatternProcessor::new(unique_patterns),
@@ -86,8 +79,6 @@ impl DetectionEngine {
         Self {
             indicators,
             frameworks,
-            file_cache,
-            parsed_cache,
             confidence_scorer,
             indicator_resolver,
             scanning_engine,
@@ -96,7 +87,9 @@ impl DetectionEngine {
     }
 
     pub fn detect(&self, path: &Path) -> Result<DetectionResult> {
-        let mut evidence = DetectionEvidence::new();
+        let mut evidence = DetectionEvidence::default();
+        let file_cache = FileSystemCache::default();
+        let parsed_cache = ParsedFileCache::new();
 
         if self.root_indicator_engine.is_boundary_directory(path) {
             log::debug!(
@@ -109,7 +102,7 @@ impl DetectionEngine {
         let mut root_indicator_match = None;
         let scan_path = if let Some((root_path, root_indicator)) = self
             .root_indicator_engine
-            .find_project_root(path, &self.file_cache)
+            .find_project_root(path, &file_cache)
         {
             log::info!(
                 "Upward traversal: Found project root at {} (started from {}, pattern: {})",
@@ -134,10 +127,7 @@ impl DetectionEngine {
 
         let scan_start = std::time::Instant::now();
 
-        let outcome = self
-            .scanning_engine
-            .scan_with_status(&scan_path)
-            .with_context(|| format!("Failed to scan files in path: {}", scan_path.display()))?;
+        let outcome = self.scanning_engine.scan_with_status(&scan_path);
         let detailed_files = outcome.matches;
         evidence.scan_truncated = outcome.truncated;
         evidence.watched_dirs = outcome.watched_dirs;
@@ -193,7 +183,6 @@ impl DetectionEngine {
                 evidence.add_confidence_factor(crate::types::ConfidenceFactor::new(
                     "root_indicator_override".to_string(),
                     root_match.certainty,
-                    1.0,
                     format!(
                         "Overrode ambiguous full-scan result ({}) with content-aware root indicator match ({})",
                         indicator.name, root_match.indicator.name
@@ -211,16 +200,14 @@ impl DetectionEngine {
             &indicator,
             &self.frameworks,
             &mut evidence,
-            &self.file_cache,
-            &self.parsed_cache,
+            &file_cache,
+            &parsed_cache,
         );
 
-        evidence.read_files = self
-            .parsed_cache
+        evidence.read_files = parsed_cache
             .read_paths()
             .iter()
-            .filter_map(|path| path.strip_prefix(&scan_path).ok())
-            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .filter_map(|path| normalized_relative(path, &scan_path))
             .collect();
 
         // The ratio score punishes indicators with many patterns for files
@@ -241,7 +228,6 @@ impl DetectionEngine {
             evidence.add_confidence_factor(crate::types::ConfidenceFactor::new(
                 "confidence_floor".to_string(),
                 floored,
-                1.0,
                 "Confidence floored by root manifest / framework evidence".to_string(),
             ));
         }
@@ -268,7 +254,7 @@ mod tests {
 
     #[test]
     fn test_detect_rust_project() -> Result<(), Box<dyn std::error::Error>> {
-        let indicators = vec![create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"])];
+        let indicators = vec![create_test_indicator("Rust", &["Cargo.toml", "*.rs"])];
         let engine = DetectionEngine::new(indicators, vec![]);
         let temp_dir = create_test_rust_project()?;
 
@@ -287,11 +273,34 @@ mod tests {
         Ok(())
     }
 
+    /// The file caches belong to one `detect` call: a second call on the same
+    /// engine must see the project as it is now, not as it was.
+    #[test]
+    fn test_second_detect_sees_manifest_changes() -> Result<(), Box<dyn std::error::Error>> {
+        let config = crate::config::TemplateGenerator::generate_template(Some("full"))?;
+        let engine = DetectionEngine::new(config.indicators, config.frameworks);
+        let dir = tempfile::TempDir::new()?;
+        let manifest = dir.path().join("package.json");
+        std::fs::write(&manifest, r#"{"dependencies":{}}"#)?;
+        let names = |r: &DetectionResult| -> Vec<String> {
+            r.frameworks
+                .iter()
+                .map(|f| f.framework.name.clone())
+                .collect()
+        };
+
+        assert!(!names(&engine.detect(dir.path())?).contains(&"React".to_string()));
+
+        std::fs::write(&manifest, r#"{"dependencies":{"react":"18"}}"#)?;
+        assert!(names(&engine.detect(dir.path())?).contains(&"React".to_string()));
+        Ok(())
+    }
+
     #[test]
     fn test_detect_no_match() -> Result<(), Box<dyn std::error::Error>> {
         let indicators = vec![create_test_indicator(
             "Python",
-            vec!["*.py", "requirements.txt"],
+            &["*.py", "requirements.txt"],
         )];
         let engine = DetectionEngine::new(indicators, vec![]);
         let temp_dir = create_test_rust_project()?;

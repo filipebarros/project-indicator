@@ -10,11 +10,11 @@ use std::sync::Arc;
 pub struct ConfidenceScorer {
     /// Framework catalog: framework root-indicator weights contribute to
     /// pattern importance
-    frameworks: Arc<Vec<Framework>>,
+    frameworks: Arc<[Framework]>,
 }
 
 impl ConfidenceScorer {
-    pub fn with_catalog(frameworks: Arc<Vec<Framework>>) -> Self {
+    pub fn with_catalog(frameworks: Arc<[Framework]>) -> Self {
         Self { frameworks }
     }
 
@@ -44,7 +44,7 @@ impl ConfidenceScorer {
 
     pub fn calculate_indicator_score(
         &self,
-        indicator: &Arc<Indicator>,
+        indicator: &Indicator,
         matched_files: &[MatchedFile],
         indicators: &[Arc<Indicator>],
     ) -> f32 {
@@ -82,7 +82,7 @@ impl ConfidenceScorer {
                     .fold(0.0f32, f32::max);
                 (best_match_weight > 0.0)
                     .then(|| (group.as_deref(), best_match_weight * importance))
-            })) + self.calculate_root_indicator_bonus(indicator, matched_files);
+            })) + Self::calculate_root_indicator_bonus(indicator, matched_files);
 
         if max_possible_score > 0.0 {
             (weighted_score / max_possible_score).min(1.0)
@@ -99,7 +99,7 @@ impl ConfidenceScorer {
     /// of how few of the indicator's other patterns matched.
     pub fn strongest_root_match(
         &self,
-        indicator: &Arc<Indicator>,
+        indicator: &Indicator,
         matched_files: &[MatchedFile],
     ) -> f32 {
         matched_files
@@ -119,7 +119,7 @@ impl ConfidenceScorer {
 
     pub fn calculate_indicator_score_with_evidence(
         &self,
-        indicator: &Arc<Indicator>,
+        indicator: &Indicator,
         matched_files: &[MatchedFile],
         evidence: &mut DetectionEvidence,
         indicators: &[Arc<Indicator>],
@@ -127,10 +127,12 @@ impl ConfidenceScorer {
         let score = self.calculate_indicator_score(indicator, matched_files, indicators);
 
         evidence.add_confidence_factor(ConfidenceFactor::new(
-            "final_confidence".to_string(),
+            "ratio_score".to_string(),
             score,
-            1.0,
-            format!("Final confidence score for {}", indicator.name),
+            format!(
+                "Ratio score for {} (before the confidence floor)",
+                indicator.name
+            ),
         ));
 
         score
@@ -138,7 +140,7 @@ impl ConfidenceScorer {
 
     pub fn calculate_context_bonus(
         &self,
-        indicator: &Arc<Indicator>,
+        indicator: &Indicator,
         matched_files: &[MatchedFile],
         indicators: &[Arc<Indicator>],
     ) -> f32 {
@@ -184,11 +186,7 @@ impl ConfidenceScorer {
     /// Same grouping rule as the denominator (see `calculate_indicator_score`):
     /// matching two alternatives from the same group (e.g. a mid-migration
     /// repo with both bun.lock and bun.lockb) shouldn't double-count.
-    fn calculate_root_indicator_bonus(
-        &self,
-        indicator: &Arc<Indicator>,
-        matched_files: &[MatchedFile],
-    ) -> f32 {
+    fn calculate_root_indicator_bonus(indicator: &Indicator, matched_files: &[MatchedFile]) -> f32 {
         sum_with_grouped_max(weighted(indicator.root_indicators.iter().filter(
             |root_indicator| {
                 matched_files.iter().any(|file| {
@@ -258,13 +256,13 @@ mod tests {
                 alternative_group: None,
             }],
         };
-        let javascript = Arc::new(create_test_indicator("JavaScript", vec!["*.js"]));
+        let javascript = Arc::new(create_test_indicator("JavaScript", &["*.js"]));
         let files = [create_test_file("next.config.js", "next.config.js")];
         let indicators = [javascript.clone()];
 
         let without =
             ConfidenceScorer::default().calculate_context_bonus(&javascript, &files, &indicators);
-        let with = ConfidenceScorer::with_catalog(Arc::new(vec![nextjs])).calculate_context_bonus(
+        let with = ConfidenceScorer::with_catalog(Arc::from(vec![nextjs])).calculate_context_bonus(
             &javascript,
             &files,
             &indicators,
@@ -302,14 +300,14 @@ mod tests {
     fn create_test_indicators() -> Vec<Arc<Indicator>> {
         vec![Arc::new(create_test_indicator(
             "Rust",
-            vec!["Cargo.toml", "*.rs"],
+            &["Cargo.toml", "*.rs"],
         ))]
     }
 
     #[test]
     fn test_empty_files_returns_zero() {
         let scorer = ConfidenceScorer::default();
-        let rust_lang = Arc::new(create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"]));
+        let rust_lang = Arc::new(create_test_indicator("Rust", &["Cargo.toml", "*.rs"]));
 
         let score = scorer.calculate_indicator_score(&rust_lang, &[], &create_test_indicators());
         assert_eq!(score, 0.0, "Empty files should return zero score");
@@ -318,7 +316,7 @@ mod tests {
     #[test]
     fn test_context_bonus_for_root_files() {
         let scorer = ConfidenceScorer::default();
-        let rust_lang = Arc::new(create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"]));
+        let rust_lang = Arc::new(create_test_indicator("Rust", &["Cargo.toml", "*.rs"]));
 
         let files = vec![create_test_file("Cargo.toml", "Cargo.toml")];
 

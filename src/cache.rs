@@ -236,7 +236,7 @@ impl PersistentCache {
                 let entry = entry?;
                 if entry.path().extension().is_some_and(|e| e == "json") {
                     count += 1;
-                    bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
+                    bytes += entry.metadata().map_or(0, |m| m.len());
                 }
             }
         }

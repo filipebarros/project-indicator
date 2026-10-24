@@ -24,6 +24,9 @@ pub fn build_walker(path: &Path, max_depth: usize) -> WalkBuilder {
         .git_global(false)
         .require_git(false)
         .hidden(false)
+        // Git rewrites its own directory on every command, which would keep
+        // invalidating the persistent cache; it never holds project files
+        .filter_entry(|entry| entry.file_name() != ".git")
         // The match cap truncates the walk, so order decides which files survive
         .sort_by_file_name(|a, b| a.cmp(b));
     builder

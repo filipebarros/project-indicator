@@ -6,13 +6,13 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct PatternProcessor {
-    unique_patterns: Arc<Vec<String>>,
+    unique_patterns: Arc<[String]>,
     extension_filter: Arc<HashSet<String>>,
     exact_patterns: Arc<HashSet<String>>,
 }
 
 impl PatternProcessor {
-    pub fn new(patterns: Arc<Vec<String>>) -> Self {
+    pub fn new(patterns: Arc<[String]>) -> Self {
         let mut extension_filter = HashSet::new();
         let mut exact_patterns = HashSet::new();
 
@@ -78,7 +78,7 @@ pub(crate) fn normalized_relative(path: &Path, base: &Path) -> Option<String> {
 }
 
 /// Join path components with `/` (None for non-UTF-8 components)
-fn join_components(relative_path: &Path) -> Option<String> {
+pub(crate) fn join_components(relative_path: &Path) -> Option<String> {
     let parts: Option<Vec<&str>> = relative_path
         .components()
         .map(|c| c.as_os_str().to_str())
@@ -90,7 +90,7 @@ fn join_components(relative_path: &Path) -> Option<String> {
 mod tests {
     #[test]
     fn test_fast_path_agrees_with_full_matcher() {
-        let processor = PatternProcessor::new(Arc::new(vec!["*.rs".to_string()]));
+        let processor = PatternProcessor::new(Arc::from(vec!["*.rs".to_string()]));
         for name in [".rs", "..rs", "a.rs", "a.b.rs", "rs.", "x.rs.bak", ".rs.rs"] {
             assert_eq!(
                 processor.should_scan_file(name),
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn test_bare_extension_name_is_not_an_extension_match() {
-        let processor = PatternProcessor::new(Arc::new(vec!["*.rs".to_string()]));
+        let processor = PatternProcessor::new(Arc::from(vec!["*.rs".to_string()]));
         assert!(!processor.should_scan_file("rs"));
         assert!(processor.should_scan_file("main.rs"));
     }
@@ -110,7 +110,7 @@ mod tests {
     use super::*;
 
     fn processor(patterns: &[&str]) -> PatternProcessor {
-        PatternProcessor::new(Arc::new(patterns.iter().map(|s| s.to_string()).collect()))
+        PatternProcessor::new(patterns.iter().map(|s| s.to_string()).collect())
     }
 
     #[test]

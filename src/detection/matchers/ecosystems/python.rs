@@ -21,6 +21,9 @@ pub fn check_python_ecosystem(
         pyproject_declares_deps = manifest.get("project").is_some()
             || manifest.get("dependency-groups").is_some()
             || manifest.get("tool").and_then(|t| t.get("poetry")).is_some();
+    } else if parsed_cache.is_present(path.join(PYPROJECT_TOML))? {
+        // present but unparseable: assume it declares dependencies
+        pyproject_declares_deps = true;
     }
 
     let text_manifests: [(&str, TextCheck); 2] = [

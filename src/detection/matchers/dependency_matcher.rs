@@ -7,14 +7,14 @@ use std::path::Path;
 pub struct DependencyMatcher;
 
 impl DependencyMatcher {
-    pub fn detect_frameworks(
+    pub fn detect_frameworks<'a>(
         path: &Path,
-        frameworks: &[Framework],
+        frameworks: impl IntoIterator<Item = &'a Framework>,
         active_ecosystems: &[Ecosystem],
         parsed_cache: &ParsedFileCache,
     ) -> Vec<FrameworkMatch> {
         frameworks
-            .iter()
+            .into_iter()
             .filter_map(|framework| {
                 Self::try_detect_framework(path, framework, active_ecosystems, parsed_cache)
                     .unwrap_or_else(|e| {
@@ -201,6 +201,75 @@ mod tests {
         )?;
         assert!(matches.is_empty());
         Ok(())
+    }
+
+    /// A manifest that exists but does not parse (mid-edit) is still the
+    /// authority: the lockfile's transitive packages must not stand in for it
+    fn assert_broken_manifest_ignores_lockfile(
+        manifest: &str,
+        lock: (&str, &str),
+        ecosystem: Ecosystem,
+        dependency: &str,
+    ) -> TestResult {
+        let matches = detect_in(
+            &[(manifest, "{ not valid"), lock],
+            &[framework("F", ecosystem, &[dependency])],
+            &ALL_ECOSYSTEMS,
+        )?;
+        assert!(matches.is_empty(), "{manifest}: {matches:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_broken_package_json_ignores_package_lock() -> TestResult {
+        assert_broken_manifest_ignores_lockfile(
+            "package.json",
+            (
+                "package-lock.json",
+                r#"{"packages":{"node_modules/vite":{"version":"5"}}}"#,
+            ),
+            Ecosystem::Npm,
+            "vite",
+        )
+    }
+
+    #[test]
+    fn test_broken_composer_json_ignores_composer_lock() -> TestResult {
+        assert_broken_manifest_ignores_lockfile(
+            "composer.json",
+            (
+                "composer.lock",
+                r#"{"packages":[{"name":"laravel/framework"}]}"#,
+            ),
+            Ecosystem::Packagist,
+            "laravel/framework",
+        )
+    }
+
+    #[test]
+    fn test_broken_pyproject_ignores_poetry_lock() -> TestResult {
+        assert_broken_manifest_ignores_lockfile(
+            "pyproject.toml",
+            (
+                "poetry.lock",
+                "[[package]]\nname = \"django\"\nversion = \"4.2\"\n",
+            ),
+            Ecosystem::Pypi,
+            "django",
+        )
+    }
+
+    #[test]
+    fn test_broken_cargo_toml_ignores_cargo_lock() -> TestResult {
+        assert_broken_manifest_ignores_lockfile(
+            "Cargo.toml",
+            (
+                "Cargo.lock",
+                "[[package]]\nname = \"axum\"\nversion = \"0.6\"\n",
+            ),
+            Ecosystem::Cargo,
+            "axum",
+        )
     }
 
     #[test]

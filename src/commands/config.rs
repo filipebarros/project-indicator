@@ -49,7 +49,7 @@ fn ensure_parent_dir(path: &std::path::Path) -> Result<()> {
 }
 
 fn print_templates() {
-    for (name, description) in TemplateGenerator::list_templates() {
+    for (name, description) in TemplateGenerator::TEMPLATES {
         outln!("   • {}: {}", name, description);
     }
 }
@@ -131,9 +131,7 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             // is meaningful outside the invoking shell
             let absolute = |path: &std::path::Path| {
                 if path.is_relative() {
-                    std::env::current_dir()
-                        .map(|d| d.join(path))
-                        .unwrap_or_else(|_| path.to_path_buf())
+                    std::env::current_dir().map_or_else(|_| path.to_path_buf(), |d| d.join(path))
                 } else {
                     path.to_path_buf()
                 }
@@ -288,11 +286,12 @@ mod tests {
     }
 
     #[test]
-    fn test_editor_path_with_spaces_is_kept_whole() {
-        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+    fn test_editor_path_with_spaces_is_kept_whole() -> project_indicator::Result<()> {
+        let dir = tempfile::tempdir()?;
         let spaced = dir.path().join("my ed");
-        std::fs::write(&spaced, "").unwrap_or_else(|e| panic!("write: {e}"));
+        std::fs::write(&spaced, "")?;
         let spaced = spaced.to_string_lossy().to_string();
         assert_eq!(split_editor(&spaced), (spaced.clone(), vec![]));
+        Ok(())
     }
 }

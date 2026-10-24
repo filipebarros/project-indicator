@@ -36,7 +36,7 @@ fn test_typescript_react_detection() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
+    let engine = DetectionEngine::new(config.indicators, config.frameworks);
     let result = engine.detect(temp_dir.path())?;
 
     assert!(result.indicator.is_some());
@@ -85,7 +85,7 @@ serde = { version = "1.0", features = ["derive"] }
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
+    let engine = DetectionEngine::new(config.indicators, config.frameworks);
     let result = engine.detect(temp_dir.path())?;
 
     assert!(result.indicator.is_some());
@@ -138,7 +138,7 @@ build-backend = "setuptools.build_meta"
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
+    let engine = DetectionEngine::new(config.indicators, config.frameworks);
     let result = engine.detect(temp_dir.path())?;
 
     assert!(result.indicator.is_some());
@@ -185,7 +185,7 @@ fn test_nextjs_priority_over_react() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
+    let engine = DetectionEngine::new(config.indicators, config.frameworks);
     let result = engine.detect(temp_dir.path())?;
 
     assert!(result.frameworks.len() >= 2);
@@ -210,7 +210,7 @@ fn test_language_only_detection() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
+    let engine = DetectionEngine::new(config.indicators, config.frameworks);
     let result = engine.detect(temp_dir.path())?;
 
     assert!(result.indicator.is_some());
@@ -239,7 +239,7 @@ fn test_no_detection() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
+    let engine = DetectionEngine::new(config.indicators, config.frameworks);
     let result = engine.detect(temp_dir.path())?;
 
     assert!(result.indicator.is_none());
@@ -277,7 +277,7 @@ fn test_framework_limiting() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
 
-    let engine = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
+    let engine = DetectionEngine::new(config.indicators, config.frameworks);
     let result = engine.detect(temp_dir.path())?;
 
     let json_output = render(&result, OutputFormat::Json, &display_config);
@@ -309,20 +309,21 @@ fn test_all_output_formats() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
 
     let config = create_test_config();
-    let engine = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
+    let engine = DetectionEngine::new(config.indicators, config.frameworks);
     let result = engine.detect(temp_dir.path())?;
 
     let display_config = DisplayConfig::default();
 
     let simple = render(&result, OutputFormat::Simple, &display_config);
-    assert!(!simple.is_empty());
+    assert!(simple.contains("\x1b["), "one colored glyph: {simple:?}");
 
     let full = render(&result, OutputFormat::Full, &display_config);
-    assert!(full.contains("|"));
-    assert!(!full.is_empty());
+    assert!(full.contains('|'), "icon|color components: {full:?}");
 
     let json_output = render(&result, OutputFormat::Json, &display_config);
-    assert!(serde_json::from_str::<Value>(&json_output).is_ok());
+    let json: Value = serde_json::from_str(&json_output)?;
+    assert_eq!(json["indicator"], "TypeScript");
+    assert!(json["frameworks"].as_array().is_some_and(|f| !f.is_empty()));
 
     let debug = render(&result, OutputFormat::Debug, &display_config);
     assert!(debug.contains("confidence"));

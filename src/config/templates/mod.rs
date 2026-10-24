@@ -112,13 +112,6 @@ impl TemplateGenerator {
         })
     }
 
-    pub fn list_templates() -> Vec<(String, String)> {
-        Self::TEMPLATES
-            .iter()
-            .map(|(name, description)| (name.to_string(), description.to_string()))
-            .collect()
-    }
-
     fn build(name: &str) -> Option<Config> {
         // (show_frameworks, max_frameworks), (max_upward_traversal,
         // require_vcs_root), max_depth, indicators

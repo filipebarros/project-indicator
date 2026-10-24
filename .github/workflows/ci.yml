@@ -113,34 +113,8 @@ jobs:
 
     - name: Check documentation
       run: cargo doc --no-deps --document-private-items
-
-  coverage:
-    name: Code Coverage
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v7
-
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: llvm-tools-preview
-
-    - name: Install cargo-llvm-cov
-      uses: taiki-e/install-action@v2.87.28
-      with:
-        tool: cargo-llvm-cov
-
-    - name: Generate coverage report
-      run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
-
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v7
-      with:
-        files: lcov.info
-        fail_ci_if_error: false
+      env:
+        RUSTDOCFLAGS: -D warnings
 
   security:
     name: Security Audit
@@ -268,9 +242,9 @@ jobs:
 
     # Windows runs the full suite in test-windows; this job adds the
     # release-binary smoke steps below
-    - name: Run core tests
+    - name: Run tests
       if: runner.os != 'Windows'
-      run: cargo test --lib --bins
+      run: cargo test
 
     - name: Test OS-specific functionality
       shell: bash
@@ -280,7 +254,9 @@ jobs:
         ./target/release/project-indicator --help
         ./target/release/project-indicator --format json
 
-        ./target/release/project-indicator config validate || echo "No config found (expected)"
+        export XDG_CONFIG_HOME="$RUNNER_TEMP/config"
+        ./target/release/project-indicator config init --template full
+        ./target/release/project-indicator config validate
 
         NO_COLOR=1 ./target/release/project-indicator --format full
 

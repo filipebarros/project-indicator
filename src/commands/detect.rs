@@ -1,10 +1,6 @@
 use project_indicator::{
-    cache::PersistentCache,
-    cli::Cli,
-    config::ConfigParser,
-    detection::DetectionEngine,
-    output::{render, OutputFormat},
-    Result,
+    cache::PersistentCache, cli::Cli, config::ConfigParser, detection::DetectionEngine,
+    output::render, Result,
 };
 
 use super::resolve_and_validate_path;
@@ -12,10 +8,7 @@ use super::resolve_and_validate_path;
 pub fn handle_detect_command(cli: &Cli) -> Result<()> {
     let path = resolve_and_validate_path(cli.path.as_ref())?;
 
-    let format: OutputFormat = cli
-        .format
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid format: {}", e))?;
+    let format = cli.format;
 
     // CLI overrides change detection results, so they bypass the cache
     // entirely (neither read nor write)

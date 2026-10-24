@@ -6,11 +6,12 @@
 //! for a single CLI invocation, so there is no eviction or memory budget.
 
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// Files above this size are read but not cached (keeps the per-run cache small).
 const MAX_FILE_SIZE: u64 = 1_048_576;
@@ -118,22 +119,16 @@ fn strip_trailing_commas(src: &str) -> String {
     out
 }
 
-/// Locks are only held for a lookup or an insert, never across file I/O or
-/// parsing; a poisoned lock still holds valid data, so recover it.
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
 #[derive(Debug, Default)]
 pub struct ParsedFileCache {
     /// Raw file contents; `None` records a missing file so it isn't re-stat'd
-    contents: Mutex<HashMap<PathBuf, Option<Arc<String>>>>,
+    contents: RefCell<HashMap<PathBuf, Option<Arc<String>>>>,
     /// Parsed JSON values; `None` records a missing file or parse failure
-    json_values: Mutex<HashMap<PathBuf, Option<Arc<serde_json::Value>>>>,
+    json_values: RefCell<HashMap<PathBuf, Option<Arc<serde_json::Value>>>>,
     /// Parsed TOML values; `None` records a missing file or parse failure
-    toml_values: Mutex<HashMap<PathBuf, Option<Arc<toml::Value>>>>,
+    toml_values: RefCell<HashMap<PathBuf, Option<Arc<toml::Value>>>>,
     /// Files read but too large to keep in `contents`
-    oversized: Mutex<Vec<PathBuf>>,
+    oversized: RefCell<HashSet<PathBuf>>,
 }
 
 impl ParsedFileCache {
@@ -144,15 +139,21 @@ impl ParsedFileCache {
     /// Every file that was found and read this run, sorted: the inputs a
     /// result depends on, which the persistent cache has to watch
     pub fn read_paths(&self) -> Vec<PathBuf> {
-        let mut paths: Vec<PathBuf> = lock(&self.contents)
+        let mut paths: Vec<PathBuf> = self
+            .contents
+            .borrow()
             .iter()
             .filter(|(_, content)| content.is_some())
             .map(|(path, _)| path.clone())
             .collect();
-        paths.extend(lock(&self.oversized).iter().cloned());
+        paths.extend(self.oversized.borrow().iter().cloned());
         paths.sort();
-        paths.dedup();
         paths
+    }
+
+    /// Whether the file exists, whether or not it parses
+    pub fn is_present<P: AsRef<Path>>(&self, file_path: P) -> Result<bool> {
+        Ok(self.get_file_content(file_path)?.is_some())
     }
 
     pub fn get_file_content<P: AsRef<Path>>(&self, file_path: P) -> Result<Option<Arc<String>>> {
@@ -160,32 +161,32 @@ impl ParsedFileCache {
 
         // HashMap<PathBuf, _> accepts &Path lookups via Borrow, avoiding a
         // PathBuf allocation on cache hits
-        if let Some(cached) = lock(&self.contents).get(file_path) {
+        if let Some(cached) = self.contents.borrow().get(file_path) {
             return Ok(cached.clone());
         }
 
-        if !file_path.exists() {
-            lock(&self.contents).insert(file_path.to_path_buf(), None);
-            return Ok(None);
+        let content = match read_text(file_path) {
+            Ok(content) => Arc::new(content),
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                self.contents
+                    .borrow_mut()
+                    .insert(file_path.to_path_buf(), None);
+                return Ok(None);
+            }
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("Failed to read file: {}", file_path.display()))
+            }
+        };
+
+        if content.len() as u64 > MAX_FILE_SIZE {
+            self.oversized.borrow_mut().insert(file_path.to_path_buf());
+        } else {
+            self.contents
+                .borrow_mut()
+                .insert(file_path.to_path_buf(), Some(content.clone()));
         }
-
-        let metadata = fs::metadata(file_path)
-            .with_context(|| format!("Failed to get metadata for: {}", file_path.display()))?;
-
-        if metadata.len() > MAX_FILE_SIZE {
-            let content = read_text(file_path)
-                .with_context(|| format!("Failed to read large file: {}", file_path.display()))?;
-            lock(&self.oversized).push(file_path.to_path_buf());
-            return Ok(Some(Arc::new(content)));
-        }
-
-        let content = read_text(file_path)
-            .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
-
-        let arc_content = Arc::new(content);
-        lock(&self.contents).insert(file_path.to_path_buf(), Some(arc_content.clone()));
-
-        Ok(Some(arc_content))
+        Ok(Some(content))
     }
 
     pub fn get_json_value<P: AsRef<Path>>(
@@ -194,7 +195,7 @@ impl ParsedFileCache {
     ) -> Result<Option<Arc<serde_json::Value>>> {
         let file_path = file_path.as_ref();
 
-        if let Some(cached) = lock(&self.json_values).get(file_path) {
+        if let Some(cached) = self.json_values.borrow().get(file_path) {
             return Ok(cached.clone());
         }
 
@@ -218,7 +219,9 @@ impl ParsedFileCache {
             None => None,
         };
 
-        lock(&self.json_values).insert(file_path.to_path_buf(), parsed.clone());
+        self.json_values
+            .borrow_mut()
+            .insert(file_path.to_path_buf(), parsed.clone());
 
         Ok(parsed)
     }
@@ -226,7 +229,7 @@ impl ParsedFileCache {
     pub fn get_toml_value<P: AsRef<Path>>(&self, file_path: P) -> Result<Option<Arc<toml::Value>>> {
         let file_path = file_path.as_ref();
 
-        if let Some(cached) = lock(&self.toml_values).get(file_path) {
+        if let Some(cached) = self.toml_values.borrow().get(file_path) {
             return Ok(cached.clone());
         }
 
@@ -242,7 +245,9 @@ impl ParsedFileCache {
             None => None,
         };
 
-        lock(&self.toml_values).insert(file_path.to_path_buf(), parsed.clone());
+        self.toml_values
+            .borrow_mut()
+            .insert(file_path.to_path_buf(), parsed.clone());
 
         Ok(parsed)
     }
@@ -269,6 +274,21 @@ mod tests {
             .get_file_content(&file_path)?
             .ok_or("expected content")?;
         assert_eq!(*second, "hello");
+        Ok(())
+    }
+
+    #[test]
+    fn test_oversized_file_is_read_but_recorded_once() -> Result<(), Box<dyn std::error::Error>> {
+        let cache = ParsedFileCache::new();
+        let temp_dir = TempDir::new()?;
+        let file_path = temp_dir.path().join("big.lock");
+        fs::write(&file_path, "x".repeat(MAX_FILE_SIZE as usize + 1))?;
+
+        assert!(cache.get_file_content(&file_path)?.is_some());
+        assert!(cache.get_file_content(&file_path)?.is_some());
+
+        assert_eq!(cache.oversized.borrow().len(), 1);
+        assert_eq!(cache.read_paths(), vec![file_path]);
         Ok(())
     }
 

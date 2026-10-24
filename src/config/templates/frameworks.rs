@@ -86,21 +86,29 @@ fn node_frameworks() -> Vec<Framework> {
                 "Svelte",
                 &npm,
                 &["svelte", "@sveltejs/kit"],
-                None,
+                Some("e8b7"),
                 Some("#ff3e00"),
                 2,
             ),
             vec![config("svelte.config.js")],
         ),
-        dependency_framework("SolidJS", &npm, &["solid-js"], None, Some("#2c4f7c"), 2),
+        dependency_framework(
+            "SolidJS",
+            &npm,
+            &["solid-js"],
+            Some("e8a7"),
+            Some("#2c4f7c"),
+            2,
+        ),
         // Build tooling: app frameworks (React, Svelte, …) win the display
-        dependency_framework("Vite", &npm, &["vite"], None, Some("#646cff"), 5),
+        dependency_framework("Vite", &npm, &["vite"], Some("e8d7"), Some("#646cff"), 5),
     ]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::templates::shared::nerd_icon;
     use std::collections::HashSet;
 
     #[test]
@@ -123,6 +131,24 @@ mod tests {
                 "{} is pure black",
                 framework.name
             );
+        }
+    }
+
+    /// `--format full` skips a framework without an icon, so these (which
+    /// have a Nerd Fonts glyph) would be invisible in a prompt.
+    #[test]
+    fn test_frameworks_with_a_nerd_font_glyph_have_an_icon() {
+        for (name, glyph) in [
+            ("Svelte", "e8b7"),
+            ("SolidJS", "e8a7"),
+            ("Vite", "e8d7"),
+            ("Tauri", "e8bb"),
+        ] {
+            let icon = framework_catalog()
+                .into_iter()
+                .find(|f| f.name == name)
+                .and_then(|f| f.icon);
+            assert_eq!(icon, Some(nerd_icon(glyph)), "{name}");
         }
     }
 

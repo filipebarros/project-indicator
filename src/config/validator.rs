@@ -1,24 +1,15 @@
-use super::{Config, ConfigError};
+use super::Config;
 #[cfg(test)]
 use crate::types::DetectionConfig;
 use crate::types::{DetectionType, Framework, Indicator, RootIndicator};
 use anyhow::Result;
 use std::collections::HashSet;
-fn validation_error(message: impl Into<String>) -> anyhow::Error {
-    ConfigError::ValidationError {
-        message: message.into(),
-    }
-    .into()
-}
-fn simple_error(message: impl Into<String>) -> anyhow::Error {
-    anyhow::anyhow!(message.into())
-}
 pub fn validate_config(config: &Config) -> Result<()> {
     // No version gate: deny_unknown_fields enforces the schema structurally,
     // and the detect path accepts (with a warning) any config that parses —
     // validate must not reject a config detection is actively using
     if config.display.max_frameworks == 0 {
-        return Err(validation_error("max_frameworks must be greater than 0"));
+        anyhow::bail!("max_frameworks must be greater than 0");
     }
     validate_languages(&config.indicators)?;
     validate_frameworks(&config.frameworks)?;
@@ -28,14 +19,12 @@ pub fn validate_config(config: &Config) -> Result<()> {
 }
 fn validate_languages(languages: &[Indicator]) -> Result<()> {
     if languages.is_empty() {
-        return Err(validation_error(
-            "Configuration must contain at least one language",
-        ));
+        anyhow::bail!("Configuration must contain at least one language",);
     }
 
     for (i, language) in languages.iter().enumerate() {
         validate_language(language).map_err(|e| {
-            validation_error(format!(
+            anyhow::anyhow!(format!(
                 "Language '{}' at index {}: {}",
                 language.name, i, e
             ))
@@ -46,24 +35,21 @@ fn validate_languages(languages: &[Indicator]) -> Result<()> {
 }
 fn validate_language(language: &Indicator) -> Result<()> {
     if language.name.trim().is_empty() {
-        return Err(simple_error("name cannot be empty"));
+        anyhow::bail!("name cannot be empty");
     }
 
     if language.files.is_empty() {
-        return Err(simple_error("must have at least one file pattern"));
+        anyhow::bail!("must have at least one file pattern");
     }
 
     for file_pattern in &language.files {
         if file_pattern.trim().is_empty() {
-            return Err(simple_error("file pattern cannot be empty"));
+            anyhow::bail!("file pattern cannot be empty");
         }
     }
 
     if !is_valid_hex_color(&language.color) {
-        return Err(simple_error(format!(
-            "invalid hex color: {}",
-            language.color
-        )));
+        anyhow::bail!(format!("invalid hex color: {}", language.color));
     }
 
     if language.icon.trim().is_empty() {
@@ -71,7 +57,7 @@ fn validate_language(language: &Indicator) -> Result<()> {
     }
 
     if language.priority == 0 {
-        return Err(simple_error("priority must be greater than 0"));
+        anyhow::bail!("priority must be greater than 0");
     }
 
     validate_root_indicators(&language.root_indicators)
@@ -80,14 +66,14 @@ fn validate_language(language: &Indicator) -> Result<()> {
 fn validate_root_indicators(root_indicators: &[RootIndicator]) -> Result<()> {
     for root in root_indicators {
         if root.pattern.trim().is_empty() {
-            return Err(simple_error("root indicator pattern cannot be empty"));
+            anyhow::bail!("root indicator pattern cannot be empty");
         }
         // NaN fails the range check too
         if !(0.0..=1.0).contains(&root.weight) {
-            return Err(simple_error(format!(
+            anyhow::bail!(format!(
                 "root indicator '{}' weight must be between 0 and 1, got {}",
                 root.pattern, root.weight
-            )));
+            ));
         }
     }
 
@@ -104,10 +90,10 @@ fn validate_frameworks(frameworks: &[Framework]) -> Result<()> {
             std::mem::discriminant(&framework.detection),
         );
         if !seen.insert(key) {
-            return Err(simple_error(format!(
+            anyhow::bail!(format!(
                 "duplicate framework '{}' with same detection type",
                 framework.name
-            )));
+            ));
         }
     }
 
@@ -115,19 +101,19 @@ fn validate_frameworks(frameworks: &[Framework]) -> Result<()> {
 }
 fn validate_framework(framework: &Framework) -> Result<()> {
     if framework.name.trim().is_empty() {
-        return Err(simple_error("framework name cannot be empty"));
+        anyhow::bail!("framework name cannot be empty");
     }
 
     if framework.priority == 0 {
-        return Err(simple_error("framework priority must be greater than 0"));
+        anyhow::bail!("framework priority must be greater than 0");
     }
 
     // Frameworks are only surfaced by indicators sharing an ecosystem
     if framework.ecosystems.is_empty() {
-        return Err(simple_error(format!(
+        anyhow::bail!(format!(
             "framework '{}' needs at least one ecosystem, or no indicator can surface it",
             framework.name
-        )));
+        ));
     }
 
     validate_detection_type(&framework.detection)?;
@@ -135,10 +121,7 @@ fn validate_framework(framework: &Framework) -> Result<()> {
 
     if let Some(color) = &framework.color {
         if !is_valid_hex_color(color) {
-            return Err(simple_error(format!(
-                "invalid framework hex color: {}",
-                color
-            )));
+            anyhow::bail!(format!("invalid framework hex color: {}", color));
         }
     }
 
@@ -158,15 +141,12 @@ fn validate_detection_type(detection: &DetectionType) -> Result<()> {
 }
 fn validate_non_empty_vec(vec: &[String], context: &str) -> Result<()> {
     if vec.is_empty() {
-        return Err(simple_error(format!("{} cannot be empty", context)));
+        anyhow::bail!(format!("{} cannot be empty", context));
     }
 
     for item in vec {
         if item.trim().is_empty() {
-            return Err(simple_error(format!(
-                "{} cannot contain empty strings",
-                context
-            )));
+            anyhow::bail!(format!("{} cannot contain empty strings", context));
         }
     }
 
@@ -177,10 +157,7 @@ fn validate_unique_language_names(languages: &[Indicator]) -> Result<()> {
 
     for language in languages {
         if !names.insert(language.name.to_lowercase()) {
-            return Err(validation_error(format!(
-                "duplicate language name: {}",
-                language.name
-            )));
+            anyhow::bail!(format!("duplicate language name: {}", language.name));
         }
     }
 
