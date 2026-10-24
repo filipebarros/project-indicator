@@ -18,7 +18,7 @@ const MAX_FILE_SIZE: u64 = 1_048_576;
 /// Read a text manifest tolerantly: UTF-16 (BOM) is decoded — PowerShell 5's
 /// `>` writes it — and anything else is read lossily, so one stray Latin-1
 /// byte can't blank a whole manifest.
-fn read_text(path: &Path) -> std::io::Result<String> {
+pub(crate) fn read_text(path: &Path) -> std::io::Result<String> {
     let bytes = fs::read(path)?;
     let utf16 = |rest: &[u8], from: fn([u8; 2]) -> u16| {
         let units: Vec<u16> = rest
@@ -33,13 +33,23 @@ fn read_text(path: &Path) -> std::io::Result<String> {
     Ok(match bytes.as_slice() {
         [0xFF, 0xFE, rest @ ..] => utf16(rest, u16::from_le_bytes),
         [0xFE, 0xFF, rest @ ..] => utf16(rest, u16::from_be_bytes),
-        _ => String::from_utf8_lossy(&bytes).into_owned(),
+        _ => {
+            let text = String::from_utf8_lossy(&bytes);
+            text.strip_prefix('\u{feff}').unwrap_or(&text).to_owned()
+        }
     })
 }
 
 /// Remove `//` and `/* */` comments and trailing commas, leaving string
 /// contents untouched.
 fn strip_jsonc(src: &str) -> String {
+    strip_trailing_commas(&strip_c_comments(src))
+}
+
+/// Remove `//` and `/* */` comments, leaving double-quoted string contents
+/// (URLs, coordinates) untouched. Single quotes are not tracked, so a `//`
+/// inside a single-quoted string drops the rest of its line.
+pub(crate) fn strip_c_comments(src: &str) -> String {
     let mut out = String::with_capacity(src.len());
     let mut chars = src.chars().peekable();
     let (mut in_str, mut escaped) = (false, false);
@@ -80,7 +90,7 @@ fn strip_jsonc(src: &str) -> String {
             _ => out.push(c),
         }
     }
-    strip_trailing_commas(&out)
+    out
 }
 
 fn strip_trailing_commas(src: &str) -> String {
@@ -122,11 +132,27 @@ pub struct ParsedFileCache {
     json_values: Mutex<HashMap<PathBuf, Option<Arc<serde_json::Value>>>>,
     /// Parsed TOML values; `None` records a missing file or parse failure
     toml_values: Mutex<HashMap<PathBuf, Option<Arc<toml::Value>>>>,
+    /// Files read but too large to keep in `contents`
+    oversized: Mutex<Vec<PathBuf>>,
 }
 
 impl ParsedFileCache {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Every file that was found and read this run, sorted: the inputs a
+    /// result depends on, which the persistent cache has to watch
+    pub fn read_paths(&self) -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> = lock(&self.contents)
+            .iter()
+            .filter(|(_, content)| content.is_some())
+            .map(|(path, _)| path.clone())
+            .collect();
+        paths.extend(lock(&self.oversized).iter().cloned());
+        paths.sort();
+        paths.dedup();
+        paths
     }
 
     pub fn get_file_content<P: AsRef<Path>>(&self, file_path: P) -> Result<Option<Arc<String>>> {
@@ -150,6 +176,7 @@ impl ParsedFileCache {
             // Read but don't cache oversized files
             let content = read_text(file_path)
                 .with_context(|| format!("Failed to read large file: {}", file_path.display()))?;
+            lock(&self.oversized).push(file_path.to_path_buf());
             return Ok(Some(Arc::new(content)));
         }
 
@@ -172,7 +199,9 @@ impl ParsedFileCache {
             return Ok(cached.clone());
         }
 
-        let jsonc = file_path.extension().is_some_and(|e| e == "jsonc");
+        // Deno accepts comments in deno.json as well as deno.jsonc
+        let jsonc = file_path.extension().is_some_and(|e| e == "jsonc")
+            || file_path.file_name().is_some_and(|n| n == "deno.json");
         let parsed = match self.get_file_content(file_path)? {
             Some(content) => match if jsonc {
                 // JSONC: comments and trailing commas are legal
@@ -183,7 +212,7 @@ impl ParsedFileCache {
                 Ok(value) => Some(Arc::new(value)),
                 Err(e) => {
                     // Memoize the failure so the file isn't re-parsed this run
-                    log::warn!("Failed to parse JSON from {}: {}", file_path.display(), e);
+                    log::debug!("Failed to parse JSON from {}: {}", file_path.display(), e);
                     None
                 }
             },
@@ -207,7 +236,7 @@ impl ParsedFileCache {
                 Ok(value) => Some(Arc::new(value)),
                 Err(e) => {
                     // Memoize the failure so the file isn't re-parsed this run
-                    log::warn!("Failed to parse TOML from {}: {}", file_path.display(), e);
+                    log::debug!("Failed to parse TOML from {}: {}", file_path.display(), e);
                     None
                 }
             },
@@ -390,6 +419,22 @@ mod tests {
         let strict = dir.path().join("x.json");
         fs::write(&strict, "{ // no\n}")?;
         assert!(cache.get_json_value(&strict)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_deno_json_accepts_comments_like_deno_does() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("deno.json");
+        fs::write(
+            &path,
+            "{\n  // comment\n  \"imports\": {\"oak\": \"jsr:@oak/oak\"},\n}\n",
+        )?;
+
+        let value = ParsedFileCache::new()
+            .get_json_value(&path)?
+            .ok_or("deno.json with comments must parse")?;
+        assert_eq!(value["imports"]["oak"], "jsr:@oak/oak");
         Ok(())
     }
 }

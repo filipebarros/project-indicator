@@ -1,42 +1,31 @@
-use super::helpers::{check_cargo_lock_dependencies, check_toml_dependencies};
+use super::helpers::{check_cargo_lock_dependencies, check_toml_dependencies, first_hit};
 use crate::constants::{CARGO_LOCK, CARGO_TOML};
 use crate::detection::caches::ParsedFileCache;
 use crate::Result;
 use std::path::Path;
 
-/// Detect Rust ecosystem dependencies
-pub fn check_rust_ecosystem<P: AsRef<Path>>(
-    path: P,
+pub fn check_rust_ecosystem(
+    path: &Path,
     dependencies: &[String],
     parsed_cache: &ParsedFileCache,
-) -> Result<(Vec<String>, Vec<String>)> {
-    let mut found_deps = Vec::new();
-    let mut evidence = Vec::new();
-
-    let cargo_toml_path = path.as_ref().join(CARGO_TOML);
-    if let Some(toml_value) = parsed_cache.get_toml_value(&cargo_toml_path)? {
-        let cargo_deps = check_toml_dependencies(&toml_value, dependencies);
-        if !cargo_deps.is_empty() {
-            found_deps.extend(cargo_deps);
-            evidence.push(CARGO_TOML.to_owned());
+) -> Result<Option<String>> {
+    if let Some(manifest) = parsed_cache.get_toml_value(path.join(CARGO_TOML))? {
+        if check_toml_dependencies(&manifest, dependencies) {
+            return Ok(Some(CARGO_TOML.to_owned()));
         }
         // A manifest that declares dependencies is authoritative: Cargo.lock
         // also lists transitive crates (tonic pulls in axum). A virtual
         // workspace (no [package]) declares none itself — its members do —
         // so the lockfile stays a fallback there.
-        if !found_deps.is_empty() || toml_value.get("package").is_some() {
-            return Ok((found_deps, evidence));
+        if manifest.get("package").is_some() {
+            return Ok(None);
         }
     }
 
-    let cargo_lock_path = path.as_ref().join(CARGO_LOCK);
-    if let Some(content) = parsed_cache.get_file_content(&cargo_lock_path)? {
-        let lock_deps = check_cargo_lock_dependencies(&content, dependencies);
-        if !lock_deps.is_empty() {
-            found_deps.extend(lock_deps);
-            evidence.push(CARGO_LOCK.to_owned());
-        }
-    }
-
-    Ok((found_deps, evidence))
+    first_hit(
+        parsed_cache,
+        path,
+        &[(CARGO_LOCK, check_cargo_lock_dependencies)],
+        dependencies,
+    )
 }

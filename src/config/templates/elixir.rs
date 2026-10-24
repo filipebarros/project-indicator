@@ -1,5 +1,5 @@
-use super::shared::{framework, nerd_icon, root_indicator};
-use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
+use super::shared::{dependency_framework, nerd_icon, root_indicator, with_roots};
+use crate::types::{Ecosystem, Framework, Indicator, IndicatorContext};
 
 pub fn create_elixir_indicator() -> Indicator {
     Indicator::with_root_indicators(
@@ -26,20 +26,15 @@ pub fn create_elixir_indicator() -> Indicator {
 }
 
 pub fn elixir_frameworks() -> Vec<Framework> {
-    vec![framework(
-        "Phoenix",
-        vec![Ecosystem::Hex],
-        DetectionType::Dependencies {
-            dependencies: vec![
-                "phoenix".to_string(),
-                "phoenix_html".to_string(),
-                "phoenix_live_view".to_string(),
-            ],
-        },
-        Some(nerd_icon("e860")),
-        Some("#ff6600"),
-        1,
-        // (No path-style root indicators: matching is by bare filename, so
+    vec![with_roots(
+        dependency_framework(
+            "Phoenix",
+            &[Ecosystem::Hex],
+            &["phoenix", "phoenix_html", "phoenix_live_view"],
+            Some("e860"),
+            Some("#ff6600"),
+            1,
+        ), // (No path-style root indicators: matching is by bare filename, so
         // `lib/*_web` or `assets/` could never match)
         vec![],
     )]

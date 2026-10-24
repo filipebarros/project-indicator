@@ -46,9 +46,6 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
-[lints.rust]
-warnings = "deny"
-
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"

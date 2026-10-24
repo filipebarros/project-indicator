@@ -1,6 +1,6 @@
-use super::shared::{nerd_icon, root_indicator, simple_framework};
+use super::shared::{dependency_framework, nerd_icon, root_indicator};
 use crate::constants::{SWIFT_EXTENSION, XCWORKSPACE_EXTENSION};
-use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
+use crate::types::{Ecosystem, Framework, Indicator, IndicatorContext};
 
 pub fn create_swift_indicator() -> Indicator {
     Indicator::with_root_indicators(
@@ -24,12 +24,10 @@ pub fn create_swift_indicator() -> Indicator {
 }
 
 pub fn swift_frameworks() -> Vec<Framework> {
-    vec![simple_framework(
+    vec![dependency_framework(
         "Vapor",
-        vec![Ecosystem::Swiftpm],
-        DetectionType::Dependencies {
-            dependencies: vec!["vapor".to_string()],
-        },
+        &[Ecosystem::Swiftpm],
+        &["vapor"],
         None,
         Some("#8d59f2"),
         1,

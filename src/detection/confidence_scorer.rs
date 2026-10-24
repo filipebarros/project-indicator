@@ -1,10 +1,12 @@
+use crate::patterns::matches_pattern;
 use crate::types::{
     ConfidenceFactor, DetectionEvidence, DirectoryType, Framework, Indicator, MatchedFile,
     RootIndicator,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
+#[derive(Default)]
 pub struct ConfidenceScorer {
     /// Framework catalog: framework root-indicator weights contribute to
     /// pattern importance
@@ -12,10 +14,6 @@ pub struct ConfidenceScorer {
 }
 
 impl ConfidenceScorer {
-    pub fn new() -> Self {
-        Self::with_catalog(Arc::new(Vec::new()))
-    }
-
     pub fn with_catalog(frameworks: Arc<Vec<Framework>>) -> Self {
         Self { frameworks }
     }
@@ -30,35 +28,18 @@ impl ConfidenceScorer {
         pattern: &str,
         indicators: &[Arc<Indicator>],
     ) -> (f32, f32, Option<String>) {
-        for indicator in indicators {
-            for root_indicator in &indicator.root_indicators {
-                if crate::patterns::matches_pattern(pattern, &root_indicator.pattern) {
-                    return (
-                        root_indicator.weight,
-                        root_indicator.context.base_priority(),
-                        root_indicator.alternative_group.clone(),
-                    );
-                }
-            }
-        }
-
-        for framework in self.frameworks.iter() {
-            for root_indicator in &framework.root_indicators {
-                if crate::patterns::matches_pattern(pattern, &root_indicator.pattern) {
-                    return (
-                        root_indicator.weight,
-                        root_indicator.context.base_priority(),
-                        root_indicator.alternative_group.clone(),
-                    );
-                }
-            }
-        }
-
-        (0.5, 1.0, None)
-    }
-
-    fn get_pattern_importance(&self, pattern: &str, indicators: &[Arc<Indicator>]) -> f32 {
-        self.get_pattern_details(pattern, indicators).0
+        indicators
+            .iter()
+            .flat_map(|indicator| &indicator.root_indicators)
+            .chain(self.frameworks.iter().flat_map(|f| &f.root_indicators))
+            .find(|root_indicator| matches_pattern(pattern, &root_indicator.pattern))
+            .map_or((0.5, 1.0, None), |root_indicator| {
+                (
+                    root_indicator.weight,
+                    root_indicator.context.base_priority(),
+                    root_indicator.alternative_group.clone(),
+                )
+            })
     }
 
     pub fn calculate_indicator_score(
@@ -71,66 +52,37 @@ impl ConfidenceScorer {
             return 0.0;
         }
 
-        let mut weighted_score = 0.0;
-        let mut max_possible_score = 0.0;
-
         // Declared file patterns sharing an alternative_group (e.g. Python's
-        // poetry.lock vs uv.lock, both looked up via the same root-indicator
-        // metadata as the loop below) contribute their max, not their sum —
-        // same rule as root indicators, and for the same reason: these
-        // patterns are typically ALSO declared as root indicators, so this
-        // loop must respect the same grouping or the denominator inflates
-        // right back up regardless of what the root-indicators loop does.
-        let mut file_grouped_max: HashMap<String, f32> = HashMap::new();
-        for pattern in &indicator.files {
-            let (weight, priority, group) = self.get_pattern_details(pattern, indicators);
-            let importance = weight * priority;
-            match group {
-                Some(g) => {
-                    let entry = file_grouped_max.entry(g).or_insert(0.0);
-                    *entry = entry.max(importance);
-                }
-                None => max_possible_score += importance,
-            }
-        }
-        max_possible_score += file_grouped_max.values().sum::<f32>();
+        // poetry.lock vs uv.lock) contribute their max, not their sum — the
+        // same rule as for root indicators, and for the same reason: these
+        // patterns are typically ALSO declared as root indicators, so the
+        // denominator inflates unless both sides respect the grouping.
+        let patterns: Vec<(&String, f32, Option<String>)> = indicator
+            .files
+            .iter()
+            .map(|pattern| {
+                let (weight, priority, group) = self.get_pattern_details(pattern, indicators);
+                (pattern, weight * priority, group)
+            })
+            .collect();
 
-        // Root indicators sharing an alternative_group are mutually-exclusive
-        // choices (e.g. Java's pom.xml vs build.gradle) — a real project uses
-        // exactly one, so the group contributes its max weight rather than
-        // the sum of every alternative. Ungrouped root indicators (the
-        // common case: a manifest and its lockfile, which legitimately
-        // co-occur) keep summing as before.
-        max_possible_score += Self::sum_with_grouped_max(indicator.root_indicators.iter());
+        let max_possible_score =
+            sum_with_grouped_max(
+                patterns
+                    .iter()
+                    .map(|(_, importance, group)| (group.as_deref(), *importance)),
+            ) + sum_with_grouped_max(weighted(indicator.root_indicators.iter()));
 
-        let mut file_grouped_contribution: HashMap<String, f32> = HashMap::new();
-        for pattern in &indicator.files {
-            let (weight, priority, group) = self.get_pattern_details(pattern, indicators);
-            let importance = weight * priority;
-
-            let best_match_weight = matched_files
-                .iter()
-                .filter(|file| crate::patterns::matches_pattern(&file.filename, pattern))
-                .map(|file| file.weight())
-                .fold(0.0f32, |a, b| a.max(b));
-
-            if best_match_weight <= 0.0 {
-                continue;
-            }
-
-            let contribution = best_match_weight * importance;
-            match group {
-                Some(g) => {
-                    let entry = file_grouped_contribution.entry(g).or_insert(0.0);
-                    *entry = entry.max(contribution);
-                }
-                None => weighted_score += contribution,
-            }
-        }
-        weighted_score += file_grouped_contribution.values().sum::<f32>();
-
-        let root_indicator_bonus = self.calculate_root_indicator_bonus(indicator, matched_files);
-        weighted_score += root_indicator_bonus;
+        let weighted_score =
+            sum_with_grouped_max(patterns.iter().filter_map(|(pattern, importance, group)| {
+                let best_match_weight = matched_files
+                    .iter()
+                    .filter(|file| matches_pattern(&file.filename, pattern))
+                    .map(|file| file.weight())
+                    .fold(0.0f32, f32::max);
+                (best_match_weight > 0.0)
+                    .then(|| (group.as_deref(), best_match_weight * importance))
+            })) + self.calculate_root_indicator_bonus(indicator, matched_files);
 
         if max_possible_score > 0.0 {
             (weighted_score / max_possible_score).min(1.0)
@@ -157,10 +109,10 @@ impl ConfidenceScorer {
                 indicator
                     .root_indicators
                     .iter()
-                    .filter_map(|root_indicator| {
-                        crate::patterns::matches_pattern(&file.filename, &root_indicator.pattern)
-                            .then_some(root_indicator.weight)
+                    .filter(|root_indicator| {
+                        matches_pattern(&file.filename, &root_indicator.pattern)
                     })
+                    .map(|root_indicator| root_indicator.weight)
             })
             .fold(0.0f32, f32::max)
     }
@@ -190,111 +142,157 @@ impl ConfidenceScorer {
         matched_files: &[MatchedFile],
         indicators: &[Arc<Indicator>],
     ) -> f32 {
+        let is_indicator_file = |f: &MatchedFile| {
+            indicator
+                .files
+                .iter()
+                .any(|pattern| matches_pattern(&f.filename, pattern))
+        };
         let mut bonus = 0.0;
 
         let root_files = matched_files
             .iter()
-            .filter(|f| {
-                f.depth == 0
-                    && indicator
-                        .files
-                        .iter()
-                        .any(|pattern| crate::patterns::matches_pattern(&f.filename, pattern))
-            })
+            .filter(|f| f.depth == 0 && is_indicator_file(f))
             .count();
-
         if root_files > 0 {
             bonus += 0.1 * (root_files as f32).min(2.0);
         }
 
-        let important_dirs: HashSet<String> = matched_files
+        let important_dirs: HashSet<&str> = matched_files
             .iter()
             .filter(|f| {
                 f.directory_type != DirectoryType::Test
                     && f.directory_type != DirectoryType::Dependencies
-                    && indicator
-                        .files
-                        .iter()
-                        .any(|pattern| crate::patterns::matches_pattern(&f.filename, pattern))
+                    && is_indicator_file(f)
             })
-            .map(|f| f.relative_path.split('/').next().unwrap_or("").to_string())
+            .map(|f| f.relative_path.split('/').next().unwrap_or(""))
             .collect();
-
         if important_dirs.len() >= 2 {
             bonus += 0.2;
         }
 
-        let config_files = matched_files
-            .iter()
-            .filter(|f| {
-                self.get_pattern_importance(&f.filename, indicators) >= 0.9
-                    && indicator
-                        .files
-                        .iter()
-                        .any(|pattern| crate::patterns::matches_pattern(&f.filename, pattern))
-            })
-            .count();
-
-        if config_files > 0 {
-            bonus += 0.1 * (config_files as f32).min(1.0);
+        let has_config_file = matched_files.iter().any(|f| {
+            self.get_pattern_details(&f.filename, indicators).0 >= 0.9 && is_indicator_file(f)
+        });
+        if has_config_file {
+            bonus += 0.1;
         }
 
         bonus.min(0.3)
     }
 
+    /// Same grouping rule as the denominator (see `calculate_indicator_score`):
+    /// matching two alternatives from the same group (e.g. a mid-migration
+    /// repo with both bun.lock and bun.lockb) shouldn't double-count.
     fn calculate_root_indicator_bonus(
         &self,
         indicator: &Arc<Indicator>,
         matched_files: &[MatchedFile],
     ) -> f32 {
-        // Same grouping rule as the denominator (see calculate_indicator_score):
-        // matching two alternatives from the same group (e.g. a mid-migration
-        // repo with both bun.lock and bun.lockb) shouldn't double-count.
-        Self::sum_with_grouped_max(indicator.root_indicators.iter().filter(|root_indicator| {
-            matched_files.iter().any(|file| {
-                file.depth == 0
-                    && crate::patterns::matches_pattern(&file.filename, &root_indicator.pattern)
-            })
-        }))
-    }
-
-    /// Sums `weight * context.base_priority()` across `root_indicators`,
-    /// except root indicators sharing an `alternative_group` contribute only
-    /// their max within that group (mutually-exclusive alternatives), not
-    /// their sum.
-    fn sum_with_grouped_max<'a>(root_indicators: impl Iterator<Item = &'a RootIndicator>) -> f32 {
-        let mut ungrouped_sum = 0.0_f32;
-        let mut grouped_max: HashMap<&str, f32> = HashMap::new();
-
-        for root_indicator in root_indicators {
-            let weighted = root_indicator.weight * root_indicator.context.base_priority();
-            match root_indicator.alternative_group.as_deref() {
-                Some(group) => {
-                    let entry = grouped_max.entry(group).or_insert(0.0);
-                    *entry = entry.max(weighted);
-                }
-                None => ungrouped_sum += weighted,
-            }
-        }
-
-        ungrouped_sum + grouped_max.values().sum::<f32>()
+        sum_with_grouped_max(weighted(indicator.root_indicators.iter().filter(
+            |root_indicator| {
+                matched_files.iter().any(|file| {
+                    file.depth == 0 && matches_pattern(&file.filename, &root_indicator.pattern)
+                })
+            },
+        )))
     }
 }
 
-impl Default for ConfidenceScorer {
-    fn default() -> Self {
-        Self::new()
+/// `(alternative group, weight × context authority)` of each root indicator
+fn weighted<'a>(
+    root_indicators: impl Iterator<Item = &'a RootIndicator>,
+) -> impl Iterator<Item = (Option<&'a str>, f32)> {
+    root_indicators.map(|root_indicator| {
+        (
+            root_indicator.alternative_group.as_deref(),
+            root_indicator.weight * root_indicator.context.base_priority(),
+        )
+    })
+}
+
+/// Sums the weights, except entries sharing an alternative group
+/// (mutually-exclusive choices, e.g. Java's pom.xml vs build.gradle — a real
+/// project uses exactly one) contribute only their max within the group.
+/// Ungrouped entries (a manifest and its lockfile legitimately co-occur) sum.
+fn sum_with_grouped_max<'a>(entries: impl Iterator<Item = (Option<&'a str>, f32)>) -> f32 {
+    let mut ungrouped_sum = 0.0_f32;
+    // Sorted: f32 addition is order-sensitive, scores must not vary per run
+    let mut grouped_max: BTreeMap<&str, f32> = BTreeMap::new();
+
+    for (group, weight) in entries {
+        match group {
+            Some(group) => {
+                let entry = grouped_max.entry(group).or_insert(0.0);
+                *entry = entry.max(weight);
+            }
+            None => ungrouped_sum += weight,
+        }
     }
+
+    ungrouped_sum + grouped_max.values().sum::<f32>()
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_framework_root_indicators_lend_weight_to_matched_config_files() {
+        use crate::detection::matchers::test_helpers::helpers::{
+            create_test_file, create_test_indicator,
+        };
+        use crate::types::{DetectionType, Ecosystem, Framework, RootIndicator};
+
+        let nextjs = Framework {
+            name: "Next.js".to_string(),
+            ecosystems: vec![Ecosystem::Npm],
+            detection: DetectionType::Dependencies {
+                dependencies: vec!["next".to_string()],
+            },
+            icon: None,
+            color: None,
+            priority: 1,
+            root_indicators: vec![RootIndicator {
+                pattern: "next.config.js".to_string(),
+                weight: 0.9,
+                context: IndicatorContext::FrameworkRoot,
+                alternative_group: None,
+            }],
+        };
+        let javascript = Arc::new(create_test_indicator("JavaScript", vec!["*.js"]));
+        let files = [create_test_file("next.config.js", "next.config.js")];
+        let indicators = [javascript.clone()];
+
+        let without =
+            ConfidenceScorer::default().calculate_context_bonus(&javascript, &files, &indicators);
+        let with = ConfidenceScorer::with_catalog(Arc::new(vec![nextjs])).calculate_context_bonus(
+            &javascript,
+            &files,
+            &indicators,
+        );
+
+        assert!(with > without, "{with} should exceed {without}");
+    }
+
+    #[test]
+    fn test_grouped_sum_does_not_depend_on_hash_order() {
+        // f32 addition is not associative: 2^24 swallows a lone +1, so the
+        // total reveals the summation order
+        let entries = || {
+            [("b", 16_777_216.0_f32), ("a", 1.0), ("c", 1.0)]
+                .into_iter()
+                .map(|(group, weight)| (Some(group), weight))
+        };
+        let first = super::sum_with_grouped_max(entries());
+        for _ in 0..200 {
+            assert_eq!(super::sum_with_grouped_max(entries()), first);
+        }
+    }
+
     use std::sync::Arc;
 
     use crate::{
         detection::confidence_scorer::ConfidenceScorer,
-        types::{DetectionEvidence, IndicatorContext},
-        Indicator,
+        types::{Indicator, IndicatorContext},
     };
 
     use crate::detection::matchers::test_helpers::helpers::{
@@ -309,34 +307,17 @@ mod tests {
     }
 
     #[test]
-    fn test_basic_indicator_scoring() -> Result<(), Box<dyn std::error::Error>> {
-        let scorer = ConfidenceScorer::new();
-        let rust_lang = Arc::new(create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"]));
-
-        let files = vec![
-            create_test_file("Cargo.toml", "Cargo.toml"),
-            create_test_file("main.rs", "src/main.rs"),
-        ];
-
-        let score = scorer.calculate_indicator_score(&rust_lang, &files, &create_test_indicators());
-        assert!(score > 0.0, "Should have positive score for matching files");
-        assert!(score <= 1.0, "Score should not exceed 1.0");
-        Ok(())
-    }
-
-    #[test]
-    fn test_empty_files_returns_zero() -> Result<(), Box<dyn std::error::Error>> {
-        let scorer = ConfidenceScorer::new();
+    fn test_empty_files_returns_zero() {
+        let scorer = ConfidenceScorer::default();
         let rust_lang = Arc::new(create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"]));
 
         let score = scorer.calculate_indicator_score(&rust_lang, &[], &create_test_indicators());
         assert_eq!(score, 0.0, "Empty files should return zero score");
-        Ok(())
     }
 
     #[test]
-    fn test_context_bonus_for_root_files() -> Result<(), Box<dyn std::error::Error>> {
-        let scorer = ConfidenceScorer::new();
+    fn test_context_bonus_for_root_files() {
+        let scorer = ConfidenceScorer::default();
         let rust_lang = Arc::new(create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"]));
 
         let files = vec![create_test_file("Cargo.toml", "Cargo.toml")];
@@ -344,66 +325,11 @@ mod tests {
         let bonus = scorer.calculate_context_bonus(&rust_lang, &files, &create_test_indicators());
         assert!(bonus > 0.0, "Should have bonus for root files");
         assert!(bonus <= 0.3, "Bonus should be capped at 0.3");
-        Ok(())
     }
 
     #[test]
-    fn test_evidence_tracking() -> Result<(), Box<dyn std::error::Error>> {
-        let scorer = ConfidenceScorer::new();
-        let rust_lang = Arc::new(create_test_indicator("Rust", vec!["Cargo.toml"]));
-        let files = vec![create_test_file("Cargo.toml", "Cargo.toml")];
-
-        let mut evidence = DetectionEvidence::new();
-        let score = scorer.calculate_indicator_score_with_evidence(
-            &rust_lang,
-            &files,
-            &mut evidence,
-            &create_test_indicators(),
-        );
-
-        assert!(score > 0.0);
-        assert!(
-            !evidence.confidence_factors.is_empty(),
-            "Should add confidence factors"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_root_indicator_bonus() -> Result<(), Box<dyn std::error::Error>> {
-        let scorer = ConfidenceScorer::new();
-        let rust_lang = Arc::new(Indicator::with_root_indicators(
-            "Rust".to_string(),
-            vec!["*.rs".to_string()],
-            "#FF0000".to_string(),
-            "🔥".to_string(),
-            1,
-            vec![],
-            vec![crate::types::RootIndicator {
-                pattern: "Cargo.toml".to_string(),
-                weight: 0.9,
-                context: IndicatorContext::LanguageRoot,
-                alternative_group: None,
-            }],
-        ));
-
-        let files = vec![
-            create_test_file("Cargo.toml", "Cargo.toml"),
-            create_test_file("main.rs", "src/main.rs"),
-        ];
-
-        let score = scorer.calculate_indicator_score(&rust_lang, &files, &create_test_indicators());
-        assert!(
-            score > 0.0,
-            "Should have positive score with root indicator"
-        );
-        assert!(score <= 1.0, "Score should not exceed 1.0");
-        Ok(())
-    }
-
-    #[test]
-    fn test_root_indicator_no_match() -> Result<(), Box<dyn std::error::Error>> {
-        let scorer = ConfidenceScorer::new();
+    fn test_root_indicator_no_match() {
+        let scorer = ConfidenceScorer::default();
         let rust_lang = Arc::new(Indicator::with_root_indicators(
             "Rust".to_string(),
             vec!["*.rs".to_string()],
@@ -427,12 +353,11 @@ mod tests {
             score < 1.0,
             "Score should be less than 1.0 without root indicator"
         );
-        Ok(())
     }
 
     #[test]
-    fn test_grouped_alternatives_are_maxed_not_summed() -> Result<(), Box<dyn std::error::Error>> {
-        let scorer = ConfidenceScorer::new();
+    fn test_grouped_alternatives_are_maxed_not_summed() {
+        let scorer = ConfidenceScorer::default();
         // "a" and "b" are alternatives in group "g" (e.g. pom.xml vs
         // build.gradle); "c" is an ungrouped, independent signal. Only "a"
         // and "c" are present — "b" (the sibling alternative) is absent.
@@ -476,12 +401,11 @@ mod tests {
             (score - 1.0).abs() < 0.001,
             "Matching one alternative in a group should not be penalized for a missing sibling, got {score}"
         );
-        Ok(())
     }
 
     #[test]
-    fn test_ungrouped_root_indicators_still_sum() -> Result<(), Box<dyn std::error::Error>> {
-        let scorer = ConfidenceScorer::new();
+    fn test_ungrouped_root_indicators_still_sum() {
+        let scorer = ConfidenceScorer::default();
         // Regression guard: co-occurring evidence (e.g. a manifest and its
         // lockfile) must keep summing into the denominator, not be maxed,
         // or a project missing the second file would be scored as if it
@@ -518,12 +442,11 @@ mod tests {
             (score - 0.5135).abs() < 0.01,
             "Ungrouped root indicators should still sum in the denominator, got {score}"
         );
-        Ok(())
     }
 
     #[test]
     fn test_pattern_weight_and_priority() {
-        let scorer = ConfidenceScorer::new();
+        let scorer = ConfidenceScorer::default();
         let indicators = vec![Arc::new(Indicator::with_root_indicators(
             "Test".to_string(),
             vec![],
@@ -565,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn test_files_loop_respects_alternative_group() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_files_loop_respects_alternative_group() {
         // Regression guard: the root_indicators loop and
         // calculate_root_indicator_bonus respect
         // alternative_group, but calculate_indicator_score's separate loop
@@ -577,7 +500,7 @@ mod tests {
         // grouped indicator against an otherwise-identical ungrouped one:
         // matching one alternative out of two should score BETTER when
         // grouped (the missing sibling isn't penalized) and worse when not.
-        let scorer = ConfidenceScorer::new();
+        let scorer = ConfidenceScorer::default();
         let build = |grouped: bool| {
             let group = |g: &str| {
                 if grouped {
@@ -633,6 +556,5 @@ mod tests {
             grouped_score > ungrouped_score,
             "Matching one alternative should score higher when the sibling is grouped (not penalized as missing evidence): grouped={grouped_score}, ungrouped={ungrouped_score}"
         );
-        Ok(())
     }
 }

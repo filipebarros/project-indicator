@@ -1,14 +1,14 @@
-use super::shared::{nerd_icon, root_indicator, root_indicator_grouped, simple_framework};
+use super::shared::{
+    dependency_framework, file_framework, nerd_icon, root_indicator, root_indicator_grouped,
+};
 use crate::constants::{CARGO_LOCK, CARGO_TOML, RS_EXTENSION};
-use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
+use crate::types::{Ecosystem, Framework, Indicator, IndicatorContext};
 
-fn rust_framework(name: &str, dep: &str, color: &str, priority: u8) -> crate::types::Framework {
-    simple_framework(
+fn rust_framework(name: &str, dep: &str, color: &str, priority: u8) -> Framework {
+    dependency_framework(
         name,
-        vec![Ecosystem::Cargo],
-        DetectionType::Dependencies {
-            dependencies: vec![dep.to_string()],
-        },
+        &[Ecosystem::Cargo],
+        &[dep],
         None,
         Some(color),
         priority,
@@ -53,21 +53,16 @@ pub fn create_rust_indicator() -> Indicator {
 pub fn rust_frameworks() -> Vec<Framework> {
     vec![
         rust_framework("Axum", "axum", "#7c3aed", 1),
-        rust_framework("Actix Web", "actix-web", "#000000", 1),
+        rust_framework("Actix Web", "actix-web", "#8b949e", 1),
         rust_framework("Rocket", "rocket", "#d33847", 1),
         // Every Tauri app has a tauri.conf.json — at the root or in
         // src-tauri/ — which is more reliable than the root Cargo.toml
         // (the dependency lives in src-tauri/ for JS-rooted projects).
         // Npm too, so JavaScript-rooted projects surface it.
-        simple_framework(
+        file_framework(
             "Tauri",
-            vec![Ecosystem::Cargo, Ecosystem::Npm],
-            DetectionType::FileExists {
-                files: vec![
-                    "tauri.conf.json".to_string(),
-                    "src-tauri/tauri.conf.json".to_string(),
-                ],
-            },
+            &[Ecosystem::Cargo, Ecosystem::Npm],
+            &["tauri.conf.json", "src-tauri/tauri.conf.json"],
             None,
             Some("#24c8db"),
             2,

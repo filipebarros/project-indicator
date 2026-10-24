@@ -1,8 +1,9 @@
-use super::shared::{nerd_icon, node_lockfiles, node_runtime_config_files, root_indicator};
+use super::shared::{nerd_icon, node_root_indicators, root_indicator};
 use crate::constants::{CTS_EXTENSION, MTS_EXTENSION, TSCONFIG_JSON, TSX_EXTENSION, TS_EXTENSION};
 use crate::types::{Ecosystem, Indicator, IndicatorContext};
 
 pub fn create_typescript_indicator() -> Indicator {
+    let node = node_root_indicators();
     let mut files = vec![
         TS_EXTENSION.to_string(),
         TSX_EXTENSION.to_string(),
@@ -10,23 +11,20 @@ pub fn create_typescript_indicator() -> Indicator {
         CTS_EXTENSION.to_string(),
         TSCONFIG_JSON.to_string(),
     ];
-    files.extend(node_lockfiles());
-    files.extend(node_runtime_config_files());
+    files.extend(node.iter().map(|r| r.pattern.clone()));
 
-    let mut indicators = vec![root_indicator(
+    let mut root_indicators = vec![root_indicator(
         TSCONFIG_JSON,
         0.95,
         IndicatorContext::LanguageRoot,
     )];
-
-    let mut node_indicators = super::shared::node_lockfile_root_indicators();
-    for indicator in &mut node_indicators {
-        if indicator.pattern == "package.json" {
-            indicator.weight = 0.9;
+    root_indicators.extend(node.into_iter().map(|mut r| {
+        // tsconfig.json is the stronger TypeScript marker
+        if r.pattern == "package.json" {
+            r.weight = 0.9;
         }
-    }
-    indicators.extend(node_indicators);
-    indicators.extend(super::shared::node_runtime_config_root_indicators());
+        r
+    }));
 
     Indicator::with_root_indicators(
         "TypeScript".to_string(),
@@ -35,6 +33,6 @@ pub fn create_typescript_indicator() -> Indicator {
         nerd_icon("e8ca"),
         6,
         vec![Ecosystem::Npm],
-        indicators,
+        root_indicators,
     )
 }

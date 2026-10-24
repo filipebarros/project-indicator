@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9c1ff7836139abe65a055603b4df6746fa57746f49702cb114cb51906e2b19f7 # shrinks to files = [MatchedFile { filename: "tool.py", relative_path: "tool.py", depth: 0, directory_type: Root }, MatchedFile { filename: "index.ts", relative_path: "src/index.ts", depth: 1, directory_type: Source }, MatchedFile { filename: "App.csproj", relative_path: "a/b/c/App.csproj", depth: 3, directory_type: Unknown }, MatchedFile { filename: "package.json", relative_path: "package.json", depth: 0, directory_type: Root }, MatchedFile { filename: "app.js", relative_path: "a/b/c/app.js", depth: 3, directory_type: Unknown }, MatchedFile { filename: "pom.xml", relative_path: "src/pom.xml", depth: 1, directory_type: Source }, MatchedFile { filename: "App.csproj", relative_path: "src/App.csproj", depth: 1, directory_type: Source }]

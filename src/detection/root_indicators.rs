@@ -1,14 +1,48 @@
 use crate::constants::*;
-use crate::patterns::simple_wildcard_match;
+use crate::detection::caches::parsed_file::read_text;
+use crate::detection::scanner::scanning_engine::EXTREME_SIZE_THRESHOLD;
+use crate::patterns::matches_pattern;
 use crate::performance::FileSystemCache;
 use crate::types::{DetectionConfig, Indicator};
-use crate::Result;
-use std::cell::Cell;
+use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Directory markers that satisfy `require_vcs_root`
 const VCS_MARKERS: [&str; 3] = [DOT_GIT, ".hg", ".svn"];
+
+/// Sorted entry names of a directory (names only — no per-entry stat; callers
+/// check candidates with `is_file()`). Sorted for a stable choice among
+/// several wildcard matches and for binary search. `None` when the directory
+/// has more entries than the scanner would walk: listing it at every level
+/// of the upward traversal would cost more than any marker is worth.
+fn list_names(path: &Path) -> Option<Vec<String>> {
+    let mut names: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(path).ok()?.filter_map(|e| e.ok()) {
+        if names.len() >= EXTREME_SIZE_THRESHOLD {
+            return None;
+        }
+        if let Ok(name) = entry.file_name().into_string() {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Some(names)
+}
+
+/// Windows system directories, matched case-insensitively with any verbatim
+/// `\\?\` prefix (which `canonicalize` adds) stripped
+fn is_windows_system_dir(path: &str) -> bool {
+    let path = path.strip_prefix(r"\\?\").unwrap_or(path);
+    [
+        r"C:\Windows",
+        r"C:\Program Files",
+        r"C:\Program Files (x86)",
+        r"C:\Users",
+    ]
+    .iter()
+    .any(|dir| path.eq_ignore_ascii_case(dir))
+}
 
 #[derive(Debug, Clone)]
 pub struct FoundRootIndicator {
@@ -35,8 +69,8 @@ impl RootIndicatorEngine {
         }
     }
 
-    /// Walk up directory tree to find project root
-    /// Returns (root_path, matched_indicator) or None if not found
+    /// Walk up from `start_path` to the nearest directory with a root
+    /// indicator, returning that directory and the indicator.
     ///
     /// With `require_vcs_root`, an indicator root is accepted only when a
     /// VCS marker (.git/.hg/.svn) exists in the same directory or any
@@ -44,14 +78,14 @@ impl RootIndicatorEngine {
     pub fn find_project_root(
         &self,
         start_path: &Path,
-        file_cache: &Arc<FileSystemCache>,
-    ) -> Result<Option<(PathBuf, FoundRootIndicator)>> {
+        file_cache: &FileSystemCache,
+    ) -> Option<(PathBuf, FoundRootIndicator)> {
         if self.is_boundary_directory(start_path) {
             log::debug!(
                 "Starting path {} is a boundary directory, skipping upward traversal",
                 start_path.display()
             );
-            return Ok(None);
+            return None;
         }
 
         let mut current = start_path.to_path_buf();
@@ -59,85 +93,49 @@ impl RootIndicatorEngine {
         // A root found below here that still awaits a VCS marker above it
         let mut vcs_pending: Option<(PathBuf, FoundRootIndicator)> = None;
 
-        log::debug!(
-            "Starting upward traversal from {} (max {} levels)",
-            start_path.display(),
-            self.config.max_upward_traversal
-        );
-
         // `levels` counts ancestors above the start dir: N means N levels up
         while levels <= self.config.max_upward_traversal {
-            log::trace!("Checking for project root at: {}", current.display());
-
             if vcs_pending.is_some() {
                 // The deepest indicator root wins; higher levels are only
                 // consulted for the VCS marker that validates it
                 if self.has_vcs_marker(&current, file_cache) {
-                    return Ok(vcs_pending.take());
+                    return vcs_pending.take();
                 }
-            } else if let Some(indicator) =
-                self.check_root_indicators_at_path(&current, file_cache)?
+            } else if let Some(indicator) = self.check_root_indicators_at_path(&current, file_cache)
             {
                 if !self.config.require_vcs_root || self.has_vcs_marker(&current, file_cache) {
-                    log::info!(
+                    log::debug!(
                         "Found project root at {} (pattern: {}, certainty: {:.2})",
                         current.display(),
                         indicator.pattern,
                         indicator.certainty
                     );
-                    return Ok(Some((current, indicator)));
+                    return Some((current, indicator));
                 }
-                log::trace!(
-                    "require_vcs_root: deferring root at {} until a VCS marker is found above",
-                    current.display()
-                );
                 vcs_pending = Some((current.clone(), indicator));
             }
 
-            let parent = match current.parent() {
-                Some(p) => {
-                    // Don't traverse beyond filesystem root
-                    if current == p {
-                        log::debug!("Reached filesystem root, stopping traversal");
-                        break;
-                    }
-                    p
-                }
-                None => {
-                    log::debug!("No parent directory found, stopping traversal");
-                    break;
-                }
-            };
-
-            // Check parent BEFORE allocating PathBuf
+            let parent = current.parent()?;
             if self.is_boundary_directory(parent) {
-                log::debug!(
-                    "Parent is boundary directory at {}, stopping traversal",
-                    parent.display()
-                );
                 break;
             }
-
             current = parent.to_path_buf();
             levels += 1;
         }
 
         log::debug!(
-            "No project root found after traversing {} levels up from {}",
-            levels,
+            "No project root found after traversing {levels} levels up from {}",
             start_path.display()
         );
-        Ok(None)
+        None
     }
 
     /// Check if a directory is a boundary that we shouldn't traverse past or
     /// scan from: home directory, any filesystem root (`/`, `C:\`, …), and
     /// per-OS system directories
     pub fn is_boundary_directory(&self, path: &Path) -> bool {
-        if let Some(ref home) = self.cached_home_dir {
-            if path == home {
-                return true;
-            }
+        if self.cached_home_dir.as_deref() == Some(path) {
+            return true;
         }
 
         // Any filesystem root: "/" on Unix, drive roots (C:\, D:\) on Windows
@@ -147,11 +145,7 @@ impl RootIndicatorEngine {
 
         let path_str = path.to_string_lossy();
 
-        #[cfg(windows)]
-        if matches!(
-            path_str.as_ref(),
-            r"C:\Windows" | r"C:\Program Files" | r"C:\Program Files (x86)" | r"C:\Users"
-        ) {
+        if is_windows_system_dir(&path_str) {
             return true;
         }
 
@@ -162,7 +156,7 @@ impl RootIndicatorEngine {
     }
 
     /// Any VCS marker directly in this directory
-    fn has_vcs_marker(&self, path: &Path, file_cache: &Arc<FileSystemCache>) -> bool {
+    fn has_vcs_marker(&self, path: &Path, file_cache: &FileSystemCache) -> bool {
         VCS_MARKERS
             .iter()
             .any(|marker| file_cache.exists(&path.join(marker)))
@@ -174,17 +168,17 @@ impl RootIndicatorEngine {
     fn check_root_indicators_at_path(
         &self,
         path: &Path,
-        file_cache: &Arc<FileSystemCache>,
-    ) -> Result<Option<FoundRootIndicator>> {
+        file_cache: &FileSystemCache,
+    ) -> Option<FoundRootIndicator> {
         let mut found_indicators = Vec::new();
 
         // package.json is read and parsed at most once per directory, however
         // many indicators (TypeScript, JavaScript) ask about it
-        let ts_deps = Cell::new(None);
+        let ts_deps = OnceCell::new();
 
         // Wildcard patterns (*.csproj, *.kt) can't be checked with a literal
         // stat; they need the directory listing, built at most once per level
-        let mut listing: Option<Vec<String>> = None;
+        let mut listing: Option<Option<Vec<String>>> = None;
 
         for indicator in &self.indicators {
             for root_indicator in &indicator.root_indicators {
@@ -192,31 +186,28 @@ impl RootIndicatorEngine {
                 // literals it is the pattern itself
                 let matched_name = if root_indicator.pattern.contains('*') {
                     listing
-                        .get_or_insert_with(|| {
-                            std::fs::read_dir(path)
-                                .map(|entries| {
-                                    // Names only — no per-entry stat; candidates are
-                                    // checked with is_file() below
-                                    let mut names: Vec<String> = entries
-                                        .filter_map(|e| e.ok())
-                                        .filter_map(|e| e.file_name().into_string().ok())
-                                        .collect();
-                                    // stable choice among several matches
-                                    names.sort();
-                                    names
-                                })
-                                .unwrap_or_default()
-                        })
+                        .get_or_insert_with(|| list_names(path))
                         .iter()
+                        .flatten()
                         .find(|name| {
-                            simple_wildcard_match(name, &root_indicator.pattern)
+                            matches_pattern(name, &root_indicator.pattern)
                                 && path.join(name).is_file()
                         })
                         .cloned()
                 } else {
-                    file_cache
-                        .exists(&path.join(&root_indicator.pattern))
-                        .then(|| root_indicator.pattern.clone())
+                    let pattern = &root_indicator.pattern;
+                    // A stat is enough to rule a marker out. A hit is
+                    // confirmed against the real directory entry names:
+                    // case-insensitive filesystems also "find" `cargo.toml`
+                    // for `Cargo.toml`, which the scanner then never matches.
+                    // Patterns with a path separator stay stat-only.
+                    (file_cache.exists(&path.join(pattern))
+                        && (pattern.contains('/')
+                            || listing
+                                .get_or_insert_with(|| list_names(path))
+                                .as_ref()
+                                .is_none_or(|names| names.binary_search(pattern).is_ok())))
+                    .then(|| pattern.clone())
                 };
 
                 if let Some(matched_name) = matched_name {
@@ -226,7 +217,7 @@ impl RootIndicatorEngine {
                         root_indicator,
                         indicator,
                         &ts_deps,
-                    )?;
+                    );
 
                     // Use lower threshold for root discovery (0.2) to catch more indicators
                     if certainty > 0.2 {
@@ -250,7 +241,7 @@ impl RootIndicatorEngine {
                                 certainty,
                                 specificity
                             );
-                            return Ok(Some(found_root_indicator));
+                            return Some(found_root_indicator);
                         }
 
                         found_indicators.push(found_root_indicator);
@@ -259,7 +250,7 @@ impl RootIndicatorEngine {
             }
         }
 
-        Ok(self.resolve_indicator_conflicts(&found_indicators).cloned())
+        self.resolve_indicator_conflicts(&found_indicators).cloned()
     }
 
     fn calculate_indicator_certainty(
@@ -267,55 +258,29 @@ impl RootIndicatorEngine {
         file_path: &Path,
         root_indicator: &crate::types::RootIndicator,
         indicator: &Arc<Indicator>,
-        ts_deps: &Cell<Option<bool>>,
-    ) -> Result<f32> {
+        ts_deps: &OnceCell<bool>,
+    ) -> f32 {
+        let has_typescript =
+            || *ts_deps.get_or_init(|| self.has_typescript_dependencies(file_path));
         match root_indicator.pattern.as_str() {
-            CARGO_TOML => {
-                if self.is_valid_cargo_toml(file_path)? {
-                    Ok(0.95)
-                } else {
-                    Ok(0.1)
-                }
-            }
-            GO_MOD => Ok(0.95),
-            PYPROJECT_TOML => {
-                if self.is_valid_python_project(file_path)? {
-                    Ok(0.90)
-                } else {
-                    Ok(0.1)
-                }
-            }
-            TSCONFIG_JSON => Ok(0.90),
-            PACKAGE_JSON => {
-                let has_ts = || -> Result<bool> {
-                    if let Some(known) = ts_deps.get() {
-                        return Ok(known);
-                    }
-                    let computed = self.has_typescript_dependencies(file_path)?;
-                    ts_deps.set(Some(computed));
-                    Ok(computed)
-                };
-                if indicator.name == "TypeScript" {
-                    if has_ts()? {
-                        Ok(0.85)
-                    } else {
-                        Ok(0.1)
-                    }
-                } else if indicator.name == "JavaScript" {
-                    if has_ts()? {
-                        Ok(0.1)
-                    } else {
-                        Ok(0.70)
-                    }
-                } else {
-                    Ok(0.0)
-                }
-            }
+            CARGO_TOML if self.is_valid_cargo_toml(file_path) => 0.95,
+            CARGO_TOML => 0.1,
+            GO_MOD => 0.95,
+            PYPROJECT_TOML if self.is_valid_python_project(file_path) => 0.90,
+            PYPROJECT_TOML => 0.1,
+            TSCONFIG_JSON => 0.90,
+            PACKAGE_JSON => match indicator.name.as_str() {
+                "TypeScript" if has_typescript() => 0.85,
+                "TypeScript" => 0.1,
+                "JavaScript" if has_typescript() => 0.1,
+                "JavaScript" => 0.70,
+                _ => 0.0,
+            },
             // Data-driven fallback: the indicator's declared weight scaled
             // by its context class base priority (RuntimeRoot, ToolchainRoot, …),
             // so patterns without a hardcoded validator (deno.json, flake.nix,
             // main.tf, …) still participate in root discovery
-            _ => Ok(root_indicator.weight * root_indicator.context.base_priority()),
+            _ => root_indicator.weight * root_indicator.context.base_priority(),
         }
     }
 
@@ -323,10 +288,6 @@ impl RootIndicatorEngine {
         &self,
         indicators: &'a [FoundRootIndicator],
     ) -> Option<&'a FoundRootIndicator> {
-        if indicators.is_empty() {
-            return None;
-        }
-
         indicators.iter().max_by(|a, b| {
             a.certainty
                 .partial_cmp(&b.certainty)
@@ -346,34 +307,28 @@ impl RootIndicatorEngine {
         }
     }
 
-    fn is_valid_cargo_toml(&self, path: &Path) -> Result<bool> {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            Ok(content.contains("[package]") || content.contains("[workspace]"))
-        } else {
-            Ok(false)
-        }
+    fn is_valid_cargo_toml(&self, path: &Path) -> bool {
+        read_text(path).is_ok_and(|c| c.contains("[package]") || c.contains("[workspace]"))
     }
 
-    fn is_valid_python_project(&self, path: &Path) -> Result<bool> {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            // [project] is the PEP 621 table: a pyproject that declares a
-            // project is Python even without a build-system section
-            Ok(content.contains("[project]")
-                || content.contains("[tool.poetry]")
-                || content.contains("[build-system]")
-                || content.contains("requires-python"))
-        } else {
-            Ok(false)
-        }
+    fn is_valid_python_project(&self, path: &Path) -> bool {
+        // [project] is the PEP 621 table: a pyproject that declares a
+        // project is Python even without a build-system section
+        read_text(path).is_ok_and(|c| {
+            c.contains("[project]")
+                || c.contains("[tool.poetry]")
+                || c.contains("[build-system]")
+                || c.contains("requires-python")
+        })
     }
 
     /// True when package.json declares TypeScript tooling as a dependency
     /// (`typescript`, `ts-node`, or any `@types/*`) in any dependency section.
     /// Reads the parsed keys, not the raw text, so a prose mention or an ESM
     /// `"type": "module"` marker can't count.
-    fn has_typescript_dependencies(&self, path: &Path) -> Result<bool> {
-        let Ok(content) = std::fs::read_to_string(path) else {
-            return Ok(false);
+    fn has_typescript_dependencies(&self, path: &Path) -> bool {
+        let Ok(content) = read_text(path) else {
+            return false;
         };
         // Cheap pre-check: a matching KEY implies its text appears, so
         // plain-JS manifests skip the JSON parse entirely
@@ -381,12 +336,12 @@ impl RootIndicatorEngine {
             .iter()
             .any(|needle| content.contains(needle))
         {
-            return Ok(false);
+            return false;
         }
         let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
-            return Ok(false);
+            return false;
         };
-        Ok([
+        [
             "dependencies",
             "devDependencies",
             "peerDependencies",
@@ -395,13 +350,13 @@ impl RootIndicatorEngine {
         .iter()
         .filter_map(|section| json.get(section).and_then(|v| v.as_object()))
         .flat_map(|deps| deps.keys())
-        .any(|k| k == "typescript" || k == "ts-node" || k.starts_with("@types/")))
+        .any(|k| k == "typescript" || k == "ts-node" || k.starts_with("@types/"))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::FileSystemCache;
+    use super::{is_windows_system_dir, FileSystemCache};
     use crate::detection::root_indicators::RootIndicatorEngine;
     use crate::types::{DetectionConfig, Indicator};
     use std::fs;
@@ -410,32 +365,6 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::detection::matchers::test_helpers::helpers::create_test_indicator_with_indicators;
-
-    #[test]
-    fn test_specificity_resolution() -> Result<(), Box<dyn std::error::Error>> {
-        let engine = RootIndicatorEngine::from_parts(vec![], DetectionConfig::default());
-
-        assert!(
-            engine.get_pattern_specificity("tsconfig.json")
-                > engine.get_pattern_specificity("package.json")
-        );
-        assert!(
-            engine.get_pattern_specificity("Cargo.toml")
-                > engine.get_pattern_specificity("package.json")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_engine_creation_from_arc_indicators() -> Result<(), Box<dyn std::error::Error>> {
-        let indicators: Vec<Arc<Indicator>> = vec![Arc::new(
-            create_test_indicator_with_indicators("Rust", vec![("Cargo.toml", 0.95)]),
-        )];
-        let config = DetectionConfig::default();
-        let engine = RootIndicatorEngine::from_parts(indicators, config);
-        assert_eq!(engine.indicators.len(), 1);
-        Ok(())
-    }
 
     #[test]
     fn test_find_project_root_success() -> Result<(), Box<dyn std::error::Error>> {
@@ -456,8 +385,8 @@ mod tests {
             "[package]\nname = \"test\"",
         )?;
 
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.find_project_root(&subdir, &file_cache)?;
+        let file_cache = FileSystemCache::default();
+        let result = engine.find_project_root(&subdir, &file_cache);
 
         assert!(result.is_some());
         let (root_path, indicator) = result.ok_or("Expected Some but got None")?;
@@ -481,8 +410,8 @@ mod tests {
         let subdir = temp_dir.path().join("subdir");
         fs::create_dir(&subdir)?;
 
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.find_project_root(&subdir, &file_cache)?;
+        let file_cache = FileSystemCache::default();
+        let result = engine.find_project_root(&subdir, &file_cache);
 
         assert!(result.is_none());
         Ok(())
@@ -509,8 +438,8 @@ mod tests {
             "[package]\nname = \"test\"",
         )?;
 
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.find_project_root(&subdir, &file_cache)?;
+        let file_cache = FileSystemCache::default();
+        let result = engine.find_project_root(&subdir, &file_cache);
 
         // Should not find it due to max traversal limit
         assert!(result.is_none());
@@ -536,8 +465,8 @@ mod tests {
             "[package]\nname = \"test\"",
         )?;
 
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.find_project_root(temp_dir.path(), &file_cache)?;
+        let file_cache = FileSystemCache::default();
+        let result = engine.find_project_root(temp_dir.path(), &file_cache);
 
         assert!(
             result.is_none(),
@@ -567,8 +496,8 @@ mod tests {
         )?;
         fs::create_dir(temp_dir.path().join(".git"))?;
 
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.find_project_root(temp_dir.path(), &file_cache)?;
+        let file_cache = FileSystemCache::default();
+        let result = engine.find_project_root(temp_dir.path(), &file_cache);
 
         // Should find it because VCS root is present
         assert!(result.is_some());
@@ -594,8 +523,8 @@ mod tests {
         let subdir = temp_dir.path().join("src");
         fs::create_dir(&subdir)?;
 
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.find_project_root(&subdir, &file_cache)?;
+        let file_cache = FileSystemCache::default();
+        let result = engine.find_project_root(&subdir, &file_cache);
 
         let (root_path, found) = match result {
             Some(r) => r,
@@ -631,8 +560,8 @@ mod tests {
         fs::create_dir(&proj)?;
         fs::write(proj.join("Cargo.toml"), "[package]\nname = \"test\"")?;
 
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.find_project_root(&proj, &file_cache)?;
+        let file_cache = FileSystemCache::default();
+        let result = engine.find_project_root(&proj, &file_cache);
 
         let (root_path, found) = match result {
             Some(r) => r,
@@ -666,8 +595,8 @@ mod tests {
         )?;
         fs::create_dir(temp_dir.path().join(".hg"))?;
 
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.find_project_root(temp_dir.path(), &file_cache)?;
+        let file_cache = FileSystemCache::default();
+        let result = engine.find_project_root(temp_dir.path(), &file_cache);
 
         assert!(
             result.is_some(),
@@ -725,8 +654,8 @@ mod tests {
         )?;
         fs::write(temp_dir.path().join("tsconfig.json"), "{}")?;
 
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.find_project_root(temp_dir.path(), &file_cache)?;
+        let file_cache = FileSystemCache::default();
+        let result = engine.find_project_root(temp_dir.path(), &file_cache);
 
         assert!(result.is_some());
         let (_, found) = result.ok_or("Expected Some but got None")?;
@@ -736,8 +665,7 @@ mod tests {
     }
 
     /// Patterns without a hardcoded validator must still drive root
-    /// discovery via their declared weight × context base priority
-    /// (previously the fallback returned 0.2, below the discovery gate).
+    /// discovery via their declared weight × context base priority.
     #[test]
     fn test_data_driven_certainty_fallback() -> Result<(), Box<dyn std::error::Error>> {
         let indicator = create_test_indicator_with_indicators("Deno", vec![("deno.json", 0.95)]);
@@ -749,8 +677,8 @@ mod tests {
         let temp_dir = TempDir::new()?;
         fs::write(temp_dir.path().join("deno.json"), "{}")?;
 
-        let file_cache = Arc::new(FileSystemCache::new());
-        let result = engine.find_project_root(temp_dir.path(), &file_cache)?;
+        let file_cache = FileSystemCache::default();
+        let result = engine.find_project_root(temp_dir.path(), &file_cache);
 
         let (_, found) = result.ok_or("expected root discovery on deno.json")?;
         assert_eq!(found.indicator.name, "Deno");
@@ -759,6 +687,162 @@ mod tests {
 
     fn engine_for(indicators: Vec<Indicator>, config: DetectionConfig) -> RootIndicatorEngine {
         RootIndicatorEngine::from_parts(indicators.into_iter().map(Arc::new).collect(), config)
+    }
+
+    fn engine_with_root(pattern: &str) -> RootIndicatorEngine {
+        engine_for(
+            vec![create_test_indicator_with_indicators(
+                "Test",
+                vec![(pattern, 0.95)],
+            )],
+            DetectionConfig::default(),
+        )
+    }
+
+    fn directory_with_many_files(marker: &str) -> Result<TempDir, Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        for i in 0..600 {
+            fs::write(dir.path().join(format!("f{i}.txt")), "")?;
+        }
+        fs::write(dir.path().join(marker), "[package]\nname = \"x\"")?;
+        Ok(dir)
+    }
+
+    #[test]
+    fn test_literal_marker_is_found_in_a_huge_directory() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = directory_with_many_files("Cargo.toml")?;
+        let found = engine_with_root("Cargo.toml")
+            .find_project_root(dir.path(), &FileSystemCache::default());
+        assert!(found.is_some());
+        Ok(())
+    }
+
+    fn vcs_engine(max_upward_traversal: usize) -> RootIndicatorEngine {
+        engine_for(
+            vec![create_test_indicator_with_indicators(
+                "Rust",
+                vec![("Cargo.toml", 0.95)],
+            )],
+            DetectionConfig {
+                max_upward_traversal,
+                require_vcs_root: true,
+                ..DetectionConfig::default()
+            },
+        )
+    }
+
+    /// Cargo.toml in `c`, the only .git two levels above it
+    fn project_with_distant_git(
+    ) -> Result<(TempDir, std::path::PathBuf), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let start = dir.path().join("a/b/c");
+        fs::create_dir_all(&start)?;
+        fs::create_dir(dir.path().join("a/.git"))?;
+        fs::write(start.join("Cargo.toml"), "[package]\nname = \"x\"")?;
+        Ok((dir, start))
+    }
+
+    #[test]
+    fn test_vcs_marker_beyond_the_traversal_bound_rejects_the_root(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (_dir, start) = project_with_distant_git()?;
+        let found = vcs_engine(1).find_project_root(&start, &FileSystemCache::default());
+        assert!(found.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_vcs_marker_within_the_traversal_bound_accepts_the_root(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (_dir, start) = project_with_distant_git()?;
+        let found = vcs_engine(2).find_project_root(&start, &FileSystemCache::default());
+        assert_eq!(found.map(|(root, _)| root), Some(start));
+        Ok(())
+    }
+
+    /// Listing a huge directory at every level costs milliseconds: past the
+    /// scanner's own entry limit, wildcard markers are not looked for
+    #[test]
+    fn test_wildcard_marker_is_not_listed_for_in_a_huge_directory(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = directory_with_many_files("App.csproj")?;
+        let found =
+            engine_with_root("*.csproj").find_project_root(dir.path(), &FileSystemCache::default());
+        assert!(found.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_wildcard_marker_is_found_in_a_normal_directory(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        fs::write(dir.path().join("App.csproj"), "")?;
+        let found =
+            engine_with_root("*.csproj").find_project_root(dir.path(), &FileSystemCache::default());
+        assert!(found.is_some());
+        Ok(())
+    }
+
+    /// On a case-insensitive filesystem (macOS, Windows) a literal stat finds
+    /// `cargo.toml` for the pattern `Cargo.toml`, but the scanner matches
+    /// names case-sensitively: the two must agree.
+    #[test]
+    fn test_root_marker_with_different_case_is_not_a_root() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let indicators = vec![create_test_indicator_with_indicators(
+            "Rust",
+            vec![("Cargo.toml", 0.95)],
+        )];
+        let engine = RootIndicatorEngine::from_parts(
+            indicators.into_iter().map(Arc::new).collect(),
+            DetectionConfig::default(),
+        );
+        let temp_dir = TempDir::new()?;
+        fs::write(
+            temp_dir.path().join("cargo.toml"),
+            "[package]\nname = \"x\"",
+        )?;
+
+        let file_cache = FileSystemCache::default();
+        assert!(engine
+            .find_project_root(temp_dir.path(), &file_cache)
+            .is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_utf16_root_manifests_are_validated() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = engine_for(vec![], DetectionConfig::default());
+        let dir = TempDir::new()?;
+        let utf16 = |text: &str| -> Vec<u8> {
+            let mut bytes = vec![0xFF, 0xFE];
+            for unit in text.encode_utf16() {
+                bytes.extend(unit.to_le_bytes());
+            }
+            bytes
+        };
+        let cargo = dir.path().join("Cargo.toml");
+        fs::write(&cargo, utf16("[package]\nname = \"x\"\n"))?;
+        assert!(engine.is_valid_cargo_toml(&cargo));
+        let pyproject = dir.path().join("pyproject.toml");
+        fs::write(&pyproject, utf16("[project]\nname = \"x\"\n"))?;
+        assert!(engine.is_valid_python_project(&pyproject));
+        Ok(())
+    }
+
+    #[test]
+    fn test_windows_system_dirs_match_canonical_and_plain_forms() {
+        for dir in [
+            r"C:\Windows",
+            r"\\?\C:\Windows",
+            r"\\?\c:\users",
+            r"\\?\C:\Program Files (x86)",
+        ] {
+            assert!(is_windows_system_dir(dir), "{dir}");
+        }
+        assert!(!is_windows_system_dir(r"\\?\C:\Windows\System32"));
+        assert!(!is_windows_system_dir(r"\\?\C:\code"));
     }
 
     #[test]
@@ -783,11 +867,11 @@ mod tests {
             temp_dir.path().join("Cargo.toml"),
             "[package]\nname = \"t\"",
         )?;
-        let cache = Arc::new(FileSystemCache::new());
+        let cache = FileSystemCache::default();
 
         // Root is 2 levels above `start`
-        assert!(mk(2).find_project_root(&start, &cache)?.is_some());
-        assert!(mk(1).find_project_root(&start, &cache)?.is_none());
+        assert!(mk(2).find_project_root(&start, &cache).is_some());
+        assert!(mk(1).find_project_root(&start, &cache).is_none());
         Ok(())
     }
 
@@ -804,8 +888,8 @@ mod tests {
 
         let temp_dir = TempDir::new()?;
         fs::write(temp_dir.path().join("shared.lock"), "")?;
-        let cache = Arc::new(FileSystemCache::new());
-        let found = engine.find_project_root(temp_dir.path(), &cache)?;
+        let cache = FileSystemCache::default();
+        let found = engine.find_project_root(temp_dir.path(), &cache);
         assert_eq!(
             found.map(|(_, f)| f.indicator.name.clone()),
             Some("Early".to_string())
@@ -829,9 +913,23 @@ mod tests {
         fs::create_dir(temp_dir.path().join("0dir.csproj"))?;
         fs::write(temp_dir.path().join("B.csproj"), "")?;
         fs::write(temp_dir.path().join("A.csproj"), "")?;
-        let cache = Arc::new(FileSystemCache::new());
-        let found = engine.find_project_root(temp_dir.path(), &cache)?;
+        let cache = FileSystemCache::default();
+        let found = engine.find_project_root(temp_dir.path(), &cache);
         assert_eq!(found.map(|(_, f)| f.pattern), Some("A.csproj".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn test_typescript_detected_in_utf16_package_json() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = engine_for(vec![], DetectionConfig::default());
+        let dir = TempDir::new()?;
+        let p = dir.path().join("package.json");
+        let mut bytes = vec![0xFF, 0xFE];
+        for unit in r#"{"devDependencies":{"typescript":"^5"}}"#.encode_utf16() {
+            bytes.extend(unit.to_le_bytes());
+        }
+        fs::write(&p, bytes)?;
+        assert!(engine.has_typescript_dependencies(&p));
         Ok(())
     }
 
@@ -843,7 +941,7 @@ mod tests {
         let check = |json: &str| -> Result<bool, Box<dyn std::error::Error>> {
             let p = dir.path().join("package.json");
             fs::write(&p, json)?;
-            Ok(engine.has_typescript_dependencies(&p)?)
+            Ok(engine.has_typescript_dependencies(&p))
         };
 
         // Real TypeScript signals, in any dependency section

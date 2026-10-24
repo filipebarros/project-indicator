@@ -10,9 +10,28 @@
 mod unix_symlink_tests {
     use project_indicator::config::TemplateGenerator;
     use project_indicator::detection::engine::DetectionEngine;
+    use project_indicator::types::DetectionResult;
     use std::fs;
     use std::os::unix::fs::symlink;
     use tempfile::TempDir;
+
+    /// Detection with the full template at a depth that actually walks into
+    /// links (the default depth 1 never would)
+    fn detect(path: &std::path::Path) -> Result<DetectionResult, Box<dyn std::error::Error>> {
+        let mut config = TemplateGenerator::generate_template(Some("full"))?;
+        config.detection.max_depth = 3;
+        let engine =
+            DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
+        Ok(engine.detect(path)?)
+    }
+
+    fn detected_name(result: &DetectionResult) -> Result<&str, Box<dyn std::error::Error>> {
+        Ok(&result
+            .indicator
+            .as_ref()
+            .ok_or("expected a detected language")?
+            .name)
+    }
 
     #[test]
     fn test_detection_through_simple_symlink() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,17 +57,9 @@ edition = "2021"
         let link_path = temp_dir.path().join("link_to_project");
         symlink(&project_dir, &link_path)?;
 
-        let config = TemplateGenerator::generate_template(Some("full"))?;
+        let result = detect(&link_path)?;
 
-        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
-
-        let result = detector.detect(&link_path)?;
-
-        assert!(result.indicator.is_some());
-        let language = result
-            .indicator
-            .ok_or("Expected Some language but got None")?;
-        assert_eq!(language.name, "Rust");
+        assert_eq!(detected_name(&result)?, "Rust");
 
         Ok(())
     }
@@ -72,18 +83,9 @@ edition = "2021"
         symlink(&link2, &link1)?;
         symlink(&link1, &link2)?;
 
-        // Detection should not crash with circular symlinks
-        let config = TemplateGenerator::generate_template(Some("full"))?;
+        let result = detect(&project_dir)?;
 
-        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
-
-        let result = detector.detect(&project_dir)?;
-
-        assert!(result.indicator.is_some());
-        let language = result
-            .indicator
-            .ok_or("Expected Some language but got None")?;
-        assert_eq!(language.name, "Rust");
+        assert_eq!(detected_name(&result)?, "Rust");
 
         Ok(())
     }
@@ -103,16 +105,9 @@ edition = "2021"
             "[package]\nname = \"test\"\nversion = \"0.1.0\"",
         )?;
 
-        // Detection should handle the self-reference gracefully
-        let config = TemplateGenerator::generate_template(Some("full"))?;
-        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
-        let result = detector.detect(&project_dir)?;
+        let result = detect(&project_dir)?;
 
-        assert!(result.indicator.is_some());
-        let language = result
-            .indicator
-            .ok_or("Expected Some language but got None")?;
-        assert_eq!(language.name, "Rust");
+        assert_eq!(detected_name(&result)?, "Rust");
 
         Ok(())
     }
@@ -131,16 +126,9 @@ edition = "2021"
             "[package]\nname = \"test\"\nversion = \"0.1.0\"",
         )?;
 
-        // Detection should handle broken symlinks gracefully
-        let config = TemplateGenerator::generate_template(Some("full"))?;
-        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
-        let result = detector.detect(&project_dir)?;
+        let result = detect(&project_dir)?;
 
-        assert!(result.indicator.is_some());
-        let language = result
-            .indicator
-            .ok_or("Expected Some language but got None")?;
-        assert_eq!(language.name, "Rust");
+        assert_eq!(detected_name(&result)?, "Rust");
 
         Ok(())
     }
@@ -165,15 +153,9 @@ edition = "2021"
         symlink(&link1, &link2)?;
         symlink(&link2, &link3)?;
 
-        let config = TemplateGenerator::generate_template(Some("full"))?;
-        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
-        let result = detector.detect(&link3)?;
+        let result = detect(&link3)?;
 
-        assert!(result.indicator.is_some());
-        let language = result
-            .indicator
-            .ok_or("Expected Some language but got None")?;
-        assert_eq!(language.name, "Rust");
+        assert_eq!(detected_name(&result)?, "Rust");
 
         Ok(())
     }
@@ -199,17 +181,9 @@ edition = "2021"
         let link_to_file = project_dir.join("link_package.json");
         symlink(&package_json, &link_to_file)?;
 
-        let config = TemplateGenerator::generate_template(Some("full"))?;
-        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
-        let result = detector.detect(&project_dir)?;
+        let result = detect(&project_dir)?;
 
-        assert!(result.indicator.is_some());
-        let language = result
-            .indicator
-            .as_ref()
-            .ok_or("Expected Some language but got None")?;
-        let lang_name = &language.name;
-        assert!(lang_name == "JavaScript" || lang_name == "TypeScript");
+        assert!(["JavaScript", "TypeScript"].contains(&detected_name(&result)?));
 
         Ok(())
     }
@@ -238,15 +212,9 @@ edition = "2021"
         let link_in_vendor = subdir.join("external_link");
         symlink(&external_project, &link_in_vendor)?;
 
-        let config = TemplateGenerator::generate_template(Some("full"))?;
-        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
-        let result = detector.detect(&main_project)?;
+        let result = detect(&main_project)?;
 
-        assert!(result.indicator.is_some());
-        let language = result
-            .indicator
-            .ok_or("Expected Some language but got None")?;
-        assert_eq!(language.name, "Rust");
+        assert_eq!(detected_name(&result)?, "Rust");
 
         Ok(())
     }
@@ -264,27 +232,18 @@ edition = "2021"
 
         for i in 0..50 {
             let link_name = project_dir.join(format!("link_{}", i));
-            // Create circular symlinks
             if i % 2 == 0 {
                 symlink(&project_dir, &link_name)?;
             } else {
-                // Create broken symlinks
                 symlink(format!("/nonexistent/{}", i), &link_name)?;
             }
         }
 
-        let config = TemplateGenerator::generate_template(Some("full"))?;
-        let detector = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
-
         let start = std::time::Instant::now();
-        let result = detector.detect(&project_dir)?;
+        let result = detect(&project_dir)?;
         let elapsed = start.elapsed();
 
-        assert!(result.indicator.is_some());
-        let language = result
-            .indicator
-            .ok_or("Expected Some language but got None")?;
-        assert_eq!(language.name, "Rust");
+        assert_eq!(detected_name(&result)?, "Rust");
         // Should complete in under 5 seconds even with many symlinks
         assert!(
             elapsed.as_secs() < 5,
@@ -293,16 +252,6 @@ edition = "2021"
         );
 
         Ok(())
-    }
-}
-
-#[cfg(not(unix))]
-mod windows_placeholder_tests {
-    #[test]
-    fn symlink_tests_are_unix_only() {
-        // On Windows, we'd need different symlink creation APIs
-        // and administrator privileges. For now, these tests are Unix-only.
-        println!("Symlink tests are Unix-only");
     }
 }
 

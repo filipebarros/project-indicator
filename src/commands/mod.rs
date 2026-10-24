@@ -1,3 +1,16 @@
+/// `println!` that ignores write errors: a prompt may close stdout early
+/// (`| head`), and a broken pipe must not panic.
+macro_rules! outln {
+    () => {{
+        use std::io::Write;
+        let _ = writeln!(std::io::stdout());
+    }};
+    ($($arg:tt)*) => {{
+        use std::io::Write;
+        let _ = writeln!(std::io::stdout(), $($arg)*);
+    }};
+}
+
 pub mod cache;
 pub mod config;
 pub mod detect;

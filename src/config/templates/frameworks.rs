@@ -15,28 +15,14 @@ use super::python::python_frameworks;
 use super::ruby::ruby_frameworks;
 use super::rust::rust_frameworks;
 use super::scala::scala_frameworks;
-use super::shared::{
-    create_angular_framework, create_astro_framework, create_nestjs_framework,
-    create_nextjs_framework, create_react_framework, create_solid_framework,
-    create_svelte_framework, create_vite_framework, create_vue_framework,
-};
+use super::shared::{dependency_framework, root_indicator, with_roots};
 use super::swift::swift_frameworks;
-use crate::types::Framework;
+use crate::types::{Ecosystem, Framework, IndicatorContext};
 
 /// The complete catalog. Each framework appears exactly once — enforced by
 /// `test_framework_catalog_has_no_duplicates`.
 pub fn framework_catalog() -> Vec<Framework> {
-    let mut catalog = vec![
-        create_react_framework(),
-        create_vue_framework(),
-        create_angular_framework(),
-        create_nextjs_framework(),
-        create_astro_framework(),
-        create_nestjs_framework(),
-        create_svelte_framework(),
-        create_solid_framework(),
-        create_vite_framework(),
-    ];
+    let mut catalog = node_frameworks();
 
     catalog.extend(rust_frameworks());
     catalog.extend(go_frameworks());
@@ -56,6 +42,62 @@ pub fn framework_catalog() -> Vec<Framework> {
     catalog
 }
 
+/// Meta-frameworks (Next.js, Astro, NestJS) carry priority 1 and the UI
+/// libraries they build on 2+: the prompt icon shows the more specific one.
+fn node_frameworks() -> Vec<Framework> {
+    let config = |file: &str| root_indicator(file, 0.9, IndicatorContext::FrameworkRoot);
+    let npm = [Ecosystem::Npm];
+    vec![
+        dependency_framework("React", &npm, &["react"], Some("e7ba"), Some("#61dafb"), 2),
+        dependency_framework("Vue", &npm, &["vue"], Some("e8dc"), Some("#4fc08d"), 2),
+        with_roots(
+            dependency_framework(
+                "Angular",
+                &npm,
+                &["@angular/core"],
+                Some("e753"),
+                Some("#dd0031"),
+                2,
+            ),
+            vec![config("angular.json")],
+        ),
+        with_roots(
+            // Neutral gray: the brand black is invisible on dark terminals
+            dependency_framework("Next.js", &npm, &["next"], Some("e83e"), Some("#8b949e"), 1),
+            vec![config("next.config.js"), config("next.config.ts")],
+        ),
+        with_roots(
+            dependency_framework("Astro", &npm, &["astro"], Some("e735"), Some("#ff5d01"), 1),
+            vec![config("astro.config.mjs")],
+        ),
+        with_roots(
+            dependency_framework(
+                "NestJS",
+                &npm,
+                &["@nestjs/core"],
+                Some("e83b"),
+                Some("#e0234e"),
+                1,
+            ),
+            vec![config("nest-cli.json")],
+        ),
+        with_roots(
+            dependency_framework(
+                "Svelte",
+                &npm,
+                &["svelte", "@sveltejs/kit"],
+                None,
+                Some("#ff3e00"),
+                2,
+            ),
+            vec![config("svelte.config.js")],
+        ),
+        dependency_framework("SolidJS", &npm, &["solid-js"], None, Some("#2c4f7c"), 2),
+        // Build tooling: app frameworks (React, Svelte, …) win the display
+        dependency_framework("Vite", &npm, &["vite"], None, Some("#646cff"), 5),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,13 +115,12 @@ mod tests {
     }
 
     #[test]
-    fn test_every_framework_declares_scoping() {
-        // Every catalog entry needs at least one ecosystem, otherwise no
-        // indicator can ever surface it
+    fn test_no_framework_is_invisible_on_a_dark_terminal() {
         for framework in framework_catalog() {
-            assert!(
-                !framework.ecosystems.is_empty(),
-                "{} has no ecosystems",
+            assert_ne!(
+                framework.color.as_deref().map(str::to_lowercase).as_deref(),
+                Some("#000000"),
+                "{} is pure black",
                 framework.name
             );
         }

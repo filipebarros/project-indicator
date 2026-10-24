@@ -1,6 +1,5 @@
 use super::Config;
 use anyhow::{Context, Result};
-use std::fs;
 use std::path::{Path, PathBuf};
 #[derive(Debug)]
 pub enum ConfigError {
@@ -56,35 +55,27 @@ impl ConfigParser {
         first_existing(Self::default_config_paths())
     }
     pub fn load_default() -> Result<Config> {
-        let paths = Self::default_config_paths();
-
-        for path in &paths {
-            if path.exists() {
-                log::debug!("Found config file at: {}", path.display());
-                // Soft fallback: a config that fails to parse (old schema,
-                // typos) must never break a shell prompt. `config validate`
-                // still surfaces the error loudly via load_from_file.
-                match Self::load_from_file(path) {
-                    Ok(config) => return Ok(config),
-                    Err(e) => {
-                        log::warn!(
-                            "Ignoring unparsable config at {} ({}); using built-in template. \
-                             Run 'project-indicator config validate' to see the error, or \
-                             'project-indicator config init --force' to regenerate",
-                            path.display(),
-                            e
-                        );
-                        return Self::load_fallback_config();
-                    }
-                }
-            }
-        }
-
-        Self::load_fallback_config()
+        let Some(path) = Self::active_config_path() else {
+            return Self::load_fallback_config();
+        };
+        log::debug!("Found config file at: {}", path.display());
+        // Soft fallback: a config that fails to parse (old schema, typos)
+        // must never break a shell prompt. `config validate` still surfaces
+        // the error loudly via load_from_file.
+        Self::load_from_file(&path).or_else(|e| {
+            log::warn!(
+                "Ignoring unparsable config at {} ({}); using built-in template. \
+                 Run 'project-indicator config validate' to see the error, or \
+                 'project-indicator config init --force' to regenerate",
+                path.display(),
+                e
+            );
+            Self::load_fallback_config()
+        })
     }
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Config> {
         let path = path.as_ref();
-        let content = fs::read_to_string(path)
+        let content = crate::detection::caches::parsed_file::read_text(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
         Self::parse_toml_content(&content)
@@ -108,7 +99,7 @@ impl ConfigParser {
 
         // Use the full built-in template so all languages and framework
         // detection work out of the box without running `config init`
-        Ok(crate::config::templates::create_full_template().config)
+        crate::config::TemplateGenerator::generate_template(Some("full"))
     }
     pub fn default_save_path() -> Result<PathBuf> {
         if let Some(config_dir) = Self::xdg_config_dir() {
@@ -122,7 +113,7 @@ impl ConfigParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Indicator;
+    use std::fs;
 
     #[test]
     fn test_parse_v3_config() -> Result<(), Box<dyn std::error::Error>> {
@@ -169,38 +160,43 @@ dependencies = ["react"]
     }
 
     #[test]
-    fn test_config_methods() -> Result<(), Box<dyn std::error::Error>> {
-        let config = Config::new(vec![
-            Indicator::new(
-                "High Priority".to_string(),
-                vec!["high.file".to_string()],
-                "#FF0000".to_string(),
-                "🔥".to_string(),
-                1,
-                Vec::new(),
-            ),
-            Indicator::new(
-                "Low Priority".to_string(),
-                vec!["low.file".to_string()],
-                "#0000FF".to_string(),
-                "❄️".to_string(),
-                5,
-                Vec::new(),
-            ),
-        ]);
-
-        assert_eq!(config.indicators.len(), 2);
-        assert_eq!(config.indicators[0].name, "High Priority");
-        assert_eq!(config.indicators[1].name, "Low Priority");
+    fn test_utf16_config_file_loads() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("config.toml");
+        let text = "[meta]\nversion = \"3.0\"\n\n[display]\nshow_frameworks = true\nmax_frameworks = 2\n\n[[indicators]]\nname = \"TypeScript\"\nfiles = [\"package.json\"]\ncolor = \"#3178C6\"\nicon = \"TS\"\npriority = 1\n";
+        let mut bytes = vec![0xFF, 0xFE];
+        for unit in text.encode_utf16() {
+            bytes.extend(unit.to_le_bytes());
+        }
+        std::fs::write(&path, bytes)?;
+        let config = ConfigParser::load_from_file(&path)?;
+        assert_eq!(config.indicators.len(), 1);
         Ok(())
     }
 
     #[test]
-    fn test_invalid_toml() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_bare_meta_section_is_valid() -> Result<(), Box<dyn std::error::Error>> {
+        let config = ConfigParser::parse_toml_content(
+            r##"
+[meta]
+
+[[indicators]]
+name = "Rust"
+files = ["Cargo.toml"]
+color = "#dea584"
+icon = "R"
+priority = 5
+"##,
+        )?;
+        assert_eq!(config.meta.version, "3.0");
+        Ok(())
+    }
+
+    #[test]
+    fn test_invalid_toml() {
         let invalid_toml = "this is not valid toml [[[";
         let result = ConfigParser::parse_toml_content(invalid_toml);
         assert!(result.is_err());
-        Ok(())
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::detection::caches::ParsedFileCache;
 use crate::detection::confidence_scorer::ConfidenceScorer;
-use crate::detection::framework_detector::FrameworkDetector;
+use crate::detection::framework_detector;
 use crate::detection::indicator_resolver::IndicatorResolver;
 use crate::detection::pattern_processor::PatternProcessor;
 use crate::detection::root_indicators::RootIndicatorEngine;
@@ -20,69 +20,43 @@ const ROOT_MATCH_CONFIDENCE_FACTOR: f32 = 0.9;
 /// exists in a real manifest, which identifies the project near-certainly.
 const FRAMEWORK_MATCH_CONFIDENCE_FLOOR: f32 = 0.75;
 
-/// The full-scan indicator score below which its result is considered
-/// ambiguous enough to be overridden by a decisive, content-aware
-/// root-indicator match (see the override in `detect()`). Matches the
-/// low-confidence tier boundary already used by
-/// `IndicatorResolver::resolve_by_confidence_tiers`.
+/// Full-scan scores below this are ambiguous enough for a decisive root
+/// indicator to override them (see `detect()`); the same boundary as the
+/// confident tier in `IndicatorResolver`.
 const ROOT_MATCH_OVERRIDE_AMBIGUITY_CEILING: f32 = 0.5;
 
-/// The root-indicator certainty (from `RootIndicatorEngine`, e.g. a
-/// `has_typescript_dependencies` check on package.json content) required to
-/// override an ambiguous full-scan result. Set above the highest certainty
-/// reachable by the data-driven `weight * context.base_priority()` fallback
-/// for today's shared Node-ecosystem root indicators (lockfiles top out at
-/// 0.8 * 0.9 = 0.72), so only the hardcoded, structurally-validated
-/// certainties in `calculate_indicator_certainty` (Cargo.toml 0.95, go.mod
-/// 0.95, pyproject.toml 0.90, tsconfig.json 0.90, TypeScript-via-devDependency
-/// 0.85) qualify — not a tie between two indicators sharing a generic root
-/// indicator (e.g. both TypeScript and JavaScript declaring package-lock.json).
+/// Root-indicator certainty required to override an ambiguous full-scan
+/// result. Above what the data-driven `weight × base_priority` fallback can
+/// reach for shared Node root indicators (lockfiles top out at 0.72), so only
+/// the structurally validated certainties in `calculate_indicator_certainty`
+/// qualify (Cargo.toml/go.mod 0.95, pyproject/tsconfig 0.90, TypeScript
+/// dependency 0.85) — not a tie over a shared lockfile.
 const ROOT_MATCH_OVERRIDE_CERTAINTY: f32 = 0.8;
 
-/// Main detection engine for identifying project indicators and frameworks.
-///
-/// The DetectionEngine coordinates multiple specialized components to analyze
-/// a project directory and determine its primary indicator and frameworks.
-///
-/// ## Construction
+/// Detects the project type and frameworks of one directory: root discovery,
+/// scan, indicator resolution, confidence, then framework detection.
 ///
 /// ```rust
 /// # use project_indicator::detection::engine::DetectionEngine;
-/// # use project_indicator::types::Indicator;
-/// let indicators = vec![/* ... */];
-/// let engine = DetectionEngine::new(indicators, vec![]);
+/// let engine = DetectionEngine::new(vec![/* indicators */], vec![]);
 /// ```
-///
-/// ## Architecture
-///
-/// - **FileSystemCache / ParsedFileCache**: Per-run caches for file existence and parsed manifests
-/// - **ScanningEngine**: Performs directory traversal and file matching with adaptive performance
-/// - **IndicatorResolver**: Resolves indicator conflicts when multiple indicators detected
-/// - **ConfidenceScorer**: Calculates confidence scores for indicator matches
-/// - **FrameworkDetector**: Identifies frameworks within detected indicators
-/// - **RootIndicatorEngine**: Upward-traversal project-root discovery and boundary-directory checks
-///
 pub struct DetectionEngine {
     indicators: Vec<Arc<Indicator>>,
     frameworks: Arc<Vec<Framework>>,
 
-    file_cache: Arc<FileSystemCache>,
+    file_cache: FileSystemCache,
     parsed_cache: ParsedFileCache,
     confidence_scorer: ConfidenceScorer,
     indicator_resolver: IndicatorResolver,
-    framework_detector: FrameworkDetector,
     scanning_engine: ScanningEngine,
     root_indicator_engine: RootIndicatorEngine,
 }
 
 impl DetectionEngine {
-    /// Creates a new `DetectionEngine` with default configuration.
     pub fn new(indicators: Vec<Indicator>, frameworks: Vec<Framework>) -> Self {
         Self::with_config(indicators, frameworks, DetectionConfig::default())
     }
 
-    /// Creates a new `DetectionEngine` with custom detection configuration.
-    ///
     pub fn with_config(
         indicators: Vec<Indicator>,
         frameworks: Vec<Framework>,
@@ -91,11 +65,10 @@ impl DetectionEngine {
         let indicators: Vec<Arc<Indicator>> = indicators.into_iter().map(Arc::new).collect();
         let frameworks = Arc::new(frameworks);
 
-        let file_cache = Arc::new(FileSystemCache::new());
+        let file_cache = FileSystemCache::default();
         let parsed_cache = ParsedFileCache::new();
         let confidence_scorer = ConfidenceScorer::with_catalog(frameworks.clone());
-        let indicator_resolver = IndicatorResolver::default();
-        let framework_detector = FrameworkDetector::new();
+        let indicator_resolver = IndicatorResolver::with_catalog(frameworks.clone());
 
         // Deduplicated set of every file pattern the indicators reference
         let unique_patterns: Arc<Vec<String>> = Arc::new(
@@ -122,7 +95,6 @@ impl DetectionEngine {
             parsed_cache,
             confidence_scorer,
             indicator_resolver,
-            framework_detector,
             scanning_engine,
             root_indicator_engine,
         }
@@ -131,26 +103,18 @@ impl DetectionEngine {
     pub fn detect(&self, path: &Path) -> Result<DetectionResult> {
         let mut evidence = DetectionEvidence::new();
 
-        // Safety check: Don't scan from boundary directories (home, system dirs)
-        // These are too large and not meaningful to scan
         if self.root_indicator_engine.is_boundary_directory(path) {
-            log::warn!(
+            log::debug!(
                 "Refusing to scan from boundary directory: {}",
                 path.display()
             );
-            return Ok(DetectionResult::new_with_evidence(
-                None,
-                Vec::new(),
-                0.0,
-                evidence,
-            ));
+            return Ok(no_match(evidence));
         }
 
-        // First, try to find the actual project root by walking upward
         let mut root_indicator_match = None;
         let scan_path = if let Some((root_path, root_indicator)) = self
             .root_indicator_engine
-            .find_project_root(path, &self.file_cache)?
+            .find_project_root(path, &self.file_cache)
         {
             log::info!(
                 "Upward traversal: Found project root at {} (started from {}, pattern: {})",
@@ -175,11 +139,13 @@ impl DetectionEngine {
 
         let scan_start = std::time::Instant::now();
 
-        let (detailed_files, scan_truncated) = self
+        let outcome = self
             .scanning_engine
             .scan_with_status(&scan_path)
             .with_context(|| format!("Failed to scan files in path: {}", scan_path.display()))?;
-        evidence.scan_truncated = scan_truncated;
+        let detailed_files = outcome.matches;
+        evidence.scan_truncated = outcome.truncated;
+        evidence.watched_dirs = outcome.watched_dirs;
 
         evidence.set_scan_metrics(
             detailed_files.len(),
@@ -187,12 +153,7 @@ impl DetectionEngine {
         );
 
         if detailed_files.is_empty() {
-            return Ok(DetectionResult::new_with_evidence(
-                None,
-                Vec::new(),
-                0.0,
-                evidence,
-            ));
+            return Ok(no_match(evidence));
         }
 
         let detected_indicator = self
@@ -203,16 +164,8 @@ impl DetectionEngine {
                 &mut evidence,
             );
 
-        let mut indicator = match detected_indicator {
-            Some(indicator) => indicator,
-            None => {
-                return Ok(DetectionResult::new_with_evidence(
-                    None,
-                    Vec::new(),
-                    0.0,
-                    evidence,
-                ));
-            }
+        let Some(mut indicator) = detected_indicator else {
+            return Ok(no_match(evidence));
         };
 
         let mut confidence = self
@@ -258,17 +211,22 @@ impl DetectionEngine {
 
         // Framework detection is not gated on confidence: a framework
         // dependency in a manifest is evidence in its own right
-        let frameworks = self
-            .framework_detector
-            .detect_frameworks_with_evidence(
-                &scan_path,
-                &indicator,
-                &self.frameworks,
-                &mut evidence,
-                &self.file_cache,
-                &self.parsed_cache,
-            )
-            .with_context(|| "Failed to detect frameworks")?;
+        let frameworks = framework_detector::detect_frameworks_with_evidence(
+            &scan_path,
+            &indicator,
+            &self.frameworks,
+            &mut evidence,
+            &self.file_cache,
+            &self.parsed_cache,
+        );
+
+        evidence.read_files = self
+            .parsed_cache
+            .read_paths()
+            .iter()
+            .filter_map(|path| path.strip_prefix(&scan_path).ok())
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .collect();
 
         // The ratio score punishes indicators with many patterns for files
         // they don't have, so a canonical project can read implausibly low.
@@ -293,11 +251,17 @@ impl DetectionEngine {
             ));
         }
 
-        let result =
-            DetectionResult::new_with_evidence(Some(indicator), frameworks, floored, evidence);
-
-        Ok(result)
+        Ok(DetectionResult::new_with_evidence(
+            Some(indicator),
+            frameworks,
+            floored,
+            evidence,
+        ))
     }
+}
+
+fn no_match(evidence: DetectionEvidence) -> DetectionResult {
+    DetectionResult::new_with_evidence(None, Vec::new(), 0.0, evidence)
 }
 
 #[cfg(test)]
@@ -306,27 +270,6 @@ mod tests {
 
     use crate::detection::matchers::test_helpers::helpers::create_test_indicator;
     use crate::test_utils::create_test_rust_project;
-
-    #[test]
-    fn test_detection_engine_creation() -> Result<(), Box<dyn std::error::Error>> {
-        let indicators = vec![create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"])];
-        let engine = DetectionEngine::new(indicators, vec![]);
-
-        assert_eq!(engine.indicators.len(), 1);
-        assert_eq!(engine.indicators[0].name, "Rust");
-        Ok(())
-    }
-
-    #[test]
-    fn test_detection_engine_with_config() -> Result<(), Box<dyn std::error::Error>> {
-        let indicators = vec![create_test_indicator("Rust", vec!["Cargo.toml", "*.rs"])];
-        let config = DetectionConfig::default();
-        let engine = DetectionEngine::with_config(indicators, vec![], config);
-
-        assert_eq!(engine.indicators.len(), 1);
-        // Pattern compilation is handled internally during initialization
-        Ok(())
-    }
 
     #[test]
     fn test_detect_rust_project() -> Result<(), Box<dyn std::error::Error>> {

@@ -7,7 +7,6 @@ use project_indicator::patterns::matches_pattern;
 use project_indicator::performance::FileSystemCache;
 use std::fs;
 use std::hint::black_box;
-use std::sync::Arc;
 use tempfile::TempDir;
 
 /// Pattern matching micro-benchmarks (pure function, no state)
@@ -88,14 +87,14 @@ fn benchmark_cache_hits(c: &mut Criterion) -> Result<(), Box<dyn std::error::Err
     // Warm up cache with all files
     for i in 0..100 {
         let path = temp_dir.path().join(format!("file_{}.txt", i));
-        cache.get_metadata(&path);
+        cache.exists(&path);
     }
 
     group.bench_function("sequential_100_files", |b| {
         b.iter(|| {
             for i in 0..100 {
                 let path = temp_dir.path().join(format!("file_{}.txt", i));
-                black_box(cache.get_metadata(black_box(&path)));
+                black_box(cache.exists(black_box(&path)));
             }
         });
     });
@@ -114,7 +113,7 @@ fn benchmark_cache_misses(c: &mut Criterion) -> Result<(), Box<dyn std::error::E
             let cache = FileSystemCache::default(); // Fresh cache each time
             for i in 0..100 {
                 let path = temp_dir.path().join(format!("file_{}.txt", i));
-                black_box(cache.get_metadata(black_box(&path)));
+                black_box(cache.exists(black_box(&path)));
             }
         });
     });
@@ -134,14 +133,14 @@ fn benchmark_cache_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::
         // Warm up cache
         for i in 0..*count {
             let path = temp_dir.path().join(format!("file_{}.txt", i));
-            cache.get_metadata(&path);
+            cache.exists(&path);
         }
 
         group.bench_with_input(BenchmarkId::from_parameter(count), count, |b, &count| {
             b.iter(|| {
                 for i in 0..count {
                     let path = temp_dir.path().join(format!("file_{}.txt", i));
-                    black_box(cache.get_metadata(black_box(&path)));
+                    black_box(cache.exists(black_box(&path)));
                 }
             });
         });
@@ -149,107 +148,6 @@ fn benchmark_cache_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::
 
     group.finish();
     Ok(())
-}
-
-/// Benchmark concurrent cache access
-fn benchmark_concurrent_access(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
-    use std::thread;
-
-    let temp_dir = create_test_files(100)?;
-    let cache = Arc::new(FileSystemCache::default());
-
-    // Warm up cache
-    for i in 0..100 {
-        let path = temp_dir.path().join(format!("file_{}.txt", i));
-        cache.get_metadata(&path);
-    }
-
-    c.bench_function("concurrent_4_threads_100_files", |b| {
-        b.iter(|| {
-            let mut handles = vec![];
-
-            for _ in 0..4 {
-                let cache = Arc::clone(&cache);
-                let temp_path = temp_dir.path().to_path_buf();
-
-                let handle = thread::spawn(move || {
-                    for i in 0..25 {
-                        let path = temp_path.join(format!("file_{}.txt", i));
-                        black_box(cache.get_metadata(black_box(&path)));
-                    }
-                });
-
-                handles.push(handle);
-            }
-
-            for handle in handles {
-                if let Err(e) = handle.join() {
-                    eprintln!("Thread panicked: {:?}", e);
-                }
-            }
-        });
-    });
-
-    Ok(())
-}
-
-/// Benchmark is_file performance
-fn benchmark_is_file_checks(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
-    let temp_dir = create_test_files(100)?;
-    let cache = FileSystemCache::default();
-
-    // Warm up cache
-    for i in 0..100 {
-        let path = temp_dir.path().join(format!("file_{}.txt", i));
-        cache.is_file(&path);
-    }
-
-    c.bench_function("is_file_100_checks", |b| {
-        b.iter(|| {
-            for i in 0..100 {
-                let path = temp_dir.path().join(format!("file_{}.txt", i));
-                black_box(cache.is_file(black_box(&path)));
-            }
-        });
-    });
-
-    Ok(())
-}
-
-// Wrapper functions for criterion
-fn benchmark_cache_hits_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_cache_hits(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn benchmark_cache_misses_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_cache_misses(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn benchmark_cache_scaling_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_cache_scaling(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn benchmark_concurrent_access_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_concurrent_access(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn benchmark_is_file_checks_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_is_file_checks(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
 }
 
 /// Benchmark JSON parsing with caching
@@ -478,33 +376,26 @@ fn benchmark_parse_failures(c: &mut Criterion) -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-fn benchmark_json_parsing_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_json_parsing(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
+/// Criterion wants `fn(&mut Criterion)`: a failing setup aborts the run
+macro_rules! infallible {
+    ($($wrapper:ident => $bench:ident),+ $(,)?) => {$(
+        fn $wrapper(c: &mut Criterion) {
+            if let Err(e) = $bench(c) {
+                eprintln!("Benchmark failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    )+};
 }
-
-fn benchmark_toml_parsing_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_toml_parsing(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn benchmark_mixed_access_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_mixed_access(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn benchmark_parse_failures_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_parse_failures(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
+infallible!(
+    benchmark_cache_hits_wrapper => benchmark_cache_hits,
+    benchmark_cache_misses_wrapper => benchmark_cache_misses,
+    benchmark_cache_scaling_wrapper => benchmark_cache_scaling,
+    benchmark_json_parsing_wrapper => benchmark_json_parsing,
+    benchmark_toml_parsing_wrapper => benchmark_toml_parsing,
+    benchmark_mixed_access_wrapper => benchmark_mixed_access,
+    benchmark_parse_failures_wrapper => benchmark_parse_failures,
+);
 
 criterion_group!(
     benches,
@@ -512,8 +403,6 @@ criterion_group!(
     benchmark_cache_hits_wrapper,
     benchmark_cache_misses_wrapper,
     benchmark_cache_scaling_wrapper,
-    benchmark_concurrent_access_wrapper,
-    benchmark_is_file_checks_wrapper,
     benchmark_json_parsing_wrapper,
     benchmark_toml_parsing_wrapper,
     benchmark_mixed_access_wrapper,

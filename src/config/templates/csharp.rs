@@ -1,5 +1,5 @@
-use super::shared::{framework, nerd_icon, root_indicator, simple_framework};
-use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
+use super::shared::{dependency_framework, nerd_icon, root_indicator, with_roots};
+use crate::types::{Ecosystem, Framework, Indicator, IndicatorContext};
 
 pub fn create_csharp_indicator() -> Indicator {
     Indicator::with_root_indicators(
@@ -32,32 +32,27 @@ pub fn create_csharp_indicator() -> Indicator {
 
 pub fn csharp_frameworks() -> Vec<Framework> {
     vec![
-        simple_framework(
+        dependency_framework(
             "ASP.NET Core",
-            vec![Ecosystem::Nuget],
-            DetectionType::Dependencies {
-                dependencies: vec![
-                    "Microsoft.AspNetCore".to_string(),
-                    "Microsoft.AspNetCore.App".to_string(),
-                    "Microsoft.AspNetCore.Mvc".to_string(),
-                ],
-            },
-            Some(nerd_icon("e77f")),
+            &[Ecosystem::Nuget],
+            &[
+                "Microsoft.AspNetCore",
+                "Microsoft.AspNetCore.App",
+                "Microsoft.AspNetCore.Mvc",
+            ],
+            Some("e77f"),
             Some("#512bd4"),
             1,
         ),
-        framework(
-            "Xamarin",
-            vec![Ecosystem::Nuget],
-            DetectionType::Dependencies {
-                dependencies: vec![
-                    "Xamarin.Forms".to_string(),
-                    "Xamarin.Essentials".to_string(),
-                ],
-            },
-            Some(nerd_icon("e8e7")),
-            Some("#3498db"),
-            3,
+        with_roots(
+            dependency_framework(
+                "Xamarin",
+                &[Ecosystem::Nuget],
+                &["Xamarin.Forms", "Xamarin.Essentials"],
+                Some("e8e7"),
+                Some("#3498db"),
+                3,
+            ),
             vec![root_indicator(
                 "*.xaml",
                 0.9,

@@ -331,42 +331,6 @@ fn benchmark_cache_effectiveness(c: &mut Criterion) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-// Wrapper functions for criterion
-fn benchmark_monorepo_detection_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_monorepo_detection(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn benchmark_file_count_scaling_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_file_count_scaling(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn benchmark_upward_traversal_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_upward_traversal(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn benchmark_indicator_strength_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_indicator_strength(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn benchmark_cache_effectiveness_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_cache_effectiveness(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
 /// Create a multi-framework Node.js project
 fn create_node_multi_framework_project() -> Result<TempDir, Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
@@ -589,98 +553,27 @@ fn benchmark_framework_count_scaling(c: &mut Criterion) -> Result<(), Box<dyn st
     Ok(())
 }
 
-/// Benchmark detection with different project sizes
-fn benchmark_project_size_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
-    let config = TemplateGenerator::generate_template(Some("full"))
-        .map_err(|e| format!("Failed to generate template: {}", e))?;
-    let engine =
-        DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
-
-    let node_project = create_node_multi_framework_project()?;
-
-    let mut group = c.benchmark_group("project_size_scaling");
-
-    group.bench_function("small_project", |b| {
-        b.iter(|| {
-            if let Err(e) = engine.detect(node_project.path()) {
-                eprintln!("Detection failed: {}", e);
+/// Criterion wants `fn(&mut Criterion)`: a failing setup aborts the run
+macro_rules! infallible {
+    ($($wrapper:ident => $bench:ident),+ $(,)?) => {$(
+        fn $wrapper(c: &mut Criterion) {
+            if let Err(e) = $bench(c) {
+                eprintln!("Benchmark failed: {e}");
+                std::process::exit(1);
             }
-        });
-    });
-
-    group.finish();
-    Ok(())
+        }
+    )+};
 }
-
-/// Benchmark detection performance with different configurations
-fn benchmark_configuration_performance(
-    c: &mut Criterion,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let config = TemplateGenerator::generate_template(Some("full"))
-        .map_err(|e| format!("Failed to generate template: {}", e))?;
-    let engine =
-        DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
-
-    let node_project = create_node_multi_framework_project()?;
-    let rust_project = create_rust_multi_framework_project()?;
-
-    let mut group = c.benchmark_group("configuration_performance");
-
-    group.bench_function("full_config", |b| {
-        b.iter(|| {
-            if let Err(e) = engine.detect(node_project.path()) {
-                eprintln!("Detection failed: {}", e);
-            }
-        });
-    });
-
-    group.bench_function("rust_full_config", |b| {
-        b.iter(|| {
-            if let Err(e) = engine.detect(rust_project.path()) {
-                eprintln!("Detection failed: {}", e);
-            }
-        });
-    });
-
-    group.finish();
-    Ok(())
-}
-
-// Wrapper functions for criterion
-fn benchmark_single_language_detection_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_single_language_detection(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn benchmark_polyglot_detection_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_polyglot_detection(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn benchmark_framework_count_scaling_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_framework_count_scaling(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn benchmark_project_size_scaling_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_project_size_scaling(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn benchmark_configuration_performance_wrapper(c: &mut Criterion) {
-    if let Err(e) = benchmark_configuration_performance(c) {
-        eprintln!("Benchmark failed: {}", e);
-        std::process::exit(1);
-    }
-}
+infallible!(
+    benchmark_monorepo_detection_wrapper => benchmark_monorepo_detection,
+    benchmark_file_count_scaling_wrapper => benchmark_file_count_scaling,
+    benchmark_upward_traversal_wrapper => benchmark_upward_traversal,
+    benchmark_indicator_strength_wrapper => benchmark_indicator_strength,
+    benchmark_cache_effectiveness_wrapper => benchmark_cache_effectiveness,
+    benchmark_single_language_detection_wrapper => benchmark_single_language_detection,
+    benchmark_polyglot_detection_wrapper => benchmark_polyglot_detection,
+    benchmark_framework_count_scaling_wrapper => benchmark_framework_count_scaling,
+);
 
 criterion_group!(
     benches,
@@ -692,7 +585,5 @@ criterion_group!(
     benchmark_single_language_detection_wrapper,
     benchmark_polyglot_detection_wrapper,
     benchmark_framework_count_scaling_wrapper,
-    benchmark_project_size_scaling_wrapper,
-    benchmark_configuration_performance_wrapper
 );
 criterion_main!(benches);

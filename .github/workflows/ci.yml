@@ -101,6 +101,13 @@ jobs:
     - name: Run tests
       run: cargo test --verbose --all-features
 
+    # Uses the debug binary `cargo test` just built
+    - name: Shell integration smoke test
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y zsh fish
+        bash shell-integration/test-integrations.sh
+
     - name: Run benchmarks (dry run)
       run: cargo bench --no-run
 

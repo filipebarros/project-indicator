@@ -1,4 +1,4 @@
-use super::shared::root_indicator;
+use super::shared::{nerd_icon, root_indicator};
 use crate::types::{Indicator, IndicatorContext};
 
 pub fn create_v_indicator() -> Indicator {
@@ -7,8 +7,8 @@ pub fn create_v_indicator() -> Indicator {
         // *.v is also Verilog/Coq's extension — an accepted collision, since
         // neither is in the catalog; v.mod is the decisive signal
         vec!["v.mod".to_string(), "*.v".to_string(), "*.vsh".to_string()],
-        "#5d87bf".to_string(),
-        "V".to_string(),
+        "#5D87BF".to_string(),
+        nerd_icon("e62b"),
         7,
         vec![],
         vec![root_indicator(

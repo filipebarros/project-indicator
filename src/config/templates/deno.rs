@@ -1,5 +1,5 @@
-use super::shared::{root_indicator, root_indicator_grouped, simple_framework};
-use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
+use super::shared::{dependency_framework, root_indicator, root_indicator_grouped};
+use crate::types::{Ecosystem, Framework, Indicator, IndicatorContext};
 
 pub fn create_deno_indicator() -> Indicator {
     Indicator::with_root_indicators(
@@ -43,33 +43,27 @@ pub fn deno_frameworks() -> Vec<Framework> {
     vec![
         // Fresh 1 imports via the `$fresh/` alias, Fresh 2 via
         // `jsr:@fresh/core`; both are imports-map entries
-        simple_framework(
+        dependency_framework(
             "Fresh",
-            vec![Ecosystem::Deno],
-            DetectionType::Dependencies {
-                dependencies: vec!["fresh".to_string(), "@fresh/core".to_string()],
-            },
+            &[Ecosystem::Deno],
+            &["fresh", "@fresh/core"],
             None,
             Some("#FFDB1E"),
             1,
         ),
-        simple_framework(
+        dependency_framework(
             "Oak",
-            vec![Ecosystem::Deno],
-            DetectionType::Dependencies {
-                dependencies: vec!["oak".to_string()],
-            },
+            &[Ecosystem::Deno],
+            &["oak"],
             None,
             Some("#6B8E23"),
             2,
         ),
         // Hono runs on Deno and Node alike; both ecosystems surface it
-        simple_framework(
+        dependency_framework(
             "Hono",
-            vec![Ecosystem::Deno, Ecosystem::Npm],
-            DetectionType::Dependencies {
-                dependencies: vec!["hono".to_string()],
-            },
+            &[Ecosystem::Deno, Ecosystem::Npm],
+            &["hono"],
             None,
             Some("#E36002"),
             2,

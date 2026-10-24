@@ -1,0 +1,3 @@
+name: demo
+dependencies:
+  http: ^1.0.0

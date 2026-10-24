@@ -1,11 +1,11 @@
 use super::shared::{
-    framework, nerd_icon, root_indicator, root_indicator_grouped, simple_framework,
+    dependency_framework, nerd_icon, root_indicator, root_indicator_grouped, with_roots,
 };
 use crate::constants::{
     PIPFILE, POETRY_LOCK, PYPROJECT_TOML, PYTHON_INTERFACE_EXTENSION, PYTHON_WINDOWS_EXTENSION,
     PY_EXTENSION, REQUIREMENTS_TXT, SETUP_PY,
 };
-use crate::types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext};
+use crate::types::{Ecosystem, Framework, Indicator, IndicatorContext};
 
 pub fn create_python_indicator() -> Indicator {
     Indicator::with_root_indicators(
@@ -57,67 +57,57 @@ pub fn create_python_indicator() -> Indicator {
 
 pub fn python_frameworks() -> Vec<Framework> {
     vec![
-        framework(
-            "Django",
-            vec![Ecosystem::Pypi],
-            DetectionType::Dependencies {
-                dependencies: vec!["django".to_string()],
-            },
-            Some(nerd_icon("e71d")),
-            Some("#092e20"),
-            1,
+        with_roots(
+            dependency_framework(
+                "Django",
+                &[Ecosystem::Pypi],
+                &["django"],
+                Some("e71d"),
+                Some("#092e20"),
+                1,
+            ),
             vec![root_indicator(
                 "manage.py",
                 0.9,
                 IndicatorContext::FrameworkRoot,
             )],
         ),
-        simple_framework(
+        dependency_framework(
             "Flask",
-            vec![Ecosystem::Pypi],
-            DetectionType::Dependencies {
-                dependencies: vec!["flask".to_string()],
-            },
-            Some(nerd_icon("e7dc")),
-            Some("#000000"),
+            &[Ecosystem::Pypi],
+            &["flask"],
+            Some("e7dc"),
+            Some("#8b949e"),
             2,
         ),
-        simple_framework(
+        dependency_framework(
             "FastAPI",
-            vec![Ecosystem::Pypi],
-            DetectionType::Dependencies {
-                dependencies: vec!["fastapi".to_string()],
-            },
-            Some(nerd_icon("e7d5")),
+            &[Ecosystem::Pypi],
+            &["fastapi"],
+            Some("e7d5"),
             Some("#009688"),
             3,
         ),
-        simple_framework(
+        dependency_framework(
             "Tornado",
-            vec![Ecosystem::Pypi],
-            DetectionType::Dependencies {
-                dependencies: vec!["tornado".to_string()],
-            },
+            &[Ecosystem::Pypi],
+            &["tornado"],
             None,
             Some("#3bb9ff"),
             4,
         ),
-        simple_framework(
+        dependency_framework(
             "Pyramid",
-            vec![Ecosystem::Pypi],
-            DetectionType::Dependencies {
-                dependencies: vec!["pyramid".to_string()],
-            },
+            &[Ecosystem::Pypi],
+            &["pyramid"],
             None,
             Some("#ff0000"),
             5,
         ),
-        simple_framework(
+        dependency_framework(
             "Sanic",
-            vec![Ecosystem::Pypi],
-            DetectionType::Dependencies {
-                dependencies: vec!["sanic".to_string()],
-            },
+            &[Ecosystem::Pypi],
+            &["sanic"],
             None,
             Some("#ff8c00"),
             6,
