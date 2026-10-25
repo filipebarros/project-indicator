@@ -129,7 +129,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install cargo-audit
-      uses: taiki-e/install-action@v2.87.28
+      uses: taiki-e/install-action@v2.87.30
       with:
         tool: cargo-audit
 
@@ -161,7 +161,7 @@ jobs:
         key: ${{ runner.os }}-cargo-stable-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Install hyperfine
-      uses: taiki-e/install-action@v2.87.28
+      uses: taiki-e/install-action@v2.87.30
       with:
         tool: hyperfine
 
