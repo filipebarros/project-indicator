@@ -4,61 +4,58 @@ use crate::types::{DetectionType, Ecosystem, Framework, FrameworkMatch};
 use crate::Result;
 use std::path::Path;
 
-pub struct DependencyMatcher;
-
-impl DependencyMatcher {
-    pub fn detect_frameworks<'a>(
-        path: &Path,
-        frameworks: impl IntoIterator<Item = &'a Framework>,
-        active_ecosystems: &[Ecosystem],
-        parsed_cache: &ParsedFileCache,
-    ) -> Vec<FrameworkMatch> {
-        frameworks
-            .into_iter()
-            .filter_map(|framework| {
-                Self::try_detect_framework(path, framework, active_ecosystems, parsed_cache)
-                    .unwrap_or_else(|e| {
-                        // An unreadable manifest must not break the prompt
-                        log::debug!("{}: skipped ({e:#})", framework.name);
-                        None
-                    })
-            })
-            .collect()
-    }
-
-    /// Run the matcher for each of the framework's ecosystems that is also
-    /// active for the detected indicator, until one produces a hit.
-    fn try_detect_framework(
-        path: &Path,
-        framework: &Framework,
-        active_ecosystems: &[Ecosystem],
-        parsed_cache: &ParsedFileCache,
-    ) -> Result<Option<FrameworkMatch>> {
-        let DetectionType::Dependencies { dependencies } = &framework.detection else {
-            return Ok(None);
-        };
-
-        for ecosystem in &framework.ecosystems {
-            if !active_ecosystems.contains(ecosystem) {
-                continue;
-            }
-
-            if let Some(file) = check_ecosystem(*ecosystem, path, dependencies, parsed_cache)? {
-                // The dependency list is a set of alternatives (react OR
-                // react-dom), so any hit is a full match
-                return Ok(Some(FrameworkMatch::new(
-                    framework.clone(),
-                    1.0,
-                    vec![file],
-                )));
-            }
-        }
-
-        Ok(None)
-    }
+pub fn detect_frameworks<'a>(
+    path: &Path,
+    frameworks: impl IntoIterator<Item = &'a Framework>,
+    active_ecosystems: &[Ecosystem],
+    parsed_cache: &ParsedFileCache,
+) -> Vec<FrameworkMatch> {
+    frameworks
+        .into_iter()
+        .filter_map(|framework| {
+            try_detect_framework(path, framework, active_ecosystems, parsed_cache).unwrap_or_else(
+                |e| {
+                    // An unreadable manifest must not break the prompt
+                    log::debug!("{}: skipped ({e:#})", framework.name);
+                    None
+                },
+            )
+        })
+        .collect()
 }
 
-pub fn check_ecosystem(
+/// Run the matcher for each of the framework's ecosystems that is also
+/// active for the detected indicator, until one produces a hit.
+fn try_detect_framework(
+    path: &Path,
+    framework: &Framework,
+    active_ecosystems: &[Ecosystem],
+    parsed_cache: &ParsedFileCache,
+) -> Result<Option<FrameworkMatch>> {
+    let DetectionType::Dependencies(dependencies) = &framework.detection else {
+        return Ok(None);
+    };
+
+    for ecosystem in &framework.ecosystems {
+        if !active_ecosystems.contains(ecosystem) {
+            continue;
+        }
+
+        if let Some(file) = check_ecosystem(*ecosystem, path, dependencies, parsed_cache)? {
+            // The dependency list is a set of alternatives (react OR
+            // react-dom), so any hit is a full match
+            return Ok(Some(FrameworkMatch::new(
+                framework.clone(),
+                1.0,
+                vec![file],
+            )));
+        }
+    }
+
+    Ok(None)
+}
+
+fn check_ecosystem(
     ecosystem: Ecosystem,
     path: &Path,
     dependencies: &[String],
@@ -66,7 +63,6 @@ pub fn check_ecosystem(
 ) -> Result<Option<String>> {
     match ecosystem {
         Ecosystem::Npm => check_node_ecosystem(path, dependencies, parsed_cache),
-        Ecosystem::Deno => check_deno_ecosystem(path, dependencies, parsed_cache),
         Ecosystem::Pypi => check_python_ecosystem(path, dependencies, parsed_cache),
         Ecosystem::Cargo => check_rust_ecosystem(path, dependencies, parsed_cache),
         Ecosystem::Go => check_go_ecosystem(path, dependencies, parsed_cache),
@@ -116,13 +112,12 @@ mod tests {
         Framework {
             name: name.to_string(),
             ecosystems: vec![ecosystem],
-            detection: DetectionType::Dependencies {
-                dependencies: dependencies.iter().map(|d| d.to_string()).collect(),
-            },
+            detection: DetectionType::Dependencies(
+                dependencies.iter().map(|d| d.to_string()).collect(),
+            ),
             icon: None,
             color: None,
             priority: 1,
-            root_indicators: vec![],
         }
     }
 
@@ -135,7 +130,7 @@ mod tests {
         for (name, content) in files {
             fs::write(dir.path().join(name), content)?;
         }
-        Ok(DependencyMatcher::detect_frameworks(
+        Ok(detect_frameworks(
             dir.path(),
             frameworks,
             active,

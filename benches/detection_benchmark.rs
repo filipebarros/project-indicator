@@ -3,7 +3,7 @@
 //! strength, per-run cache effectiveness, framework/language scenarios).
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use project_indicator::config::TemplateGenerator;
+use project_indicator::config::built_in_config;
 use project_indicator::detection::engine::DetectionEngine;
 use std::fs;
 use std::hint::black_box;
@@ -138,8 +138,7 @@ fn benchmark_monorepo_detection(c: &mut Criterion) -> Result<(), Box<dyn std::er
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
     let project_paths = setup_monorepo(&temp_dir)?;
 
-    let config = TemplateGenerator::generate_template(Some("full"))
-        .map_err(|e| format!("Failed to generate template: {}", e))?;
+    let config = built_in_config();
     let engine = DetectionEngine::new(config.indicators, config.frameworks);
 
     for (idx, path) in project_paths.iter().enumerate() {
@@ -167,8 +166,7 @@ fn benchmark_file_count_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::er
         let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
         let project_path = setup_large_project(&temp_dir, *file_count)?;
 
-        let config = TemplateGenerator::generate_template(Some("full"))
-            .map_err(|e| format!("Failed to generate template: {}", e))?;
+        let config = built_in_config();
         let engine = DetectionEngine::new(config.indicators, config.frameworks);
 
         group.bench_with_input(BenchmarkId::new("files", file_count), file_count, |b, _| {
@@ -191,8 +189,7 @@ fn benchmark_upward_traversal(c: &mut Criterion) -> Result<(), Box<dyn std::erro
         let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
         let deepest_path = setup_deep_nested_project(&temp_dir, *depth)?;
 
-        let config = TemplateGenerator::generate_template(Some("full"))
-            .map_err(|e| format!("Failed to generate template: {}", e))?;
+        let config = built_in_config();
         let engine = DetectionEngine::new(config.indicators, config.frameworks);
 
         group.bench_with_input(BenchmarkId::new("depth", depth), depth, |b, _| {
@@ -234,8 +231,7 @@ fn benchmark_indicator_strength(c: &mut Criterion) -> Result<(), Box<dyn std::er
         .map_err(|e| format!("Failed to write file: {}", e))?;
     }
 
-    let config = TemplateGenerator::generate_template(Some("full"))
-        .map_err(|e| format!("Failed to generate template: {}", e))?;
+    let config = built_in_config();
     let engine = DetectionEngine::new(config.indicators, config.frameworks);
 
     group.bench_function("strong_indicators", |b| {
@@ -283,8 +279,7 @@ fn benchmark_cache_effectiveness(c: &mut Criterion) -> Result<(), Box<dyn std::e
     )
     .map_err(|e| format!("Failed to write Cargo.toml: {}", e))?;
 
-    let config = TemplateGenerator::generate_template(Some("full"))
-        .map_err(|e| format!("Failed to generate template: {}", e))?;
+    let config = built_in_config();
     let engine = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
 
     // Fresh engine per iteration (setup excluded): what one CLI run pays
@@ -416,8 +411,7 @@ fn create_polyglot_project() -> Result<TempDir, Box<dyn std::error::Error>> {
 fn benchmark_single_language_detection(
     c: &mut Criterion,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = TemplateGenerator::generate_template(Some("full"))
-        .map_err(|e| format!("Failed to generate template: {}", e))?;
+    let config = built_in_config();
     let engine =
         DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
 
@@ -456,8 +450,7 @@ fn benchmark_single_language_detection(
 }
 
 fn benchmark_polyglot_detection(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
-    let config = TemplateGenerator::generate_template(Some("full"))
-        .map_err(|e| format!("Failed to generate template: {}", e))?;
+    let config = built_in_config();
     let engine =
         DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
 
@@ -475,8 +468,7 @@ fn benchmark_polyglot_detection(c: &mut Criterion) -> Result<(), Box<dyn std::er
 }
 
 fn benchmark_framework_count_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
-    let config = TemplateGenerator::generate_template(Some("full"))
-        .map_err(|e| format!("Failed to generate template: {}", e))?;
+    let config = built_in_config();
     let engine =
         DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
 

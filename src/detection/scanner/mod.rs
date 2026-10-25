@@ -4,8 +4,6 @@
 //! subdirectory exhausts it.
 
 pub mod scanning_engine;
-pub mod timeout_manager;
 pub mod traverser;
 
 pub use scanning_engine::{ScanOutcome, ScanningEngine};
-pub use timeout_manager::TimeoutManager;

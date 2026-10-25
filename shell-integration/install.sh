@@ -1,8 +1,8 @@
 #!/bin/bash
 # Project Indicator shell integration installer.
 #
-# The hooks are ~15 lines each; this script just puts the right one in the
-# right place. Caching is handled by the binary itself.
+# The hooks are short; this script just puts the right one in the right
+# place. Caching is handled by the binary itself.
 
 set -euo pipefail
 
@@ -37,7 +37,7 @@ zsh)
     line="source \"$SCRIPT_DIR/project-indicator.zsh\""
     if ! grep -qF "$line" "$HOME/.zshrc" 2>/dev/null; then
         printf '\n# Project Indicator prompt hook\n%s\n' "$line" >>"$HOME/.zshrc"
-        echo "✓ Added source line to ~/.zshrc"
+        echo "✓ Added source line to ~/.zshrc (it points at this checkout: keep it in place)"
     else
         echo "ℹ ~/.zshrc already sources the hook"
     fi
@@ -46,7 +46,7 @@ bash)
     line="source \"$SCRIPT_DIR/project-indicator.bash\""
     if ! grep -qF "$line" "$HOME/.bashrc" 2>/dev/null; then
         printf '\n# Project Indicator prompt hook\n%s\n' "$line" >>"$HOME/.bashrc"
-        echo "✓ Added source line to ~/.bashrc"
+        echo "✓ Added source line to ~/.bashrc (it points at this checkout: keep it in place)"
     else
         echo "ℹ ~/.bashrc already sources the hook"
     fi

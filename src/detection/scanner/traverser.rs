@@ -5,18 +5,42 @@
 //! project configuration (`.eslintrc`, `.babelrc`).
 
 use ignore::WalkBuilder;
+use std::fs;
 use std::path::Path;
 
-/// A name-sorted walker over `path`, at most `max_depth` levels deep
-pub fn build_walker(path: &Path, max_depth: usize) -> WalkBuilder {
+/// Ignore files larger than this are not trusted to the walker
+const MAX_IGNORE_FILE_BYTES: u64 = 1_048_576;
+
+/// The root's ignore files are safe to hand to the walker: absent, or small
+/// regular files. A repository can plant a FIFO (reading blocks forever) or a
+/// symlink to /dev/zero (reading never ends) under these names. The walk
+/// never descends below the root, so these are the only ignore files ever
+/// read.
+fn root_ignore_files_are_safe(root: &Path) -> bool {
+    [".gitignore", ".ignore", ".git/info/exclude"]
+        .iter()
+        .all(|name| match fs::metadata(root.join(name)) {
+            Ok(meta) => meta.is_file() && meta.len() <= MAX_IGNORE_FILE_BYTES,
+            Err(_) => true,
+        })
+}
+
+/// A name-sorted walker over `path`'s immediate entries (the walk never
+/// descends below the root)
+pub fn build_walker(path: &Path) -> WalkBuilder {
     let mut builder = WalkBuilder::new(path);
+    let ignores_safe = root_ignore_files_are_safe(path);
     builder
-        .max_depth(Some(max_depth))
-        // .gitignore, .ignore and git/info/exclude of the scan root
+        .max_depth(Some(1))
+        // .gitignore, .ignore and git/info/exclude of the scan root, unless
+        // one of them is not a plain small file
         .standard_filters(true)
-        // Trade-off: for a sub-package scanned on its own (monorepo),
-        // entries ignored only by the repo-root .gitignore (node_modules)
-        // are walked when max_depth > 1 and count toward the match cap
+        .git_ignore(ignores_safe)
+        .ignore(ignores_safe)
+        .git_exclude(ignores_safe)
+        // For a sub-package scanned on its own (monorepo), an ancestor
+        // .gitignore is machine-dependent context and must not hide the
+        // sub-package's own root files
         .parents(false)
         // Detection must be deterministic across machines: the invoking
         // user's global git ignore (e.g. gitignore.io's Go template ignores

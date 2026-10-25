@@ -2,14 +2,14 @@
 
 #![cfg(unix)]
 
-use std::process::{Command, Output};
+mod common;
+
+use std::process::Output;
 use tempfile::TempDir;
 
 fn edit_with(editor: &str, home: &TempDir) -> Result<Output, std::io::Error> {
-    Command::new(env!("CARGO_BIN_EXE_project-indicator"))
+    common::cli(home.path())
         .args(["config", "edit"])
-        .env("HOME", home.path())
-        .env("XDG_CONFIG_HOME", home.path().join("xdg-config"))
         .env("EDITOR", editor)
         .output()
 }

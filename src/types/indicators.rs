@@ -6,26 +6,16 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum IndicatorContext {
-    VersionControl,
     #[default]
     LanguageRoot,
-    RuntimeRoot,
-    ToolchainRoot,
-    FrameworkRoot,
     BuildSystem,
-    Configuration,
 }
 
 impl IndicatorContext {
     pub fn base_priority(&self) -> f32 {
         match self {
-            IndicatorContext::VersionControl => 1.0,
             IndicatorContext::LanguageRoot => 0.9,
-            IndicatorContext::RuntimeRoot => 0.85,
-            IndicatorContext::FrameworkRoot => 0.8,
             IndicatorContext::BuildSystem => 0.7,
-            IndicatorContext::ToolchainRoot => 0.65,
-            IndicatorContext::Configuration => 0.6,
         }
     }
 }
@@ -47,6 +37,8 @@ pub struct RootIndicator {
     pub alternative_group: Option<String>,
 }
 
+/// Tie-breaks between indicators follow config order: the earlier
+/// `[[indicators]]` row (or `language_indicators()` row) wins.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Indicator {
@@ -54,7 +46,6 @@ pub struct Indicator {
     pub files: Vec<String>,
     pub color: String,
     pub icon: String,
-    pub priority: u8,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ecosystems: Vec<Ecosystem>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -67,10 +58,9 @@ impl Indicator {
         files: Vec<String>,
         color: String,
         icon: String,
-        priority: u8,
         ecosystems: Vec<Ecosystem>,
     ) -> Self {
-        Self::with_root_indicators(name, files, color, icon, priority, ecosystems, Vec::new())
+        Self::with_root_indicators(name, files, color, icon, ecosystems, Vec::new())
     }
 
     pub fn with_root_indicators(
@@ -78,7 +68,6 @@ impl Indicator {
         files: Vec<String>,
         color: String,
         icon: String,
-        priority: u8,
         ecosystems: Vec<Ecosystem>,
         root_indicators: Vec<RootIndicator>,
     ) -> Self {
@@ -87,7 +76,6 @@ impl Indicator {
             files,
             color,
             icon,
-            priority,
             ecosystems,
             root_indicators,
         }

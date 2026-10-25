@@ -3,16 +3,19 @@
 
 use crate::constants::DOT_GIT;
 
+// ponytail: three weight tiers, not a nine-class taxonomy — the weights only
+// shape the markerless ratio for probed source paths; bring finer classes
+// back only if real folders rank wrongly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirectoryType {
+    /// A depth-0 file (no directory component)
     Root,
+    /// Source directories (src, lib, app, …)
     Source,
-    Config,
-    Test,
-    Build,
-    Dependencies,
-    Documentation,
-    Examples,
+    /// Tests, build output, dependencies, docs, examples: present in every
+    /// repo whatever the language, so nearly no identifying signal
+    Noise,
+    /// Any other directory
     Unknown,
 }
 
@@ -21,12 +24,7 @@ impl DirectoryType {
         match self {
             DirectoryType::Root => 1.0,
             DirectoryType::Source => 1.2,
-            DirectoryType::Config => 1.1,
-            DirectoryType::Test => 0.2,
-            DirectoryType::Build => 0.1,
-            DirectoryType::Dependencies => 0.05,
-            DirectoryType::Documentation => 0.6,
-            DirectoryType::Examples => 0.3,
+            DirectoryType::Noise => 0.1,
             DirectoryType::Unknown => 0.8,
         }
     }
@@ -34,25 +32,13 @@ impl DirectoryType {
         match path_component.to_lowercase().as_str() {
             "src" | "lib" | "app" | "source" | "code" => DirectoryType::Source,
 
+            // NOTE: "packages" is NOT noise — it is THE standard pnpm/yarn
+            // monorepo layout, and the subproject scan skips noise dirs
             "test" | "tests" | "spec" | "specs" | "__tests__" | "fixtures" | "test-fixtures"
-            | "__test__" | "__spec__" | "testing" => DirectoryType::Test,
-
-            "dist" | "build" | "target" | "out" | "output" | "bin" | "release" | "debug" => {
-                DirectoryType::Build
-            }
-
-            "node_modules" | "vendor" | DOT_GIT | "packages" | "deps" => {
-                DirectoryType::Dependencies
-            }
-
-            "docs" | "doc" | "documentation" | "manual" | "guide" => DirectoryType::Documentation,
-
-            "examples" | "example" | "samples" | "sample" | "demo" | "demos" => {
-                DirectoryType::Examples
-            }
-
-            ".github" | ".vscode" | ".idea" | "config" | "configuration" | "configs"
-            | "settings" | ".config" => DirectoryType::Config,
+            | "__test__" | "__spec__" | "testing" | "dist" | "build" | "target" | "out"
+            | "output" | "bin" | "release" | "debug" | "node_modules" | "vendor" | DOT_GIT
+            | "deps" | "docs" | "doc" | "documentation" | "manual" | "guide" | "examples"
+            | "example" | "samples" | "sample" | "demo" | "demos" => DirectoryType::Noise,
 
             _ => DirectoryType::Unknown,
         }

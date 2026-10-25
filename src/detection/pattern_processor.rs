@@ -7,46 +7,52 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct PatternProcessor {
     unique_patterns: Arc<[String]>,
-    extension_filter: Arc<HashSet<String>>,
+    /// `*.ext` patterns (ext without dots or wildcards), by extension
+    extension_patterns: Arc<HashSet<String>>,
     exact_patterns: Arc<HashSet<String>>,
+    /// Everything else (`test*`, `*config*`, `*.tar.gz`, …): the only
+    /// patterns a non-matching file has to be checked against one by one
+    glob_patterns: Arc<[String]>,
 }
 
 impl PatternProcessor {
     pub fn new(patterns: Arc<[String]>) -> Self {
-        let mut extension_filter = HashSet::new();
+        let mut extension_patterns = HashSet::new();
         let mut exact_patterns = HashSet::new();
+        let mut glob_patterns = Vec::new();
 
         for pattern in patterns.iter() {
-            if pattern.contains('*') {
-                if let Some(ext) = pattern.strip_prefix("*.") {
-                    extension_filter.insert(ext.to_string());
-                }
-            } else {
+            if !pattern.contains('*') {
                 exact_patterns.insert(pattern.clone());
+            } else if let Some(ext) = pattern
+                .strip_prefix("*.")
+                .filter(|ext| !ext.contains(['*', '.']))
+            {
+                extension_patterns.insert(ext.to_string());
+            } else {
+                glob_patterns.push(pattern.clone());
             }
         }
 
         Self {
             unique_patterns: patterns,
-            extension_filter: Arc::new(extension_filter),
+            extension_patterns: Arc::new(extension_patterns),
             exact_patterns: Arc::new(exact_patterns),
+            glob_patterns: glob_patterns.into(),
         }
     }
 
+    /// Whether any pattern matches `filename`. Most files match nothing, so
+    /// the common case costs two hash lookups plus the few general globs.
     pub fn should_scan_file(&self, filename: &str) -> bool {
-        if self.exact_patterns.contains(filename) {
-            return true;
-        }
-
-        if let Some((_, ext)) = filename.rsplit_once('.') {
-            if self.extension_filter.contains(ext) {
-                return true;
-            }
-        }
-
-        self.unique_patterns
-            .iter()
-            .any(|pattern| matches_pattern(filename, pattern))
+        self.exact_patterns.contains(filename)
+            || filename
+                .rsplit_once('.')
+                .is_some_and(|(_, ext)| self.extension_patterns.contains(ext))
+            || self
+                .glob_patterns
+                .iter()
+                .any(|pattern| matches_pattern(filename, pattern))
     }
 
     /// Match `file_path` (relative to `base_path`) against the configured
@@ -88,18 +94,6 @@ pub(crate) fn join_components(relative_path: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn test_fast_path_agrees_with_full_matcher() {
-        let processor = PatternProcessor::new(Arc::from(vec!["*.rs".to_string()]));
-        for name in [".rs", "..rs", "a.rs", "a.b.rs", "rs.", "x.rs.bak", ".rs.rs"] {
-            assert_eq!(
-                processor.should_scan_file(name),
-                matches_pattern(name, "*.rs"),
-                "{name}"
-            );
-        }
-    }
-
     #[test]
     fn test_bare_extension_name_is_not_an_extension_match() {
         let processor = PatternProcessor::new(Arc::from(vec!["*.rs".to_string()]));

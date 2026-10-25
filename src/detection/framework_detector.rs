@@ -1,5 +1,5 @@
 use crate::detection::caches::ParsedFileCache;
-use crate::detection::matchers::DependencyMatcher;
+use crate::detection::matchers::dependency_matcher;
 use crate::detection::pattern_processor::join_components;
 use crate::performance::FileSystemCache;
 use crate::types::{
@@ -11,7 +11,7 @@ use std::path::Path;
 /// Confidence of a framework detected only by the presence of its files
 const FILE_EXISTS_CONFIDENCE: f32 = 0.8;
 
-pub fn detect_frameworks_with_evidence(
+pub fn detect_frameworks(
     path: &Path,
     indicator: &Indicator,
     catalog: &[Framework],
@@ -56,9 +56,9 @@ fn detect(
                 .iter()
                 .any(|e| indicator.ecosystems.contains(e))
         })
-        .partition(|f| matches!(f.detection, DetectionType::Dependencies { .. }));
+        .partition(|f| matches!(f.detection, DetectionType::Dependencies(..)));
 
-    let mut matches = DependencyMatcher::detect_frameworks(
+    let mut matches = dependency_matcher::detect_frameworks(
         path,
         dependency_frameworks,
         &indicator.ecosystems,
@@ -67,7 +67,7 @@ fn detect(
 
     let mut watched = Vec::new();
     for framework in file_frameworks {
-        if let DetectionType::FileExists { files } = &framework.detection {
+        if let DetectionType::FileExists(files) = &framework.detection {
             watched.extend(
                 files
                     .iter()
@@ -140,7 +140,6 @@ mod tests {
             icon: None,
             color: None,
             priority,
-            root_indicators: vec![],
         }
     }
 
@@ -150,7 +149,6 @@ mod tests {
             vec!["package.json".to_owned()],
             "#000000".to_owned(),
             "J".to_owned(),
-            1,
             ecosystems,
         ))
     }
@@ -173,9 +171,7 @@ mod tests {
         let catalog = [framework(
             "Next.js",
             1,
-            DetectionType::FileExists {
-                files: vec!["next.config.js".into(), "next.config.mjs".into()],
-            },
+            DetectionType::FileExists(vec!["next.config.js".into(), "next.config.mjs".into()]),
         )];
 
         let matches = detect(&dir, &npm_indicator(vec![Ecosystem::Npm]), &catalog);
@@ -193,9 +189,7 @@ mod tests {
         let catalog = [framework(
             "Next.js",
             1,
-            DetectionType::FileExists {
-                files: vec!["next.config.js".into()],
-            },
+            DetectionType::FileExists(vec!["next.config.js".into()]),
         )];
 
         assert!(detect(&dir, &npm_indicator(vec![Ecosystem::Cargo]), &catalog).is_empty());
@@ -220,7 +214,7 @@ mod tests {
 
     #[test]
     fn test_resolve_sorts_by_priority_then_confidence() {
-        let by_files = || DetectionType::FileExists { files: vec![] };
+        let by_files = || DetectionType::FileExists(vec![]);
         let resolved = resolve_framework_matches(vec![
             FrameworkMatch::new(framework("React", 2, by_files()), 0.8, vec![]),
             FrameworkMatch::new(framework("Vue", 1, by_files()), 0.7, vec![]),
@@ -232,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_resolve_keeps_the_higher_confidence_duplicate() {
-        let react = framework("React", 1, DetectionType::FileExists { files: vec![] });
+        let react = framework("React", 1, DetectionType::FileExists(vec![]));
         let resolved = resolve_framework_matches(vec![
             FrameworkMatch::new(react.clone(), 0.8, vec![]),
             FrameworkMatch::new(react, 0.9, vec![]),

@@ -89,23 +89,28 @@ pub struct DetectionEvidence {
     pub indicator_evidence: Vec<EvidenceItem>,
     pub framework_evidence: Vec<EvidenceItem>,
     pub root_discovery: Vec<EvidenceItem>,
+    /// The directory root discovery settled on (absolute) and the scan ran
+    /// in, when it found one; scan and framework evidence is relative to it
+    pub scan_root: Option<std::path::PathBuf>,
     pub confidence_factors: Vec<ConfidenceFactor>,
-    pub files_scanned: usize,
+    pub files_matched: usize,
     pub total_scan_time_ms: u64,
     /// The scan timed out and the result is built from a partial sample;
     /// such results must not be persisted
-    #[serde(default)]
     pub scan_truncated: bool,
+    /// A manifest or directory that exists could not be read, so the result
+    /// was computed without it; fixing the permissions changes no mtime, so
+    /// such results must not be persisted either
+    pub read_failed: bool,
     /// Directories (relative to the scan root) whose contents shaped the
-    /// result: subdirectories the walk listed, and the nearest existing
-    /// ancestor of each probed source directory. The persistent cache
+    /// result: the nearest existing ancestor of each probed source
+    /// directory, and — for a container folder — every directory its
+    /// nested-project scan examined (absolute). The persistent cache
     /// watches them; the root itself is always watched.
-    #[serde(default)]
     pub watched_dirs: Vec<String>,
     /// Files, relative to the scan root, that matchers read to decide the
     /// frameworks (lockfiles no indicator pattern lists, ...). The persistent
     /// cache watches them too.
-    #[serde(default)]
     pub read_files: Vec<String>,
 }
 
@@ -113,6 +118,15 @@ impl DetectionEvidence {
     /// A scan that listed more directories than this is not persisted: the
     /// cache would have to stat them all on every hit.
     pub const MAX_WATCHED_DIRS: usize = 256;
+
+    /// A result that read more files than this is not persisted either:
+    /// every one is stat-ed on every hit
+    pub const MAX_READ_FILES: usize = 256;
+
+    /// Whether the persistent cache may keep this result
+    pub fn is_cacheable(&self) -> bool {
+        !self.scan_truncated && !self.read_failed
+    }
 
     /// Two indicators matching the same file by the same pattern (JavaScript
     /// and TypeScript both claim package.json) produce one row, not two
@@ -134,8 +148,8 @@ impl DetectionEvidence {
         self.confidence_factors.push(factor);
     }
 
-    pub fn set_scan_metrics(&mut self, files_scanned: usize, scan_time_ms: u64) {
-        self.files_scanned = files_scanned;
+    pub fn set_scan_metrics(&mut self, files_matched: usize, scan_time_ms: u64) {
+        self.files_matched = files_matched;
         self.total_scan_time_ms = scan_time_ms;
     }
 }
@@ -146,6 +160,61 @@ pub struct DetectionResult {
     pub frameworks: Vec<FrameworkMatch>,
     pub confidence: f32,
     pub evidence: DetectionEvidence,
+    /// Projects found one level down, when this folder is not one itself
+    pub nested: Vec<NestedProject>,
+}
+
+/// The framework that stands for a project: lowest priority number, then
+/// highest confidence
+fn best_framework_of(frameworks: &[FrameworkMatch]) -> Option<&FrameworkMatch> {
+    frameworks.iter().min_by(|a, b| {
+        a.framework
+            .priority
+            .cmp(&b.framework.priority)
+            .then(b.confidence.total_cmp(&a.confidence))
+    })
+}
+
+/// Icon and color are resolved as a PAIR from the same source: the best
+/// framework's icon with its color (falling back to the language's color),
+/// otherwise the language's own
+fn display_source_of<'a>(
+    indicator: Option<&'a Indicator>,
+    frameworks: &'a [FrameworkMatch],
+) -> (Option<&'a str>, Option<&'a str>) {
+    if let Some(best) = best_framework_of(frameworks) {
+        if let Some(icon) = best.framework.icon.as_deref() {
+            let color = best
+                .framework
+                .color
+                .as_deref()
+                .or_else(|| indicator.map(|l| l.color.as_str()));
+            return (Some(icon), color);
+        }
+    }
+    (
+        indicator.map(|l| l.icon.as_str()),
+        indicator.map(|l| l.color.as_str()),
+    )
+}
+
+/// A project in a direct subdirectory of a folder that is not itself one
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NestedProject {
+    /// The subdirectory's name
+    pub name: String,
+    pub indicator: Arc<Indicator>,
+    pub frameworks: Vec<FrameworkMatch>,
+}
+
+impl NestedProject {
+    pub fn display_icon(&self) -> Option<&str> {
+        display_source_of(Some(&self.indicator), &self.frameworks).0
+    }
+
+    pub fn display_color(&self) -> Option<&str> {
+        display_source_of(Some(&self.indicator), &self.frameworks).1
+    }
 }
 
 impl DetectionResult {
@@ -159,6 +228,7 @@ impl DetectionResult {
             frameworks,
             confidence,
             evidence: DetectionEvidence::default(),
+            nested: Vec::new(),
         }
     }
 
@@ -173,40 +243,17 @@ impl DetectionResult {
             frameworks,
             confidence,
             evidence,
+            nested: Vec::new(),
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.indicator.is_none() && self.frameworks.is_empty()
-    }
-    pub fn best_framework(&self) -> Option<&FrameworkMatch> {
-        self.frameworks.iter().min_by(|a, b| {
-            a.framework
-                .priority
-                .cmp(&b.framework.priority)
-                .then(b.confidence.total_cmp(&a.confidence))
-        })
-    }
     /// Icon and color are resolved as a PAIR from the same source: if the
     /// best framework supplies the icon, its color is used; when the icon
     /// falls back to the indicator, the color falls back with it. This keeps
     /// an indicator's glyph from rendering in a framework's brand color
     /// (e.g. the JavaScript logo in Svelte orange).
     fn display_source(&self) -> (Option<&str>, Option<&str>) {
-        if let Some(best) = self.best_framework() {
-            if let Some(icon) = best.framework.icon.as_deref() {
-                let color = best
-                    .framework
-                    .color
-                    .as_deref()
-                    .or_else(|| self.indicator.as_ref().map(|l| l.color.as_str()));
-                return (Some(icon), color);
-            }
-        }
-        (
-            self.indicator.as_ref().map(|l| l.icon.as_str()),
-            self.indicator.as_ref().map(|l| l.color.as_str()),
-        )
+        display_source_of(self.indicator.as_deref(), &self.frameworks)
     }
     pub fn display_icon(&self) -> Option<&str> {
         self.display_source().0
@@ -252,7 +299,6 @@ mod tests {
             vec!["*.js".to_string()],
             "#f7df1e".to_string(),
             "JS".to_string(),
-            6,
             vec![],
         );
 
@@ -260,11 +306,10 @@ mod tests {
         let framework = Framework {
             name: "Svelte".to_string(),
             ecosystems: vec![],
-            detection: DetectionType::FileExists { files: vec![] },
+            detection: DetectionType::FileExists(vec![]),
             icon: None,
             color: Some("#ff3e00".to_string()),
             priority: 1,
-            root_indicators: vec![],
         };
         let result = DetectionResult::new(
             Some(std::sync::Arc::new(indicator)),

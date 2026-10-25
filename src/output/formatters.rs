@@ -1,5 +1,5 @@
 use crate::output::render::{render_debug, render_full, render_json, render_simple};
-use crate::types::{DetectionResult, DisplayConfig};
+use crate::types::{DetectionResult, DisplayConfig, NestedProject};
 #[derive(Debug, Clone, Copy, PartialEq, clap::ValueEnum)]
 pub enum OutputFormat {
     Simple,
@@ -9,14 +9,26 @@ pub enum OutputFormat {
 }
 
 pub fn render(result: &DetectionResult, format: OutputFormat, config: &DisplayConfig) -> String {
-    // `show_frameworks = false` hides frameworks from every user-facing
+    // `max_frameworks = 0` hides frameworks from every user-facing
     // format (icon/color selection included); debug stays an unfiltered dump
     let hidden;
-    let user_facing = if config.show_frameworks || result.frameworks.is_empty() {
+    let has_frameworks =
+        !result.frameworks.is_empty() || result.nested.iter().any(|p| !p.frameworks.is_empty());
+    let user_facing = if config.max_frameworks > 0 || !has_frameworks {
         result
     } else {
         // user-facing formats never read the evidence, so don't copy it
-        hidden = DetectionResult::new(result.indicator.clone(), Vec::new(), result.confidence);
+        let mut copy =
+            DetectionResult::new(result.indicator.clone(), Vec::new(), result.confidence);
+        copy.nested = result
+            .nested
+            .iter()
+            .map(|project| NestedProject {
+                frameworks: Vec::new(),
+                ..project.clone()
+            })
+            .collect();
+        hidden = copy;
         &hidden
     };
 
@@ -77,12 +89,9 @@ mod tests {
     }
 
     #[test]
-    fn test_show_frameworks_false_hides_frameworks_everywhere() {
+    fn test_zero_max_frameworks_hides_frameworks_everywhere() {
         let result = create_test_result();
-        let off = DisplayConfig {
-            show_frameworks: false,
-            ..DisplayConfig::default()
-        };
+        let off = DisplayConfig { max_frameworks: 0 };
         let on = DisplayConfig::default();
 
         // JSON lists no frameworks (nor their evidence)
@@ -95,8 +104,56 @@ mod tests {
             render(&result, OutputFormat::Simple, &off),
             render(&result, OutputFormat::Simple, &on)
         );
+        let language_only =
+            DetectionResult::new(result.indicator.clone(), Vec::new(), result.confidence);
+        assert_eq!(
+            render(&result, OutputFormat::Simple, &off),
+            render(&language_only, OutputFormat::Simple, &on)
+        );
 
         // Debug is a diagnostic dump: always complete
         assert!(render(&result, OutputFormat::Debug, &off).contains("React"));
+    }
+
+    #[test]
+    fn test_hiding_frameworks_hides_them_inside_subprojects_too() {
+        use crate::types::{Framework, FrameworkMatch, Indicator, NestedProject};
+        use std::sync::Arc;
+        let mut result = DetectionResult::new(None, vec![], 0.0);
+        result.nested = vec![NestedProject {
+            name: "frontend".to_string(),
+            indicator: Arc::new(Indicator::new(
+                "JavaScript".to_string(),
+                vec![],
+                "#f7df1e".to_string(),
+                "J".to_string(),
+                vec![],
+            )),
+            frameworks: vec![FrameworkMatch::new(
+                Framework {
+                    name: "React".to_string(),
+                    ecosystems: vec![],
+                    detection: crate::types::DetectionType::Dependencies(vec![]),
+                    icon: Some("⚛".to_string()),
+                    color: Some("#61dafb".to_string()),
+                    priority: 1,
+                },
+                1.0,
+                vec![],
+            )],
+        }];
+        let config = DisplayConfig { max_frameworks: 0 };
+
+        // every user-facing format, not just the one that filters on its own
+        assert_eq!(render(&result, OutputFormat::Full, &config), "J|#f7df1e");
+        assert_eq!(
+            render(&result, OutputFormat::Simple, &config),
+            "\x1b[38;2;247;223;30mJ\x1b[0m",
+            "simple must show the language glyph, not React's"
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&render(&result, OutputFormat::Json, &config)).unwrap_or_default();
+        assert_eq!(json["projects"][0]["frameworks"], serde_json::json!([]));
+        assert_eq!(json["projects"][0]["icon"], "J");
     }
 }

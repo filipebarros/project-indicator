@@ -1,38 +1,32 @@
 //! `config validate` hints must point at the file that is actually failing.
 
+mod common;
+
 use std::fs;
-use std::process::{Command, Output};
+use std::process::Output;
 use tempfile::TempDir;
 
 const INVALID_BUT_PARSEABLE: &str = r##"
-[display]
-show_frameworks = true
-max_frameworks = 0
-
 [[indicators]]
 name = "Rust"
 files = ["Cargo.toml"]
-color = "#dea584"
+color = "not-a-color"
 icon = "R"
-priority = 5
 "##;
 
 fn validate_in(cwd: &std::path::Path, home: &TempDir) -> Result<Output, std::io::Error> {
-    Command::new(env!("CARGO_BIN_EXE_project-indicator"))
+    common::cli(home.path())
         .args(["config", "validate"])
         .current_dir(cwd)
-        .env("HOME", home.path())
-        .env("USERPROFILE", home.path())
-        .env("XDG_CONFIG_HOME", home.path().join("xdg-config"))
         .output()
 }
 
 #[test]
-fn test_hint_for_shadowing_cwd_file_does_not_suggest_config_edit(
+fn test_hint_for_fallback_location_file_does_not_suggest_config_edit(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (home, project) = (TempDir::new()?, TempDir::new()?);
     fs::write(
-        project.path().join("project-indicator.toml"),
+        home.path().join(".project-indicator.toml"),
         INVALID_BUT_PARSEABLE,
     )?;
 

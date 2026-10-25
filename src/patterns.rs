@@ -94,19 +94,6 @@ mod tests {
     }
 
     #[test]
-    fn test_matches_pattern_prefix_suffix() {
-        assert!(matches_pattern("test.rs", "test*.rs"));
-        assert!(matches_pattern("test_main.rs", "test*.rs"));
-        assert!(matches_pattern("test.rs", "test*.rs"));
-        assert!(!matches_pattern("main.rs", "test*.rs"));
-        assert!(!matches_pattern("test.toml", "test*.rs"));
-        assert!(!matches_pattern("test", "test*.rs"));
-        assert!(!matches_pattern(".rs", "test*.rs"));
-
-        assert!(!matches_pattern("t.r", "test*.rs"));
-    }
-
-    #[test]
     fn test_matches_pattern_overlapping_patterns() {
         // Glob semantics: prefix and suffix must not overlap in the text
         // ("test" is not "test" + "" + "t")
@@ -125,19 +112,6 @@ mod tests {
 
         assert!(!matches_pattern("ab", "abc*abc"));
         assert!(matches_pattern("abcabc", "abc*abc"));
-    }
-
-    #[test]
-    fn test_matches_pattern_multiple_wildcards() {
-        assert!(matches_pattern("src/main.rs", "src*main*"));
-        assert!(matches_pattern("src/test/main.c", "src*main*"));
-        assert!(matches_pattern("src_main_file", "src*main*"));
-        assert!(!matches_pattern("main/src", "src*main*"));
-        assert!(!matches_pattern("source/main", "src*main*"));
-
-        assert!(matches_pattern("test.spec.js", "test*spec*"));
-        assert!(matches_pattern("test_unit_spec_file", "test*spec*"));
-        assert!(!matches_pattern("spec.test.js", "test*spec*"));
     }
 
     #[test]

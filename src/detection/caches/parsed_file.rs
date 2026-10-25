@@ -5,22 +5,74 @@
 //! ensures each file is read and parsed at most once per run. The cache lives
 //! for a single CLI invocation, so there is no eviction or memory budget.
 
-use anyhow::{Context, Result};
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use super::json_subset::parse_manifest;
+#[cfg(test)]
+use super::json_subset::MAX_JSON_NODES;
+use super::toml_subset::prune;
+use anyhow::Result;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Files above this size are read but not cached (keeps the per-run cache small).
-const MAX_FILE_SIZE: u64 = 1_048_576;
+/// Largest line-oriented manifest (`requirements.txt`, `go.mod`, a pom, a
+/// lockfile read as text …). Several matchers walk these line by line for
+/// every dependency name, and a file of newlines is tiny in git but huge on
+/// disk, so this is small: real manifests are kilobytes.
+pub(crate) const MAX_TEXT_BYTES: u64 = 1024 * 1024;
+
+/// Largest JSON or TOML manifest. Those go through the streaming
+/// filters in `json_subset` and `toml_subset`, whose work and memory
+/// do not grow with the file, so a big `package-lock.json` is fine.
+const MAX_STREAMED_BYTES: u64 = 32 * 1024 * 1024;
+
+/// All the files of one run together may not exceed this: a repository can
+/// list many files of the per-file maximum.
+const MAX_RUN_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Read a text manifest tolerantly: UTF-16 (BOM) is decoded — PowerShell 5's
 /// `>` writes it — and anything else is read lossily, so one stray Latin-1
 /// byte can't blank a whole manifest.
-pub(crate) fn read_text(path: &Path) -> std::io::Result<String> {
-    let bytes = fs::read(path)?;
+pub(crate) fn read_text(path: &Path, limit: u64) -> std::io::Result<String> {
+    use std::io::{Error, ErrorKind, Read};
+
+    // Regular files only: a repository can plant a FIFO (opening it blocks
+    // forever) or a symlink to /dev/zero (reading it never ends). Unix opens
+    // FIRST and inspects the handle — a stat-then-open gate can be raced by
+    // swapping a FIFO in between the two. O_NONBLOCK makes opening a FIFO
+    // return immediately instead of waiting for a writer, and is a no-op for
+    // reads of the regular files that pass the gate.
+    #[cfg(unix)]
+    let file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        fs::File::options()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)?
+    };
+    // Elsewhere there is no FIFO to block on: keep the stat-first gate
+    #[cfg(not(unix))]
+    let file = {
+        if !fs::metadata(path)?.is_file() {
+            return Err(Error::new(ErrorKind::InvalidInput, "not a regular file"));
+        }
+        fs::File::open(path)?
+    };
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(Error::new(ErrorKind::InvalidInput, "not a regular file"));
+    }
+    if meta.len() > limit {
+        return Err(Error::new(ErrorKind::InvalidData, "file too large to read"));
+    }
+    let mut bytes = Vec::new();
+    // `take` still bounds the read if the file grows after the size check
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(Error::new(ErrorKind::InvalidData, "file too large to read"));
+    }
     let utf16 = |rest: &[u8], from: fn([u8; 2]) -> u16| {
         let units: Vec<u16> = rest
             .chunks(2)
@@ -35,16 +87,15 @@ pub(crate) fn read_text(path: &Path) -> std::io::Result<String> {
         [0xFF, 0xFE, rest @ ..] => utf16(rest, u16::from_le_bytes),
         [0xFE, 0xFF, rest @ ..] => utf16(rest, u16::from_be_bytes),
         _ => {
-            let text = String::from_utf8_lossy(&bytes);
-            text.strip_prefix('\u{feff}').unwrap_or(&text).to_owned()
+            // Valid UTF-8 (nearly always) reuses the buffer instead of copying
+            let text = String::from_utf8(bytes)
+                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+            match text.strip_prefix('\u{feff}') {
+                Some(rest) => rest.to_owned(),
+                None => text,
+            }
         }
     })
-}
-
-/// Remove `//` and `/* */` comments and trailing commas, leaving string
-/// contents untouched.
-fn strip_jsonc(src: &str) -> String {
-    strip_trailing_commas(&strip_c_comments(src))
 }
 
 /// Remove `//` and `/* */` comments, leaving double-quoted string contents
@@ -94,31 +145,6 @@ pub(crate) fn strip_c_comments(src: &str) -> String {
     out
 }
 
-fn strip_trailing_commas(src: &str) -> String {
-    let chars: Vec<char> = src.chars().collect();
-    let mut out = String::with_capacity(src.len());
-    let (mut in_str, mut escaped) = (false, false);
-    for (i, &c) in chars.iter().enumerate() {
-        if in_str {
-            match (escaped, c) {
-                (true, _) => escaped = false,
-                (false, '\\') => escaped = true,
-                (false, '"') => in_str = false,
-                _ => {}
-            }
-        } else if c == '"' {
-            in_str = true;
-        } else if c == ',' {
-            let next = chars[i + 1..].iter().find(|n| !n.is_whitespace());
-            if matches!(next, Some('}') | Some(']')) {
-                continue;
-            }
-        }
-        out.push(c);
-    }
-    out
-}
-
 #[derive(Debug, Default)]
 pub struct ParsedFileCache {
     /// Raw file contents; `None` records a missing file so it isn't re-stat'd
@@ -127,8 +153,19 @@ pub struct ParsedFileCache {
     json_values: RefCell<HashMap<PathBuf, Option<Arc<serde_json::Value>>>>,
     /// Parsed TOML values; `None` records a missing file or parse failure
     toml_values: RefCell<HashMap<PathBuf, Option<Arc<toml::Value>>>>,
-    /// Files read but too large to keep in `contents`
-    oversized: RefCell<HashSet<PathBuf>>,
+    /// A file that exists could not be read (permissions, I/O): the run's
+    /// result was computed without it
+    read_failed: Cell<bool>,
+    /// Files denied this run, with the reason, so each is tried once: refused
+    /// for size or the byte budget (deterministic, so the result stays
+    /// cacheable and the file stays an input of it), or failed to read
+    /// (`read_failed` keeps that result out of the cache)
+    /// (a size refusal holds only for reads up to the limit it was made at)
+    denied: RefCell<HashMap<PathBuf, (u64, String)>>,
+    bytes_read: Cell<u64>,
+    /// On-disk size of each file read: the limits are about the file, and
+    /// decoding can make the text longer
+    sizes: RefCell<HashMap<PathBuf, u64>>,
 }
 
 impl ParsedFileCache {
@@ -146,46 +183,126 @@ impl ParsedFileCache {
             .filter(|(_, content)| content.is_some())
             .map(|(path, _)| path.clone())
             .collect();
-        paths.extend(self.oversized.borrow().iter().cloned());
+        paths.extend(self.denied.borrow().keys().cloned());
         paths.sort();
+        paths.dedup();
         paths
     }
 
-    /// Whether the file exists, whether or not it parses
+    /// Whether the file exists, whether or not it parses. Looks, does not
+    /// read: it neither depends on the file's size nor counts against the
+    /// run's byte budget.
     pub fn is_present<P: AsRef<Path>>(&self, file_path: P) -> Result<bool> {
-        Ok(self.get_file_content(file_path)?.is_some())
+        let file_path = file_path.as_ref();
+        if let Some(cached) = self.contents.borrow().get(file_path) {
+            return Ok(cached.is_some());
+        }
+        Ok(fs::metadata(file_path).is_ok_and(|meta| meta.is_file()))
     }
 
-    pub fn get_file_content<P: AsRef<Path>>(&self, file_path: P) -> Result<Option<Arc<String>>> {
-        let file_path = file_path.as_ref();
+    /// Bytes read from disk this run
+    #[cfg(test)]
+    fn bytes_read(&self) -> u64 {
+        self.bytes_read.get()
+    }
 
+    /// Whether any file that exists failed to read this run
+    pub fn read_failed(&self) -> bool {
+        self.read_failed.get()
+    }
+
+    /// A line-oriented manifest, up to `MAX_TEXT_BYTES`
+    pub fn get_file_content<P: AsRef<Path>>(&self, file_path: P) -> Result<Option<Arc<String>>> {
+        self.read_up_to(file_path.as_ref(), MAX_TEXT_BYTES)
+    }
+
+    /// The file's text, read at most once per run, and only if it is within
+    /// `limit` and the run's byte budget. `Ok(None)` means it does not exist.
+    fn read_up_to(&self, file_path: &Path, limit: u64) -> Result<Option<Arc<String>>> {
         // HashMap<PathBuf, _> accepts &Path lookups via Borrow, avoiding a
         // PathBuf allocation on cache hits
         if let Some(cached) = self.contents.borrow().get(file_path) {
+            // read for a larger class before: not for this one
+            if self
+                .sizes
+                .borrow()
+                .get(file_path)
+                .is_some_and(|&size| size > limit)
+            {
+                anyhow::bail!("{} is too large to read as text", file_path.display());
+            }
             return Ok(cached.clone());
         }
+        if let Some((denied_at, reason)) = self.denied.borrow().get(file_path) {
+            if limit <= *denied_at {
+                anyhow::bail!("{reason}");
+            }
+        }
 
-        let content = match read_text(file_path) {
+        let refuse = |denied_at: u64, reason: String| -> Result<Option<Arc<String>>> {
+            self.denied
+                .borrow_mut()
+                .insert(file_path.to_path_buf(), (denied_at, reason.clone()));
+            anyhow::bail!("{reason}")
+        };
+        let size = fs::metadata(file_path).map_or(0, |meta| meta.len());
+        if size > limit {
+            return refuse(
+                limit,
+                format!(
+                    "{} is {size} bytes, over the {limit} byte limit",
+                    file_path.display()
+                ),
+            );
+        }
+        if self.bytes_read.get() + size > MAX_RUN_BYTES {
+            return refuse(
+                u64::MAX,
+                format!(
+                    "{} would exceed the {MAX_RUN_BYTES} byte read budget of one run",
+                    file_path.display()
+                ),
+            );
+        }
+
+        let content = match read_text(file_path, limit) {
             Ok(content) => Arc::new(content),
             Err(e) if e.kind() == ErrorKind::NotFound => {
+                // A dangling symlink is not "absent": its target appearing
+                // later moves no watched timestamp, so the result must stay
+                // out of the persistent cache like any other failed read
+                if fs::symlink_metadata(file_path).is_ok() {
+                    self.read_failed.set(true);
+                    let reason = format!("{} is a dangling symlink", file_path.display());
+                    self.denied
+                        .borrow_mut()
+                        .insert(file_path.to_path_buf(), (u64::MAX, reason.clone()));
+                    anyhow::bail!("{reason}");
+                }
                 self.contents
                     .borrow_mut()
                     .insert(file_path.to_path_buf(), None);
                 return Ok(None);
             }
             Err(e) => {
-                return Err(e)
-                    .with_context(|| format!("Failed to read file: {}", file_path.display()))
+                self.read_failed.set(true);
+                let reason = format!("Failed to read file {}: {e}", file_path.display());
+                self.denied
+                    .borrow_mut()
+                    .insert(file_path.to_path_buf(), (u64::MAX, reason.clone()));
+                anyhow::bail!("{reason}");
             }
         };
 
-        if content.len() as u64 > MAX_FILE_SIZE {
-            self.oversized.borrow_mut().insert(file_path.to_path_buf());
-        } else {
-            self.contents
-                .borrow_mut()
-                .insert(file_path.to_path_buf(), Some(content.clone()));
-        }
+        // Charge the on-disk size, like the budget check above: decoding can
+        // make the text longer (lossy UTF-8) or shorter (UTF-16)
+        self.bytes_read.set(self.bytes_read.get() + size);
+        self.sizes
+            .borrow_mut()
+            .insert(file_path.to_path_buf(), size);
+        self.contents
+            .borrow_mut()
+            .insert(file_path.to_path_buf(), Some(content.clone()));
         Ok(Some(content))
     }
 
@@ -194,61 +311,45 @@ impl ParsedFileCache {
         file_path: P,
     ) -> Result<Option<Arc<serde_json::Value>>> {
         let file_path = file_path.as_ref();
-
-        if let Some(cached) = self.json_values.borrow().get(file_path) {
-            return Ok(cached.clone());
-        }
-
-        // Deno accepts comments in deno.json as well as deno.jsonc
-        let jsonc = file_path.extension().is_some_and(|e| e == "jsonc")
-            || file_path.file_name().is_some_and(|n| n == "deno.json");
-        let parsed = match self.get_file_content(file_path)? {
-            Some(content) => match if jsonc {
-                // JSONC: comments and trailing commas are legal
-                serde_json::from_str::<serde_json::Value>(&strip_jsonc(&content))
-            } else {
-                serde_json::from_str::<serde_json::Value>(&content)
-            } {
-                Ok(value) => Some(Arc::new(value)),
-                Err(e) => {
-                    // Memoize the failure so the file isn't re-parsed this run
-                    log::debug!("Failed to parse JSON from {}: {}", file_path.display(), e);
-                    None
-                }
-            },
-            None => None,
-        };
-
-        self.json_values
-            .borrow_mut()
-            .insert(file_path.to_path_buf(), parsed.clone());
-
-        Ok(parsed)
+        self.parsed(&self.json_values, "JSON", file_path, |content| {
+            parse_manifest(content).map_err(|e| e.to_string())
+        })
     }
 
     pub fn get_toml_value<P: AsRef<Path>>(&self, file_path: P) -> Result<Option<Arc<toml::Value>>> {
-        let file_path = file_path.as_ref();
+        self.parsed(&self.toml_values, "TOML", file_path.as_ref(), |content| {
+            // Only the tables the matchers read reach the full parser
+            prune(content)
+                .ok_or_else(|| "malformed, or too large to keep".to_owned())
+                .and_then(|kept| toml::from_str::<toml::Value>(&kept).map_err(|e| e.to_string()))
+        })
+    }
 
-        if let Some(cached) = self.toml_values.borrow().get(file_path) {
+    /// Read `file_path` as a streamed manifest and parse it once per run. A
+    /// file that does not parse is memoized as `None`, so it is not
+    /// re-parsed.
+    fn parsed<T>(
+        &self,
+        memo: &RefCell<HashMap<PathBuf, Option<Arc<T>>>>,
+        kind: &str,
+        file_path: &Path,
+        parse: impl FnOnce(&str) -> std::result::Result<T, String>,
+    ) -> Result<Option<Arc<T>>> {
+        if let Some(cached) = memo.borrow().get(file_path) {
             return Ok(cached.clone());
         }
-
-        let parsed = match self.get_file_content(file_path)? {
-            Some(content) => match toml::from_str::<toml::Value>(&content) {
+        let parsed = match self.read_up_to(file_path, MAX_STREAMED_BYTES)? {
+            Some(content) => match parse(&content) {
                 Ok(value) => Some(Arc::new(value)),
                 Err(e) => {
-                    // Memoize the failure so the file isn't re-parsed this run
-                    log::debug!("Failed to parse TOML from {}: {}", file_path.display(), e);
+                    log::debug!("Failed to parse {kind} from {}: {e}", file_path.display());
                     None
                 }
             },
             None => None,
         };
-
-        self.toml_values
-            .borrow_mut()
+        memo.borrow_mut()
             .insert(file_path.to_path_buf(), parsed.clone());
-
         Ok(parsed)
     }
 }
@@ -277,20 +378,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_oversized_file_is_read_but_recorded_once() -> Result<(), Box<dyn std::error::Error>> {
-        let cache = ParsedFileCache::new();
-        let temp_dir = TempDir::new()?;
-        let file_path = temp_dir.path().join("big.lock");
-        fs::write(&file_path, "x".repeat(MAX_FILE_SIZE as usize + 1))?;
-
-        assert!(cache.get_file_content(&file_path)?.is_some());
-        assert!(cache.get_file_content(&file_path)?.is_some());
-
-        assert_eq!(cache.oversized.borrow().len(), 1);
-        assert_eq!(cache.read_paths(), vec![file_path]);
-        Ok(())
-    }
+    const ONE_MIB: usize = 1 << 20;
 
     #[test]
     fn test_missing_file_is_cached_as_none() -> Result<(), Box<dyn std::error::Error>> {
@@ -308,17 +396,16 @@ mod tests {
         let cache = ParsedFileCache::new();
         let temp_dir = TempDir::new()?;
         let file_path = temp_dir.path().join("package.json");
-        fs::write(&file_path, r#"{"name": "test", "version": "1.0.0"}"#)?;
+        fs::write(&file_path, r#"{"dependencies": {"react": "18"}}"#)?;
 
         let value = cache.get_json_value(&file_path)?.ok_or("expected JSON")?;
         assert_eq!(
-            value.get("name").and_then(|n| n.as_str()),
-            Some("test"),
-            "parsed JSON should expose fields"
+            value["dependencies"]["react"], "18",
+            "parsed JSON should expose the keys matchers read"
         );
 
-        let value = cache.get_json_value(&file_path)?.ok_or("expected JSON")?;
-        assert_eq!(value.get("version").and_then(|v| v.as_str()), Some("1.0.0"));
+        let again = cache.get_json_value(&file_path)?.ok_or("expected JSON")?;
+        assert!(std::sync::Arc::ptr_eq(&value, &again), "memoized");
         Ok(())
     }
 
@@ -392,67 +479,322 @@ mod tests {
     }
 
     #[test]
-    fn test_strip_jsonc_comments_and_trailing_commas() {
-        let src = "{\n // c\n \"u\": \"http://x//y\", /* b */\n \"a\": [1,],\n}";
-        let v: serde_json::Value = match serde_json::from_str(&strip_jsonc(src)) {
-            Ok(v) => v,
-            Err(e) => panic!("stripped output must parse: {e}"),
-        };
-        assert_eq!(v["u"], "http://x//y");
-        assert_eq!(v["a"][0], 1);
-    }
-
-    #[test]
-    fn test_strip_jsonc_unterminated_block_comment_and_edges() {
-        // An unterminated block comment swallows the rest — parse fails soft
-        assert!(
-            serde_json::from_str::<serde_json::Value>(&strip_jsonc("{} /* never closed")).is_ok()
-        );
-        assert!(
-            serde_json::from_str::<serde_json::Value>(&strip_jsonc(r#"{"a": 1 /*/ x */}"#)).is_ok()
-        );
-        // Comment markers inside strings survive
-        let v: serde_json::Value =
-            serde_json::from_str(&strip_jsonc(r#"{"u": "a/*b*/c//d"}"#)).unwrap_or_default();
-        assert_eq!(v["u"], "a/*b*/c//d");
-    }
-
-    #[test]
-    fn test_jsonc_with_comments_is_parsed_and_cached() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_budget_charges_disk_bytes_not_decoded_length_for_invalid_utf8(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let dir = TempDir::new()?;
-        let path = dir.path().join("deno.jsonc");
-        fs::write(
-            &path,
-            "{\n  // a comment\n  \"imports\": {\"oak\": \"jsr:@oak/oak\",},\n}\n",
-        )?;
-
         let cache = ParsedFileCache::new();
-        let first = cache.get_json_value(&path)?.ok_or("jsonc must parse")?;
-        assert_eq!(first["imports"]["oak"], "jsr:@oak/oak");
-        // memoized: the same Arc comes back
-        let second = cache.get_json_value(&path)?.ok_or("cached")?;
-        assert!(std::sync::Arc::ptr_eq(&first, &second));
 
-        // a plain .json with comments is still invalid
-        let strict = dir.path().join("x.json");
-        fs::write(&strict, "{ // no\n}")?;
-        assert!(cache.get_json_value(&strict)?.is_none());
+        // 64 invalid bytes lossy-decode to 64 three-byte replacement chars;
+        // the budget is about the file, not the (longer) decoded text
+        let path = dir.path().join("requirements.txt");
+        fs::write(&path, [0xFF_u8; 64])?;
+        let text = cache.get_file_content(&path)?.ok_or("missing")?;
+        assert_eq!(text.chars().count(), 64);
+        assert_eq!(cache.bytes_read(), 64);
         Ok(())
     }
 
     #[test]
-    fn test_deno_json_accepts_comments_like_deno_does() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_budget_charges_disk_bytes_not_decoded_length_for_utf16(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let dir = TempDir::new()?;
-        let path = dir.path().join("deno.json");
-        fs::write(
-            &path,
-            "{\n  // comment\n  \"imports\": {\"oak\": \"jsr:@oak/oak\"},\n}\n",
+        let cache = ParsedFileCache::new();
+
+        // UTF-16 decodes to roughly half its disk size; charging the decoded
+        // text would let a run read ~2x the budget from disk
+        let mut utf16 = vec![0xFF, 0xFE];
+        for unit in "flask==2.0\n".encode_utf16() {
+            utf16.extend_from_slice(&unit.to_le_bytes());
+        }
+        let disk_len = utf16.len() as u64;
+        let path = dir.path().join("requirements.txt");
+        fs::write(&path, utf16)?;
+        cache.get_file_content(&path)?;
+        assert_eq!(cache.bytes_read(), disk_len);
+        Ok(())
+    }
+
+    fn write_json(name: &str, text: &str) -> Result<(TempDir, PathBuf), std::io::Error> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join(name);
+        fs::write(&path, text)?;
+        Ok((dir, path))
+    }
+
+    #[test]
+    fn test_json_keeps_only_the_keys_the_matchers_read() -> Result<(), Box<dyn std::error::Error>> {
+        let (_dir, path) = write_json(
+            "package.json",
+            r#"{"name":"x","scripts":{"a":"b"},"junk":[0,0],"dependencies":{"react":"18"}}"#,
         )?;
 
         let value = ParsedFileCache::new()
             .get_json_value(&path)?
-            .ok_or("deno.json with comments must parse")?;
-        assert_eq!(value["imports"]["oak"], "jsr:@oak/oak");
+            .ok_or("expected JSON")?;
+
+        assert_eq!(value["dependencies"]["react"], "18");
+        assert!(["name", "scripts", "junk"]
+            .iter()
+            .all(|key| value.get(key).is_none()));
+        Ok(())
+    }
+
+    #[test]
+    fn test_too_many_nodes_under_a_read_key_make_the_file_unparseable(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let filler = vec!["0"; MAX_JSON_NODES + 1].join(",");
+        let (_dir, path) =
+            write_json("package.json", &format!(r#"{{"dependencies":[{filler}]}}"#))?;
+
+        assert!(ParsedFileCache::new().get_json_value(&path)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_a_huge_value_in_an_unread_toml_table_is_skipped(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let filler = vec!["0"; ONE_MIB].join(",");
+        let (_dir, path) = write_json(
+            "Cargo.toml",
+            &format!("[package]\nname = \"x\"\n[profile.dev]\njunk = [{filler}]\n[dependencies]\nserde = \"1\"\n"),
+        )?;
+
+        let value = ParsedFileCache::new()
+            .get_toml_value(&path)?
+            .ok_or("a big file with junk only in unread tables must parse")?;
+
+        assert_eq!(value["package"]["name"].as_str(), Some("x"));
+        assert_eq!(value["dependencies"]["serde"].as_str(), Some("1"));
+        assert!(value.get("profile").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_a_huge_value_in_a_read_toml_table_makes_it_unparseable_but_watched(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let filler = vec!["0"; ONE_MIB].join(",");
+        let (_dir, path) = write_json(
+            "Cargo.toml",
+            &format!("[dependencies]\njunk = [{filler}]\n"),
+        )?;
+        let cache = ParsedFileCache::new();
+
+        assert!(cache.get_toml_value(&path)?.is_none());
+        assert_eq!(cache.read_paths(), vec![path]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_read_text_enforces_the_limit_it_is_given() -> Result<(), Box<dyn std::error::Error>> {
+        let (_dir, path) = write_json("f.txt", "12345678")?;
+
+        assert!(read_text(&path, 7).is_err());
+        assert_eq!(read_text(&path, 8)?, "12345678");
+        Ok(())
+    }
+
+    /// Line-oriented manifests get the small cap: a file of newlines is tiny
+    /// in git, and several matchers walk it line by line per dependency name.
+    /// A refusal is the same every run for the same file, so the file stays
+    /// watched and the result stays cacheable.
+    #[test]
+    fn test_a_text_manifest_beyond_the_text_cap_is_refused_remembered_and_watched(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (_dir, path) = write_json(
+            "requirements.txt",
+            &"a\n".repeat(MAX_TEXT_BYTES as usize / 2 + 1),
+        )?;
+        let cache = ParsedFileCache::new();
+
+        assert!(cache.get_file_content(&path).is_err());
+        assert!(!cache.read_failed(), "a size refusal is not an I/O failure");
+        assert_eq!(cache.read_paths(), vec![path.clone()], "still an input");
+
+        fs::remove_file(&path)?;
+        assert!(
+            cache.get_file_content(&path).is_err(),
+            "the refusal is remembered, not turned into 'missing'"
+        );
+        Ok(())
+    }
+
+    /// JSON and TOML are streamed through the pruning filters, so they
+    /// may be much larger than a text manifest
+    #[test]
+    fn test_a_text_refusal_does_not_block_the_streamed_read_of_the_same_file(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // root discovery reads Cargo.toml as text first (1 MiB cap); the
+        // framework matchers then stream it (32 MiB cap)
+        let padding = "#\n".repeat(MAX_TEXT_BYTES as usize / 2 + 1);
+        let (_dir, path) = write_json(
+            "Cargo.toml",
+            &format!("[package]\nname = \"x\"\n{padding}[dependencies]\nserde = \"1\"\n"),
+        )?;
+        let cache = ParsedFileCache::new();
+
+        assert!(cache.get_file_content(&path).is_err());
+        let value = cache.get_toml_value(&path)?.ok_or("expected TOML")?;
+
+        assert_eq!(value["dependencies"]["serde"].as_str(), Some("1"));
+        assert!(!cache.read_failed());
+        Ok(())
+    }
+
+    #[test]
+    fn test_a_text_file_that_decodes_larger_is_readable_twice(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // invalid UTF-8 decodes to 3-byte replacement characters: 600 KB on
+        // disk is 1.8 MB of text, but the limit is about the file
+        let dir = TempDir::new()?;
+        let path = dir.path().join("requirements.txt");
+        fs::write(&path, vec![0xFF; 600_000])?;
+        let cache = ParsedFileCache::new();
+
+        assert!(cache.get_file_content(&path)?.is_some());
+        assert!(cache.get_file_content(&path)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_a_file_read_in_two_classes_is_listed_once() -> Result<(), Box<dyn std::error::Error>> {
+        let padding = "#\n".repeat(MAX_TEXT_BYTES as usize / 2 + 1);
+        let (_dir, path) = write_json("Cargo.toml", &format!("[package]\n{padding}"))?;
+        let cache = ParsedFileCache::new();
+
+        assert!(cache.get_file_content(&path).is_err());
+        assert!(cache.get_toml_value(&path)?.is_some());
+
+        assert_eq!(cache.read_paths(), vec![path]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_a_json_manifest_beyond_the_text_cap_is_still_streamed(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let padding = " ".repeat(2 * MAX_TEXT_BYTES as usize);
+        let (_dir, path) = write_json(
+            "package.json",
+            &format!(r#"{{"dependencies":{{"react":"18"}}}}{padding}"#),
+        )?;
+        let cache = ParsedFileCache::new();
+
+        let value = cache.get_json_value(&path)?.ok_or("must parse")?;
+        assert_eq!(value["dependencies"]["react"], "18");
+
+        fs::remove_file(&path)?;
+        assert!(cache.get_json_value(&path)?.is_some(), "read once per run");
+        Ok(())
+    }
+
+    /// Asking whether a file exists neither reads it nor depends on its size
+    #[test]
+    fn test_presence_does_not_read_or_size_check_the_file() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (_dir, path) = write_json("big.lock", &"x".repeat(2 * MAX_TEXT_BYTES as usize))?;
+        let cache = ParsedFileCache::new();
+
+        assert!(cache.is_present(&path)?);
+
+        assert!(!cache.read_failed());
+        assert_eq!(cache.bytes_read(), 0);
+        Ok(())
+    }
+
+    /// A tiny repository must not be able to make one prompt read gigabytes
+    /// by listing many big files: reads stop at a per-run byte budget
+    #[test]
+    fn test_reads_stop_at_the_per_run_budget() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let cache = ParsedFileCache::new();
+        let big = MAX_STREAMED_BYTES - 1024;
+        let files_in_budget = (MAX_RUN_BYTES / big) as usize;
+        let mut paths = Vec::new();
+        for i in 0..=files_in_budget {
+            let path = dir.path().join(format!("f{i}.json"));
+            fs::File::create(&path)?.set_len(big)?; // sparse: no disk cost
+            paths.push(path);
+        }
+
+        for path in &paths {
+            let _ = cache.get_json_value(path);
+        }
+
+        assert!(
+            cache.bytes_read() <= MAX_RUN_BYTES,
+            "read {} bytes",
+            cache.bytes_read()
+        );
+        assert!(
+            !cache.read_failed(),
+            "running out of budget is deterministic, not an I/O failure"
+        );
+        assert_eq!(
+            cache.read_paths().len(),
+            paths.len(),
+            "refused files stay watched"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_a_dangling_symlink_manifest_is_a_failed_read() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = TempDir::new()?;
+        let link = dir.path().join("package.json");
+        std::os::unix::fs::symlink(dir.path().join("missing.json"), &link)?;
+
+        let cache = ParsedFileCache::new();
+        assert!(cache.get_json_value(&link).is_err());
+        assert!(
+            cache.read_failed(),
+            "the target appearing later moves no watched timestamp, so the \
+             result must stay out of the persistent cache"
+        );
+        Ok(())
+    }
+
+    /// The gate is the open handle itself: a FIFO (even one swapped in after
+    /// any earlier stat) opens without blocking and is refused, instead of
+    /// hanging the prompt until a writer shows up.
+    #[cfg(unix)]
+    #[test]
+    fn test_a_fifo_manifest_is_refused_without_blocking() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("package.json");
+        let status = std::process::Command::new("mkfifo").arg(&path).status()?;
+        assert!(status.success(), "mkfifo failed");
+        let cache = ParsedFileCache::new();
+
+        assert!(cache.get_json_value(&path).is_err());
+        assert!(
+            cache.read_failed(),
+            "a refused special file keeps the result out of the persistent cache"
+        );
+        assert_eq!(cache.read_paths(), vec![path], "still an input of the run");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_a_failed_read_is_remembered_for_the_run() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+        let (_dir, path) = write_json("package.json", "{}")?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000))?;
+        if fs::read(&path).is_ok() {
+            return Ok(()); // running as root
+        }
+        let cache = ParsedFileCache::new();
+
+        assert!(cache.get_file_content(&path).is_err());
+        assert!(cache.read_failed());
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644))?;
+        assert!(
+            cache.get_file_content(&path).is_err(),
+            "one failure per file per run, not a re-read on every request"
+        );
         Ok(())
     }
 }

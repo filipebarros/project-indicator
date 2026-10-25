@@ -255,7 +255,7 @@ jobs:
         ./target/release/project-indicator --format json
 
         export XDG_CONFIG_HOME="$RUNNER_TEMP/config"
-        ./target/release/project-indicator config init --template full
+        ./target/release/project-indicator config init
         ./target/release/project-indicator config validate
 
         NO_COLOR=1 ./target/release/project-indicator --format full

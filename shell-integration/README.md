@@ -1,6 +1,6 @@
 # Shell Integration
 
-Prompt hooks for fish, zsh, bash, and PowerShell. Each hook is ~15 lines: it calls
+Prompt hooks for fish, zsh, bash, and PowerShell. Each hook is a short script: it calls
 `project-indicator` and wraps the output in prompt colors. That's all it
 needs to do — **caching lives in the binary**, which keeps a persistent,
 mtime-invalidated result cache under `$XDG_CACHE_HOME/project-indicator/`
@@ -34,10 +34,8 @@ project-indicator --no-cache    # bypass for one invocation
 ```
 
 The cache invalidates automatically when the project directory, its
-manifests, your config file, or the binary version change. One known gap:
-changes deep in subdirectories that would alter glob-based scoring are only
-picked up when something at the project root changes (or after
-`cache clear`).
+manifests, your config file, or the binary version change, and also when a
+subdirectory the scan listed changes.
 
 ## Testing
 
