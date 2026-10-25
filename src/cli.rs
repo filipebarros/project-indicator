@@ -7,16 +7,12 @@ use std::path::PathBuf;
 #[command(about = "A fast project type and framework detection tool")]
 #[command(version)]
 pub struct Cli {
+    /// Directory to inspect (default: the current directory)
     pub path: Option<PathBuf>,
 
+    /// Output format: `simple` is one colored glyph for prompts
     #[arg(long, value_enum, ignore_case = true, default_value = "simple")]
     pub format: OutputFormat,
-
-    #[arg(
-        long,
-        help = "Maximum depth to scan directories (default: 1; 0 scans nothing)"
-    )]
-    pub max_depth: Option<usize>,
 
     #[arg(short, long, help = "Enable verbose logging output")]
     pub verbose: bool,
@@ -42,7 +38,7 @@ pub enum Commands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone, Copy)]
 pub enum ConfigAction {
     /// Parse the active config file and report the exact error if any
     Validate,
@@ -50,17 +46,10 @@ pub enum ConfigAction {
     Edit,
     /// List config file locations and the active configuration
     Show,
-    /// Write a config file from a built-in template
+    /// Write the built-in configuration to a config file
     Init {
-        #[arg(long, help = "Use a specific template")]
-        template: Option<String>,
         #[arg(long, help = "Force overwrite existing config")]
         force: bool,
-        #[arg(
-            long,
-            help = "Specify config file path (default: $XDG_CONFIG_HOME/project-indicator/config.toml, or ~/.config/...)"
-        )]
-        path: Option<String>,
     },
 }
 
@@ -115,21 +104,15 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_config_init_with_template() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from([
+    fn test_cli_config_init_rejects_the_removed_template_flag() {
+        assert!(Cli::try_parse_from([
             "project-indicator",
             "config",
             "init",
             "--template",
             "web-dev",
-        ])?;
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Config {
-                action: ConfigAction::Init { template: Some(ref t), force: false, path: None }
-            }) if t == "web-dev"
-        ));
-        Ok(())
+        ])
+        .is_err());
     }
 
     #[test]
@@ -138,34 +121,8 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Commands::Config {
-                action: ConfigAction::Init {
-                    template: None,
-                    force: true,
-                    path: None
-                }
+                action: ConfigAction::Init { force: true }
             })
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_config_init_with_path() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from([
-            "project-indicator",
-            "config",
-            "init",
-            "--path",
-            "./my-config.toml",
-        ])?;
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Config {
-                action: ConfigAction::Init {
-                    template: None,
-                    force: false,
-                    path: Some(ref p)
-                }
-            }) if p == "./my-config.toml"
         ));
         Ok(())
     }

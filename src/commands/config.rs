@@ -1,6 +1,6 @@
 use project_indicator::{
     cli::ConfigAction,
-    config::{validate_config, ConfigParser, TemplateGenerator},
+    config::{built_in_config, parser, validate_config},
     Result,
 };
 use std::env;
@@ -17,27 +17,10 @@ fn split_editor(editor: &str) -> (String, Vec<String>) {
     (program, parts.collect())
 }
 
-/// Where a config file sits relative to the default save path in the
-/// resolution order.
-enum Relation {
-    IsDefault,
-    /// Earlier in the order, so it outranks the default
-    Shadows,
-    /// Later in the order (or unknown), so the default outranks it
-    Shadowed,
-}
-
-fn relation_to_default(config_path: &std::path::Path) -> Relation {
-    let paths = ConfigParser::default_config_paths();
-    let position = |p: &std::path::Path| paths.iter().position(|c| c == p);
-    let default_pos = ConfigParser::default_save_path()
-        .ok()
-        .and_then(|p| position(&p));
-    match (position(config_path), default_pos) {
-        (Some(a), Some(d)) if a == d => Relation::IsDefault,
-        (Some(a), Some(d)) if a < d => Relation::Shadows,
-        _ => Relation::Shadowed,
-    }
+/// Whether `config_path` is where `config edit`/`config init` write; a
+/// failing file elsewhere is a fallback location the default outranks.
+fn is_default_location(config_path: &std::path::Path) -> bool {
+    parser::default_save_path().is_ok_and(|default| default == config_path)
 }
 
 fn ensure_parent_dir(path: &std::path::Path) -> Result<()> {
@@ -48,26 +31,20 @@ fn ensure_parent_dir(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-fn print_templates() {
-    for (name, description) in TemplateGenerator::TEMPLATES {
-        outln!("   • {}: {}", name, description);
-    }
-}
-
 pub fn handle_config_command(action: ConfigAction) -> Result<()> {
     match action {
         ConfigAction::Validate => {
             // Validate the file detection actually reads (same resolution
-            // order as ConfigParser::load_default), and parse it directly —
+            // order as parser::load_default), and parse it directly —
             // load_default's soft fallback would swallow the parse error
             // this command exists to surface.
-            let Some(config_path) = ConfigParser::active_config_path() else {
+            let Some(config_path) = parser::active_config_path() else {
                 outln!("❌ No configuration file found");
                 outln!("💡 Run 'project-indicator config init' to create a default configuration");
                 std::process::exit(1);
             };
 
-            match ConfigParser::load_from_file(&config_path) {
+            match parser::load_from_file(&config_path) {
                 Ok(config) => match validate_config(&config) {
                     Ok(()) => {
                         outln!("✅ Configuration is valid");
@@ -80,14 +57,13 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                         outln!("❌ Configuration validation failed:");
                         outln!("   {}", validation_error);
                         outln!("📍 Config file: {}", config_path.display());
-                        match relation_to_default(&config_path) {
-                            Relation::IsDefault => {
-                                outln!("💡 Run 'project-indicator config edit' to fix the issues")
-                            }
-                            _ => outln!(
+                        if is_default_location(&config_path) {
+                            outln!("💡 Run 'project-indicator config edit' to fix the issues")
+                        } else {
+                            outln!(
                                 "💡 Fix this file directly — 'config edit' opens the default \
                                  config location, which is a different file"
-                            ),
+                            )
                         }
                         std::process::exit(1);
                     }
@@ -98,24 +74,19 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                     outln!("📍 Config file: {}", config_path.display());
                     // 'config edit' and 'config init --force' both target the
                     // default XDG path. Whether that helps depends on where the
-                    // failing file sits in the resolution order: a cwd file
-                    // outranks (shadows) the default, a home-dir fallback is
-                    // outranked by it.
-                    match relation_to_default(&config_path) {
-                        Relation::IsDefault => outln!(
+                    // failing file sits in the resolution order: a fallback
+                    // location is outranked by the default.
+                    if is_default_location(&config_path) {
+                        outln!(
                             "💡 Fix the file ('config edit') or regenerate it ('config init --force'); \
                              until then, detection uses the built-in template"
-                        ),
-                        Relation::Shadows => outln!(
-                            "💡 Fix this file directly — it shadows the default config location, so \
-                             'config edit'/'config init' won't touch it; until then, detection uses \
-                             the built-in template"
-                        ),
-                        Relation::Shadowed => outln!(
+                        )
+                    } else {
+                        outln!(
                             "💡 Fix this file, or run 'config init' to create the default config, \
                              which takes precedence over it; until then, detection uses the \
                              built-in template"
-                        ),
+                        )
                     }
                     std::process::exit(1);
                 }
@@ -125,17 +96,8 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             outln!("🔍 Project Indicator Configuration Discovery\n");
 
             // Same paths, same order, as the parser (first existing wins)
-            let config_paths = ConfigParser::default_config_paths();
-            let active_path = ConfigParser::active_config_path();
-            // The cwd entries are relative; print them absolute so the output
-            // is meaningful outside the invoking shell
-            let absolute = |path: &std::path::Path| {
-                if path.is_relative() {
-                    std::env::current_dir().map_or_else(|_| path.to_path_buf(), |d| d.join(path))
-                } else {
-                    path.to_path_buf()
-                }
-            };
+            let config_paths = parser::default_config_paths();
+            let active_path = parser::active_config_path();
 
             for path in &config_paths {
                 if path.exists() {
@@ -144,7 +106,7 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                     } else {
                         " (shadowed)"
                     };
-                    outln!("✅ Found{}: {}", marker, absolute(path).display());
+                    outln!("✅ Found{}: {}", marker, path.display());
 
                     if let Ok(metadata) = std::fs::metadata(path) {
                         outln!("   📊 Size: {} bytes", metadata.len());
@@ -157,7 +119,7 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
 
                     outln!();
                 } else {
-                    outln!("❌ Not found: {}", absolute(path).display());
+                    outln!("❌ Not found: {}", path.display());
                     outln!();
                 }
             }
@@ -166,7 +128,7 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                 // Parse the active file directly — load_default's soft
                 // fallback would mask a parse error and report the built-in
                 // template's counts as if they came from this file.
-                match ConfigParser::load_from_file(&active) {
+                match parser::load_from_file(&active) {
                     Ok(config) => {
                         outln!("📦 Active Configuration:");
                         outln!("   Indicators: {}", config.indicators.len());
@@ -190,7 +152,7 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             Ok(())
         }
         ConfigAction::Edit => {
-            let config_path = ConfigParser::default_save_path()?;
+            let config_path = parser::default_save_path()?;
             outln!("📍 Configuration file location: {}", config_path.display());
 
             if let Ok(editor) = env::var("EDITOR") {
@@ -210,43 +172,19 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             }
             Ok(())
         }
-        ConfigAction::Init {
-            template,
-            force,
-            path,
-        } => {
-            let config_path = if let Some(custom_path) = path {
-                std::path::PathBuf::from(custom_path)
-            } else {
-                ConfigParser::default_save_path()?
-            };
-
-            if config_path.is_dir() {
-                anyhow::bail!(
-                    "--path must be a file, but {} is a directory",
-                    config_path.display()
-                );
-            }
+        ConfigAction::Init { force } => {
+            let config_path = parser::default_save_path()?;
 
             if config_path.exists() && !force {
                 outln!(
                     "❗ Configuration file already exists at: {}",
                     config_path.display()
                 );
-                outln!("💡 Use --force to overwrite or try a different template");
-                outln!("💡 Available templates:");
-                print_templates();
+                outln!("💡 Use --force to overwrite");
                 std::process::exit(1);
             }
 
-            if template.is_none() {
-                outln!("📋 Available templates:");
-                print_templates();
-                outln!("💡 Use --template <name> to select a template, or run without to use 'minimal'");
-                outln!();
-            }
-
-            let config = TemplateGenerator::generate_template(template.as_deref())?;
+            let config = built_in_config();
 
             ensure_parent_dir(&config_path)?;
 
@@ -256,10 +194,8 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
             std::fs::write(&config_path, config_content)
                 .map_err(|e| anyhow::anyhow!("Failed to write config file: {}", e))?;
 
-            let template_name = template.as_deref().unwrap_or("minimal");
             outln!("✅ Configuration created successfully!");
             outln!("📍 Location: {}", config_path.display());
-            outln!("📋 Template: {}", template_name);
             outln!("🔧 Indicators: {}", config.indicators.len());
 
             if let Err(e) = validate_config(&config) {

@@ -1,0 +1,1 @@
+project(fixture C)\n

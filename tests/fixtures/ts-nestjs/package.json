@@ -1,1 +1,1 @@
-{"name":"a","dependencies":{"@nestjs/core":"^10.0.0"}}
+{"name":"a","dependencies":{"@nestjs/core":"^10.0.0"},"devDependencies":{"typescript":"^5.0.0"}}

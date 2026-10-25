@@ -54,19 +54,20 @@ jobs:
         echo "PR number: $PR_NUMBER"
 
         if [ -n "$PR_NUMBER" ]; then
-          LABELS=$(gh pr view $PR_NUMBER --json labels --jq '.labels[].name' | tr '\n' ' ')
-          echo "PR labels: $LABELS"
+          # one label per line, so the checks below match whole label names
+          LABELS=$(gh pr view $PR_NUMBER --json labels --jq '.labels[].name')
+          echo "PR labels: $(echo "$LABELS" | tr '\n' ' ')"
 
-          if echo "$LABELS" | grep -q "major"; then
+          if echo "$LABELS" | grep -qx "major"; then
             echo "bump_type=major" >> $GITHUB_OUTPUT
             echo "Detected: major release"
-          elif echo "$LABELS" | grep -q "minor"; then
+          elif echo "$LABELS" | grep -qx "minor"; then
             echo "bump_type=minor" >> $GITHUB_OUTPUT
             echo "Detected: minor release"
-          elif echo "$LABELS" | grep -q "patch"; then
+          elif echo "$LABELS" | grep -qx "patch"; then
             echo "bump_type=patch" >> $GITHUB_OUTPUT
             echo "Detected: patch release"
-          elif echo "$LABELS" | grep -q "no-release"; then
+          elif echo "$LABELS" | grep -qx "no-release"; then
             echo "bump_type=none" >> $GITHUB_OUTPUT
             echo "Detected: no release needed"
           else

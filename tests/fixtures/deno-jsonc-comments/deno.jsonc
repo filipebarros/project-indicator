@@ -1,6 +1,0 @@
-{
-  // Oak router
-  "imports": {
-    "oak": "jsr:@oak/oak@^17.1.0", /* trailing comma below */
-  },
-}

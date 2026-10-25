@@ -11,20 +11,16 @@ pub fn create_test_result() -> DetectionResult {
         vec!["tsconfig.json".to_string(), "*.ts".to_string()],
         "#3178C6".to_string(),
         "󰛦".to_string(),
-        1,
         vec![],
     );
 
     let framework = Framework {
         name: "React".to_string(),
         ecosystems: vec![],
-        detection: DetectionType::Dependencies {
-            dependencies: vec!["react".to_string()],
-        },
+        detection: DetectionType::Dependencies(vec!["react".to_string()]),
         icon: Some("⚛️".to_string()),
         color: Some("#61DAFB".to_string()),
         priority: 1,
-        root_indicators: vec![],
     };
 
     let framework_match = FrameworkMatch::new(framework, 0.9, vec!["package.json".to_string()]);

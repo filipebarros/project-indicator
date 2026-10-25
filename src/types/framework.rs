@@ -1,7 +1,6 @@
 //! Framework definitions (`Framework`, `DetectionType`, `Ecosystem`) and
 //! detected matches. A lower `priority` wins when picking the prompt icon.
 
-use crate::types::RootIndicator;
 use serde::{Deserialize, Serialize};
 
 /// A package ecosystem: where dependency declarations live and how they are
@@ -10,7 +9,6 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum Ecosystem {
     Npm,
-    Deno,
     Pypi,
     Cargo,
     Go,
@@ -26,22 +24,19 @@ pub enum Ecosystem {
     Swiftpm,
 }
 
+/// Externally tagged: in TOML, `[frameworks.detection]` holds exactly one
+/// key naming the method (`dependencies = [...]` or `files = [...]`), so a
+/// misspelled or extra key fails parse like everywhere else in the schema.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type")]
 pub enum DetectionType {
     /// Match dependency names in the manifests of the framework's ecosystems
-    Dependencies {
-        dependencies: Vec<String>,
-    },
-    FileExists {
-        files: Vec<String>,
-    },
+    #[serde(rename = "dependencies")]
+    Dependencies(Vec<String>),
+    /// Any of these files or directories exists at the project root
+    #[serde(rename = "files")]
+    FileExists(Vec<String>),
 }
 
-// NOTE: `detection` is an internally-tagged enum (`#[serde(tag = "type")]`),
-// and serde cannot enforce deny_unknown_fields inside internally-tagged
-// variant content — unknown keys under [frameworks.detection] are still
-// silently ignored. Every other config struct rejects unknown keys.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Framework {
@@ -57,8 +52,6 @@ pub struct Framework {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     pub priority: u8,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub root_indicators: Vec<RootIndicator>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

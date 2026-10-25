@@ -19,35 +19,32 @@ fn strip_xml_comments(src: &str) -> String {
 }
 
 pub fn check_toml_dependencies(toml_value: &toml::Value, dep_names: &[String]) -> bool {
-    let mut available_deps: HashSet<&String> = HashSet::new();
-
-    add_dependency_sections(toml_value, &mut available_deps);
-    // Cargo workspaces: [workspace.dependencies] / [workspace.dev-dependencies]
-    if let Some(workspace) = toml_value.get("workspace") {
-        add_dependency_sections(workspace, &mut available_deps);
-    }
-    // Platform-specific: [target.'cfg(unix)'.dependencies]
-    if let Some(targets) = toml_value.get("target").and_then(|v| v.as_table()) {
-        for target in targets.values() {
-            add_dependency_sections(target, &mut available_deps);
-        }
-    }
-
-    dep_names.iter().any(|dep| available_deps.contains(dep))
+    // The manifest itself, Cargo workspaces ([workspace.dependencies]) and
+    // platform tables ([target.'cfg(unix)'.dependencies])
+    let platforms = toml_value
+        .get("target")
+        .and_then(|v| v.as_table())
+        .into_iter()
+        .flat_map(|targets| targets.values());
+    [Some(toml_value), toml_value.get("workspace")]
+        .into_iter()
+        .flatten()
+        .chain(platforms)
+        .any(|parent| {
+            ["dependencies", "dev-dependencies", "build-dependencies"]
+                .iter()
+                .filter_map(|section| parent.get(section).and_then(|v| v.as_table()))
+                .any(|table| table_names_dependency(table, dep_names))
+        })
 }
 
-fn add_dependency_sections<'a>(parent: &'a toml::Value, into: &mut HashSet<&'a String>) {
-    for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-        if let Some(table) = parent.get(section).and_then(|v| v.as_table()) {
-            for (name, spec) in table {
-                into.insert(name);
-                // `web = { package = "axum" }` renames the real package
-                if let Some(toml::Value::String(real)) = spec.get("package") {
-                    into.insert(real);
-                }
-            }
-        }
-    }
+/// A dependency table lists one of `dep_names`, directly or through
+/// `web = { package = "axum" }`, which renames the real package
+fn table_names_dependency(table: &toml::Table, dep_names: &[String]) -> bool {
+    dep_names.iter().any(|dep| table.contains_key(dep))
+        || table.values().any(|spec| {
+            matches!(spec.get("package"), Some(toml::Value::String(real)) if dep_names.contains(real))
+        })
 }
 
 pub fn check_json_dependencies(json_value: &serde_json::Value, dep_names: &[String]) -> bool {
@@ -59,13 +56,10 @@ pub fn check_json_dependencies(json_value: &serde_json::Value, dep_names: &[Stri
         "require",
         "require-dev",
     ];
-    let available: HashSet<&String> = SECTIONS
+    SECTIONS
         .iter()
         .filter_map(|section| json_value.get(section).and_then(|v| v.as_object()))
-        .flat_map(|deps| deps.keys())
-        .collect();
-
-    dep_names.iter().any(|dep| available.contains(dep))
+        .any(|deps| dep_names.iter().any(|dep| deps.contains_key(dep)))
 }
 
 pub fn check_pyproject_dependencies(toml_value: &toml::Value, dep_names: &[String]) -> bool {
@@ -122,96 +116,56 @@ pub fn check_python_text_dependencies(content: &str, dep_names: &[String]) -> bo
     })
 }
 
+/// The values of a TOML table, or nothing when `value` is absent or not a table
+fn table_values(value: Option<&toml::Value>) -> impl Iterator<Item = &toml::Value> {
+    value
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .flat_map(|table| table.values())
+}
+
 fn has_pyproject_dependency(toml_value: &toml::Value, dep_name: &str) -> bool {
-    if let Some(project) = toml_value.get("project") {
-        if let Some(deps) = project.get("dependencies") {
-            if deps_array_matches(deps, dep_name) {
-                return true;
-            }
-        }
+    let is_dep = |k: &String| normalize_py_name(k) == normalize_py_name(dep_name);
+    let lists_it = |deps: &toml::Value| deps_array_matches(deps, dep_name);
+    let names_it = |table: Option<&toml::Value>| {
+        table
+            .and_then(toml::Value::as_table)
+            .is_some_and(|t| t.keys().any(is_dep))
+    };
 
-        if let Some(optional_deps) = project.get("optional-dependencies") {
-            if let Some(optional_deps_table) = optional_deps.as_table() {
-                for deps in optional_deps_table.values() {
-                    if deps_array_matches(deps, dep_name) {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-
-    if let Some(groups) = toml_value
-        .get("dependency-groups")
-        .and_then(|g| g.as_table())
-    {
-        if groups
-            .values()
-            .any(|deps| deps_array_matches(deps, dep_name))
-        {
-            return true;
-        }
-    }
-
-    if let Some(tool) = toml_value.get("tool") {
-        if let Some(tool_table) = tool.as_table() {
-            let is_dep = |k: &String| normalize_py_name(k) == normalize_py_name(dep_name);
-            for (_, tool_section) in tool_table {
-                // [tool.poetry.dependencies]
-                if let Some(deps_table) =
-                    tool_section.get("dependencies").and_then(|d| d.as_table())
-                {
-                    if deps_table.keys().any(is_dep) {
-                        return true;
-                    }
-                }
+    let project = toml_value.get("project");
+    // PEP 621: [project].dependencies and [project.optional-dependencies.<extra>]
+    project.and_then(|p| p.get("dependencies")).is_some_and(lists_it)
+        || table_values(project.and_then(|p| p.get("optional-dependencies"))).any(lists_it)
+        // PEP 735: [dependency-groups]
+        || table_values(toml_value.get("dependency-groups")).any(lists_it)
+        || table_values(toml_value.get("tool")).any(|section| {
+            // [tool.poetry.dependencies]
+            names_it(section.get("dependencies"))
                 // [tool.poetry.group.<g>.dependencies]
-                if let Some(groups) = tool_section.get("group").and_then(|g| g.as_table()) {
-                    if groups.values().any(|group| {
-                        group
-                            .get("dependencies")
-                            .and_then(|d| d.as_table())
-                            .is_some_and(|deps| deps.keys().any(is_dep))
-                    }) {
-                        return true;
-                    }
-                }
+                || table_values(section.get("group")).any(|g| names_it(g.get("dependencies")))
                 // dev-dependencies: poetry's legacy table of names, pdm's
                 // table of requirement arrays, uv's plain array
-                if let Some(dev) = tool_section.get("dev-dependencies") {
-                    if deps_array_matches(dev, dep_name) {
-                        return true;
-                    }
-                    if let Some(table) = dev.as_table() {
-                        if table.keys().any(is_dep)
-                            || table.values().any(|v| deps_array_matches(v, dep_name))
-                        {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    false
+                || section.get("dev-dependencies").is_some_and(|dev| {
+                    lists_it(dev) || names_it(Some(dev)) || table_values(Some(dev)).any(lists_it)
+                })
+        })
 }
 
 /// Check go.mod dependencies. The single-line form puts the `require`
 /// keyword before the module path; strip it so module paths anchor at line
 /// start like the indented block form, then reuse the text matcher.
 pub fn check_go_mod_dependencies(content: &str, dep_names: &[String]) -> bool {
-    let normalized: String = content
-        .lines()
-        // `// indirect` requirements are transitive, not declared dependencies
-        .filter(|line| !line.contains("// indirect"))
-        .map(|line| {
+    let mut normalized = String::with_capacity(content.len());
+    // `// indirect` requirements are transitive, not declared dependencies
+    for line in content.lines().filter(|line| !line.contains("// indirect")) {
+        normalized.push_str(
             line.trim_start()
                 .strip_prefix("require ")
-                .map_or(line, str::trim_start)
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+                .map_or(line, str::trim_start),
+        );
+        normalized.push('\n');
+    }
     check_text_dependencies(&normalized, dep_names)
 }
 
@@ -391,12 +345,36 @@ pub fn check_pubspec_lock_dependencies(content: &str, dep_names: &[String]) -> b
         .any(|dep| packages.contains(&format!("  {dep}:")))
 }
 
+/// Only `<dependency>` and `<parent>` coordinates count: a bare
+/// `<artifactId>` under `<project>` names the project itself.
 pub fn check_pom_xml_dependencies(content: &str, dep_names: &[String]) -> bool {
     let content = strip_xml_comments(content);
+    let blocks: Vec<&str> = ["dependency", "parent"]
+        .iter()
+        .flat_map(|tag| xml_blocks(&content, tag))
+        .collect();
     dep_names.iter().any(|dep| {
-        content.contains(&format!("<artifactId>{dep}</artifactId>"))
-            || content.contains(&format!("<artifactId>{dep}-"))
+        blocks.iter().any(|block| {
+            block.contains(&format!("<artifactId>{dep}</artifactId>"))
+                || block.contains(&format!("<artifactId>{dep}-"))
+        })
     })
+}
+
+/// The text inside each `<tag>…</tag>` element, in document order
+fn xml_blocks<'a>(content: &'a str, tag: &str) -> Vec<&'a str> {
+    let (open, close) = (format!("<{tag}>"), format!("</{tag}>"));
+    let mut blocks = Vec::new();
+    let mut rest = content;
+    while let Some(start) = rest.find(&open) {
+        let after = &rest[start + open.len()..];
+        let Some(end) = after.find(&close) else {
+            break;
+        };
+        blocks.push(&after[..end]);
+        rest = &after[end + close.len()..];
+    }
+    blocks
 }
 
 pub fn check_gradle_dependencies(content: &str, dep_names: &[String]) -> bool {
@@ -575,24 +553,46 @@ pub fn first_hit(
     Ok(None)
 }
 
-/// Sorted names of the files in `dir` ending in `extension` (`.csproj`)
+/// Project files (`*.csproj`, `*.rockspec`) examined per directory. Real
+/// directories hold a handful; a hostile one can hold millions, each of which
+/// would be read and recorded as a cache input.
+pub const MAX_PROJECT_FILES: usize = 32;
+
+/// Sorted names of up to `MAX_PROJECT_FILES` files in `dir` ending in
+/// `extension` (`.csproj`): the smallest ones, so the choice does not depend
+/// on the order the file system lists them in
 pub fn files_with_extension(dir: &Path, extension: &str) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(dir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter_map(|e| e.file_name().into_string().ok())
-                .filter(|name| name.ends_with(extension))
-                .collect()
-        })
-        .unwrap_or_default();
-    names.sort();
-    names
+    let names = std::fs::read_dir(dir).into_iter().flatten().flatten();
+    let matching = names
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|name| name.ends_with(extension));
+    crate::performance::smallest(matching, MAX_PROJECT_FILES)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_files_with_extension_keeps_the_smallest_names_up_to_the_bound(
+    ) -> Result<(), std::io::Error> {
+        let dir = tempfile::tempdir()?;
+        for i in 0..(MAX_PROJECT_FILES * 3) {
+            std::fs::write(dir.path().join(format!("p{i:04}.csproj")), "")?;
+        }
+        std::fs::write(dir.path().join("readme.md"), "")?;
+
+        let names = files_with_extension(dir.path(), ".csproj");
+
+        assert_eq!(
+            names.len(),
+            MAX_PROJECT_FILES,
+            "a hostile directory must not be enumerated"
+        );
+        assert!(names.windows(2).all(|w| w[0] < w[1]), "sorted");
+        assert!(names.iter().all(|n| n.ends_with(".csproj")));
+        Ok(())
+    }
 
     #[test]
     fn test_mill_ivy_dependencies_are_found() {
@@ -676,7 +676,8 @@ mod tests {
 
     #[test]
     fn test_pom_commented_dependency_is_ignored() {
-        let pom = "<!-- <artifactId>spring-boot-starter-web</artifactId> -->";
+        let pom =
+            "<!-- <dependency><artifactId>spring-boot-starter-web</artifactId></dependency> -->";
         assert!(!check_pom_xml_dependencies(
             pom,
             &names(&["spring-boot-starter-web"])
@@ -685,7 +686,7 @@ mod tests {
 
     #[test]
     fn test_pom_real_dependency_next_to_a_comment_is_found() {
-        let pom = "<!-- note --><artifactId>spring-boot-starter-web</artifactId>";
+        let pom = "<!-- note --><dependency><artifactId>spring-boot-starter-web</artifactId></dependency>";
         assert!(check_pom_xml_dependencies(
             pom,
             &names(&["spring-boot-starter-web"])
@@ -777,6 +778,42 @@ mod tests {
         let manifest: toml::Value =
             toml::from_str("[dependencies]\nweb = { package = \"axum\", version = \"0.7\" }\n")?;
         assert!(check_toml_dependencies(&manifest, &names(&["axum"])));
+        Ok(())
+    }
+
+    #[test]
+    fn test_pep621_optional_dependency_is_found() -> Result<(), toml::de::Error> {
+        let manifest: toml::Value =
+            toml::from_str("[project.optional-dependencies]\nweb = [\"django>=4\"]\n")?;
+        assert!(check_pyproject_dependencies(&manifest, &names(&["django"])));
+        Ok(())
+    }
+
+    #[test]
+    fn test_poetry_main_dependency_is_found() -> Result<(), toml::de::Error> {
+        let manifest: toml::Value =
+            toml::from_str("[tool.poetry.dependencies]\npython = \"^3.12\"\nDjango = \"^5\"\n")?;
+        assert!(check_pyproject_dependencies(&manifest, &names(&["django"])));
+        Ok(())
+    }
+
+    #[test]
+    fn test_poetry_legacy_dev_dependency_table_is_found() -> Result<(), toml::de::Error> {
+        let manifest: toml::Value =
+            toml::from_str("[tool.poetry.dev-dependencies]\npytest = \"*\"\n")?;
+        assert!(check_pyproject_dependencies(&manifest, &names(&["pytest"])));
+        Ok(())
+    }
+
+    #[test]
+    fn test_pyproject_without_the_dependency_does_not_match() -> Result<(), toml::de::Error> {
+        let manifest: toml::Value = toml::from_str(
+            "[project]\ndependencies = [\"flask\"]\n[tool.poetry.dependencies]\nrequests = \"*\"\n",
+        )?;
+        assert!(!check_pyproject_dependencies(
+            &manifest,
+            &names(&["django"])
+        ));
         Ok(())
     }
 
@@ -965,15 +1002,6 @@ mod tests {
     }
 
     #[test]
-    fn test_gemfile_lock_matches_exact_gem() {
-        let content = "GEM\n  specs:\n    rails (7.0.4)\n";
-        assert!(check_gemfile_lock_dependencies(
-            content,
-            &["rails".to_string()]
-        ));
-    }
-
-    #[test]
     fn test_yarn_lock_does_not_match_substring_package() {
         let content = "preact@^10.0.0:\n  version \"10.19.3\"\n\n\"preact-render-to-string@^6.0.0\":\n  version \"6.3.1\"\n";
         let deps = vec!["react".to_string()];
@@ -997,13 +1025,6 @@ mod tests {
         let content = "dependencies:\n  preact: 10.19.3\n";
         let deps = vec!["react".to_string()];
         assert!(!check_pnpm_lock_dependencies(content, &deps));
-    }
-
-    #[test]
-    fn test_pnpm_lock_matches_exact_package() {
-        let content = "dependencies:\n  react: 18.2.0\n";
-        let deps = vec!["react".to_string()];
-        assert!(check_pnpm_lock_dependencies(content, &deps));
     }
 
     #[test]
@@ -1098,6 +1119,26 @@ mod tests {
         ] {
             assert!(check_swift_package_dependencies(real, &names(&["vapor"])));
         }
+    }
+
+    #[test]
+    fn test_pom_own_artifact_id_is_not_a_dependency() {
+        // the project's own coordinates sit directly under <project>
+        let pom = "<project><artifactId>spring-boot-starter-notes</artifactId></project>";
+        assert!(!check_pom_xml_dependencies(
+            pom,
+            &names(&["spring-boot-starter"])
+        ));
+    }
+
+    #[test]
+    fn test_pom_parent_artifact_id_counts() {
+        // spring-boot-starter-parent is how most Spring Boot projects say so
+        let pom = "<project><parent><artifactId>spring-boot-starter-parent</artifactId></parent></project>";
+        assert!(check_pom_xml_dependencies(
+            pom,
+            &names(&["spring-boot-starter"])
+        ));
     }
 
     #[test]

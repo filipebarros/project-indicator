@@ -6,22 +6,6 @@ pub mod helpers {
             patterns.iter().map(|s| s.to_string()).collect(),
             "#FF0000".to_string(),
             "🔥".to_string(),
-            1,
-            vec![],
-        )
-    }
-
-    pub fn create_test_indicator_with_priority(
-        name: &str,
-        patterns: &[&str],
-        priority: u8,
-    ) -> crate::types::Indicator {
-        crate::types::Indicator::new(
-            name.to_string(),
-            patterns.iter().map(|s| s.to_string()).collect(),
-            "#FF0000".to_string(),
-            "🔥".to_string(),
-            priority,
             vec![],
         )
     }
@@ -41,7 +25,6 @@ pub mod helpers {
             vec![],
             "#000000".to_string(),
             "🔧".to_string(),
-            1,
             vec![],
             indicators
                 .into_iter()

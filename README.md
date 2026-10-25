@@ -9,13 +9,12 @@ Project Indicator is a high-performance replacement for shell-based project dete
 
 ## Features
 
-- 🔍 **Multi-language Detection**: Rust, JavaScript/TypeScript, Python, Go, Deno, Bun, Gleam, Terraform, Nix and more
-- 🏗️ **Framework Recognition**: React, Svelte, Axum, Django, Gin, Spring Boot, Laravel, Rails, Fresh and more
+- 🔍 **Multi-language Detection**: Rust, JavaScript/TypeScript, Python, Go, Gleam and more
+- 🏗️ **Framework Recognition**: React, Svelte, Axum, Django, Gin, Spring Boot, Laravel, Rails, Hono and more
 - 🔒 **Read-only & safe by construction**: never modifies project files, never runs a shell, no `unsafe` code
 - ⚡ **Blazing Performance**: 3-5ms typical detection
 - 🎨 **Multiple Output Formats**: Simple, Full, JSON, and Debug formats
 - 🧠 **Advanced Detection**: Confidence-based scoring with weighted root indicators
-- 🔧 **Configuration Templates**: Pre-built templates for different development environments
 - 🐚 **Shell Integration**: Ready-to-use hooks for Bash, Zsh, Fish and PowerShell
 
 ## Quick Start
@@ -87,14 +86,13 @@ project-indicator [OPTIONS] [PATH]
 **Options:**
 - `--format <FORMAT>` - Output format: simple (default), full, json, debug
 - `--no-cache` - Skip the persistent result cache for this invocation
-- `--max-depth <N>` - Maximum scan depth (default: 1; 0 scans nothing, so nothing is detected)
 - `-v, --verbose` - Enable verbose logging (also `RUST_LOG=debug`). Expected conditions such as an unparsable manifest or running in `$HOME` are silent by default and only logged here, so a prompt never shows them
 
 ### Subcommands
 
 **Configuration Management:**
 ```bash
-project-indicator config init [--template NAME] [--force] [--path PATH]
+project-indicator config init [--force]
 project-indicator config validate
 project-indicator config edit
 project-indicator config show
@@ -117,8 +115,8 @@ Detection results are cached persistently across invocations, so shell
 prompt redraws cost almost nothing:
 
 - Cache hit: about 3ms wall time including process spawn
-- Fresh detection (first visit or after a change): about the same on a typical project
-- Worst case (deep nesting, cold): ~20-30ms
+- Fresh detection (first visit or after a change): about 4ms on a typical project
+- Worst case (deep nesting, cold): under 50ms
 
 The cache lives under `$XDG_CACHE_HOME/project-indicator/` (default
 `~/.cache`) and invalidates automatically when the project directory, the
@@ -135,53 +133,36 @@ Run `cargo bench` (or `hyperfine project-indicator`) to measure on your machine.
 
 ## Configuration
 
-### Quick Start with Templates
+### Quick Start
 
-Initialize configuration with pre-built templates:
+Write the built-in configuration (every supported language and framework) to a file and edit it:
 
 ```bash
-# Minimal setup (fastest)
-project-indicator config init --template minimal
-
-# Full features
-project-indicator config init --template full
-
-# Language-specific
-project-indicator config init --template rust-dev
-project-indicator config init --template web-dev
+project-indicator config init
 ```
-
-Available templates: `minimal`, `full`, `rust-dev`, `web-dev`, `python-dev`, `mobile-dev`, `data-science`, `enterprise`
 
 ### Configuration File
 
 Create `~/.config/project-indicator/config.toml`:
 
 ```toml
-# Metadata
-[meta]
-version = "3.0"
-
 # Display settings
 [display]
-show_frameworks = true
-max_frameworks = 2
+max_frameworks = 5  # 0 hides frameworks
 
 # Detection settings
 [detection]
-max_upward_traversal = 10
 require_vcs_root = false
-max_depth = 1
 
 
 # Custom indicator (project type). `ecosystems` links it to the framework
 # catalog: frameworks sharing an ecosystem are detected for this indicator.
+# Ties between indicators follow the order of the [[indicators]] rows.
 [[indicators]]
 name = "My Language"
 files = ["*.mylang", "mylang.config"]
 color = "#FF6B6B"
 icon = "M"
-priority = 1
 ecosystems = ["npm"]
 
 # Custom framework — defined once, surfaced by every indicator that shares
@@ -193,25 +174,37 @@ color = "#4ECDC4"
 priority = 1
 
 [frameworks.detection]
-type = "Dependencies"
 dependencies = ["my-framework"]
 ```
+
+### Workspace folders
+
+A VCS-tracked folder that is not a project itself can still *hold* projects: a monorepo root whose code lives in `apps/*` or `services/*`. Such a folder reports the projects inside, up to two levels down:
+
+```
+$ cd ~/work/shop              # has .git; contains backend/ (Rust, Axum) and frontend/ (React)
+$ project-indicator --format full
+<rust>|#dea584•<js>|#f7df1e•<react>|#61dafb   # icon|color components, as for a project
+$ project-indicator --format json
+{"indicator":null,…,"projects":[{"name":"backend","indicator":"Rust","frameworks":["Axum"],…},
+                                {"name":"frontend","indicator":"JavaScript","frameworks":["React"],…}]}
+```
+
+It triggers only on a VCS marker (`.git` — file or directory — `.hg`, `.svn`), so a plain folder of checkouts like `~/Developer` stays a single blank prompt. It is bounded and stable: up to 24 subdirectories by name across both levels are examined (hidden ones, symlinks and noise directories like `node_modules` skipped; a found project is not looked into) and at most 4 projects are reported; the simple format shows one glyph per distinct result. Inside a project, or anywhere below one, nothing changes.
 
 ### Configuration Locations
 
 Priority order (first match wins):
-1. `./project-indicator.toml` (current directory)
-2. `./.project-indicator.toml` (current directory)
-3. `$XDG_CONFIG_HOME/project-indicator/config.toml` (defaults to `~/.config`)
-4. `$XDG_CONFIG_HOME/project-indicator.toml`
-5. `$HOME/.project-indicator.toml`
+1. `$XDG_CONFIG_HOME/project-indicator/config.toml` (defaults to `~/.config`)
+2. `$XDG_CONFIG_HOME/project-indicator.toml`
+3. `$HOME/.project-indicator.toml`
 
-A config file in the current directory shadows the global one — if your
-global edits seem ignored, check for a local file first.
+The current directory is never searched: a cloned repository cannot change
+your prompt by shipping a config file.
 
 Parsing is strict: unknown or removed keys make the config fail to parse.
 A failing config never breaks your prompt — detection falls back to the
-built-in template — but customizations are ignored until the file is fixed.
+built-in configuration — but customizations are ignored until the file is fixed.
 Run `project-indicator config validate` to see the exact error, or
 `project-indicator config init --force` to regenerate.
 
@@ -232,36 +225,34 @@ details.
 
 ## Supported Languages & Frameworks
 
-26 languages and 40 frameworks in the built-in `full` template. A framework is
+23 languages and 44 frameworks in the built-in configuration. A framework is
 shown for every language that shares one of its package ecosystems (the
-JavaScript-family languages share the npm framework set).
+JavaScript-family languages share the npm framework set). Bun is a runtime,
+not a language: `bun.lock` and friends are Node markers.
 
 | Language   | Frameworks Detected |
 |------------|---------------------|
-| Bun        | React, Vue, Angular, Svelte, SolidJS, Hono, Next.js, Astro, NestJS, Tauri, Vite |
+| C          | — |
 | C#         | ASP.NET Core, Xamarin |
 | C++        | — |
 | Dart       | Flutter |
-| Deno       | Fresh, Oak, Hono, plus the npm set (React, Vue, Svelte, …) |
 | Elixir     | Phoenix |
 | Gleam      | — |
 | Go         | Gin, Echo, Fiber |
 | Java       | Spring Boot |
-| JavaScript | React, Vue, Angular, Svelte, SolidJS, Hono, Next.js, Astro, NestJS, Tauri, Vite |
+| JavaScript | React, Vue, Angular, Svelte, SolidJS, Hono, Next.js, Nuxt, Astro, NestJS, Express, Electron, React Native, Tauri, Vite |
 | Julia      | — |
 | Kotlin     | Spring Boot, Ktor, Android |
 | Lua        | LÖVE |
-| Nix        | — |
 | Odin       | — |
 | PHP        | Laravel, Symfony, CodeIgniter, Yii |
 | Python     | Django, Flask, FastAPI, Tornado, Pyramid, Sanic |
 | R          | — |
-| Ruby       | Rails |
+| Ruby       | Rails, Hanami, Sinatra |
 | Rust       | Axum, Actix Web, Rocket, Tauri |
 | Scala      | Akka HTTP |
 | Swift      | Vapor |
-| Terraform  | — |
-| TypeScript | React, Vue, Angular, Svelte, SolidJS, Hono, Next.js, Astro, NestJS, Tauri, Vite |
+| TypeScript | React, Vue, Angular, Svelte, SolidJS, Hono, Next.js, Nuxt, Astro, NestJS, Express, Electron, React Native, Tauri, Vite |
 | V          | — |
 | Zig        | — |
 
@@ -280,30 +271,22 @@ color = "#61DAFB"
 priority = 1
 
 [frameworks.detection]
-type = "Dependencies"
 dependencies = ["react"]
 ```
 
-**Detection Types:**
-- `Dependencies` - dependency names checked in the manifests of the
+**Detection methods** (`[frameworks.detection]` holds exactly one of these keys):
+- `dependencies` - dependency names checked in the manifests of the
   framework's ecosystems (`npm`, `pypi`, `cargo`, `go`, `packagist`,
   `rubygems`, `maven`, `gradle`, `nuget`, `sbt`, `pub`, `hex`, `luarocks`,
-  `swiftpm`, `deno`)
-- `FileExists` - file/directory presence
+  `swiftpm`)
+- `files` - file/directory presence
 
 ### Confidence Scoring
 
 Detection uses weighted scoring based on:
 
-- **Depth tiers**: Root (1.0) → Depth 1 (0.7) → Depth 2 (0.4) → Depth 3+ (0.1-0.05)
-- **Directory multipliers**:
-  - Source dirs (`src/`, `lib/`): 1.2
-  - Config dirs (`.github/`, `config/`): 1.1
-  - Test dirs: 0.2
-  - Build output: 0.1
-  - Dependencies: 0.05
 - **Pattern importance**: the declared root-indicator weight times its context authority (default 0.5 for plain source globs)
-- **Root indicator bonus**: Weighted contribution from root indicators
+- **File placement**: root files score full weight (1.0); probed source directories (`src/main/java`) score lower — depth weight (1.0/0.7/0.4/…) × directory tier (Source 1.2 / Root 1.0 / Unknown 0.8 / Noise 0.1)
 
 Implementation: `src/types/matched_file.rs`, `src/detection/confidence_scorer.rs`, `src/detection/engine.rs`
 
@@ -372,7 +355,7 @@ export EDITOR=vim
 ### Path Traversal Protection
 
 The tool includes built-in safeguards against path traversal attacks:
-- Upward traversal is bounded (`max_upward_traversal`: default 10, built-in templates use 2–5)
+- Upward traversal is bounded (at most 4 levels above the start directory)
 - Boundary directory checks prevent scanning from system directories (`/`, `/home`, `/root`, `/System`)
 - Directory symlinks are never followed (the walker doesn't follow links, so loops can't occur); symlinked files count as files
 
@@ -380,7 +363,7 @@ The tool includes built-in safeguards against path traversal attacks:
 
 - Read-only operations - the tool never modifies project files
 - Respects file system permissions - gracefully handles unreadable files
-- Files over 1MB are read but not kept in the per-run parse cache
+- JSON/TOML manifests are read up to 32 MiB through streaming filters, other manifests up to 1 MiB, and one run reads at most 64 MiB in total, so a hostile repository cannot exhaust memory
 - Cache files stored in standard user cache directories (`$XDG_CACHE_HOME/project-indicator/results/`, default `~/.cache/...`)
 
 ## License

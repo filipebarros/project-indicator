@@ -9,7 +9,6 @@ pub const REQUIREMENTS_TXT: &str = "requirements.txt";
 pub const BUILD_SBT: &str = "build.sbt";
 pub const BUILD_SC: &str = "build.sc";
 pub const PUBSPEC_YAML: &str = "pubspec.yaml";
-pub const SETUP_PY: &str = "setup.py";
 pub const POM_XML: &str = "pom.xml";
 pub const BUILD_GRADLE: &str = "build.gradle";
 pub const BUILD_GRADLE_KTS: &str = "build.gradle.kts";
@@ -29,41 +28,3 @@ pub const POETRY_LOCK: &str = "poetry.lock";
 pub const CARGO_LOCK: &str = "Cargo.lock";
 pub const PUBSPEC_LOCK: &str = "pubspec.lock";
 pub const LUAROCKS_LOCK: &str = "luarocks.lock";
-
-pub const JS_EXTENSION: &str = "*.js";
-pub const MJS_EXTENSION: &str = "*.mjs";
-pub const CJS_EXTENSION: &str = "*.cjs";
-pub const TS_EXTENSION: &str = "*.ts";
-pub const MTS_EXTENSION: &str = "*.mts";
-pub const CTS_EXTENSION: &str = "*.cts";
-pub const TSX_EXTENSION: &str = "*.tsx";
-
-pub const RS_EXTENSION: &str = "*.rs";
-pub const C_EXTENSION: &str = "*.c";
-pub const CPP_EXTENSION: &str = "*.cpp";
-pub const CXX_EXTENSION: &str = "*.cxx";
-pub const CC_EXTENSION: &str = "*.cc";
-pub const C_HEADER_EXTENSION: &str = "*.h";
-pub const CPP_HEADER_EXTENSION: &str = "*.hpp";
-pub const HXX_HEADER_EXTENSION: &str = "*.hxx";
-pub const GO_EXTENSION: &str = "*.go";
-pub const ZIG_EXTENSION: &str = "*.zig";
-pub const SWIFT_EXTENSION: &str = "*.swift";
-
-pub const JAVA_EXTENSION: &str = "*.java";
-pub const KOTLIN_EXTENSION: &str = "*.kt";
-pub const KOTLIN_SCRIPT_EXTENSION: &str = "*.kts";
-pub const SCALA_EXTENSION: &str = "*.scala";
-
-pub const PY_EXTENSION: &str = "*.py";
-pub const PYTHON_WINDOWS_EXTENSION: &str = "*.pyw";
-pub const PYTHON_INTERFACE_EXTENSION: &str = "*.pyi";
-pub const RUBY_EXTENSION: &str = "*.rb";
-pub const PHP_EXTENSION: &str = "*.php";
-pub const JULIA_EXTENSION: &str = "*.jl";
-
-pub const DART_EXTENSION: &str = "*.dart";
-
-pub const GEMSPEC_EXTENSION: &str = "*.gemspec";
-pub const XCWORKSPACE_EXTENSION: &str = "*.xcworkspace";
-pub const VCXPROJ_EXTENSION: &str = "*.vcxproj";

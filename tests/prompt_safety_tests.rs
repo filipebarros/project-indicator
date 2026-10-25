@@ -2,18 +2,14 @@
 //! expected conditions must stay silent on stderr and a closed stdout must
 //! never panic.
 
+mod common;
+
 use std::fs;
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
 fn command(home: &TempDir) -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_project-indicator"));
-    cmd.env("HOME", home.path())
-        .env("USERPROFILE", home.path())
-        .env("XDG_CACHE_HOME", home.path().join("xdg-cache"))
-        .env("XDG_CONFIG_HOME", home.path().join("xdg-config"))
-        .env_remove("RUST_LOG");
-    cmd
+    common::cli(home.path())
 }
 
 fn run_in(dir: &std::path::Path, home: &TempDir) -> Result<Output, std::io::Error> {
@@ -40,11 +36,46 @@ fn test_empty_package_json_is_silent() -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+fn write_user_config(home: &TempDir, text: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = home.path().join("xdg-config").join("project-indicator");
+    fs::create_dir_all(&dir)?;
+    fs::write(dir.join("config.toml"), text)?;
+    Ok(())
+}
+
+/// The opposite case: a config that cannot be used IS worth a warning, once
+/// per run on stderr, while detection carries on with the built-in template.
+#[test]
+fn test_an_unparsable_config_warns_and_detection_still_works(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (home, project) = (TempDir::new()?, TempDir::new()?);
+    fs::write(
+        project.path().join("Cargo.toml"),
+        "[package]\nname = \"x\"\n",
+    )?;
+    write_user_config(&home, "this is not [ valid toml {{{")?;
+
+    let out = run_in(project.path(), &home)?;
+
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("Ignoring unusable config"), "{stderr}");
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(json["indicator"], "Rust");
+    Ok(())
+}
+
 #[test]
 fn test_malformed_cargo_toml_is_silent() -> Result<(), Box<dyn std::error::Error>> {
     let (home, project) = (TempDir::new()?, TempDir::new()?);
     fs::write(project.path().join("Cargo.toml"), "[package\nname =")?;
-    assert_silent_stderr(&run_in(project.path(), &home)?);
+    let out = run_in(project.path(), &home)?;
+    assert_silent_stderr(&out);
+    // still a Rust project by file name; the unreadable manifest only
+    // costs it the framework lookup
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(json["indicator"], "Rust");
+    assert_eq!(json["frameworks"], serde_json::json!([]));
     Ok(())
 }
 
@@ -112,4 +143,65 @@ fn test_utf8_bom_package_json_is_parsed() -> Result<(), Box<dyn std::error::Erro
         String::from_utf8_lossy(&out.stdout)
     );
     Ok(())
+}
+
+/// Run the binary, killing it at `deadline`: `None` means it hung.
+#[cfg(unix)]
+fn run_with_deadline(
+    mut cmd: Command,
+    deadline: std::time::Duration,
+) -> Result<Option<Output>, Box<dyn std::error::Error>> {
+    use std::process::Stdio;
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let start = std::time::Instant::now();
+    while child.try_wait()?.is_none() {
+        if start.elapsed() > deadline {
+            child.kill()?;
+            child.wait()?;
+            return Ok(None);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Ok(Some(child.wait_with_output()?))
+}
+
+/// A cloned repository decides what sits at these paths. A FIFO opens only
+/// when a writer shows up, so reading one blocks the prompt forever.
+#[cfg(unix)]
+fn make_fifo(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let status = Command::new("mkfifo").arg(path).status()?;
+    assert!(status.success(), "mkfifo failed");
+    Ok(())
+}
+
+#[cfg(unix)]
+fn assert_a_fifo_named_does_not_hang(
+    fifo: &str,
+    other_files: &[(&str, &str)],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (home, project) = (TempDir::new()?, TempDir::new()?);
+    for (name, content) in other_files {
+        fs::write(project.path().join(name), content)?;
+    }
+    make_fifo(&project.path().join(fifo))?;
+    let mut cmd = command(&home);
+    cmd.arg(project.path())
+        .args(["--no-cache", "--format", "json"]);
+
+    let out = run_with_deadline(cmd, std::time::Duration::from_secs(5))?;
+
+    assert!(out.is_some(), "the binary hung reading a FIFO named {fifo}");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn test_a_fifo_manifest_does_not_hang_the_prompt() -> Result<(), Box<dyn std::error::Error>> {
+    assert_a_fifo_named_does_not_hang("package.json", &[])
+}
+
+#[cfg(unix)]
+#[test]
+fn test_a_fifo_gitignore_does_not_hang_the_prompt() -> Result<(), Box<dyn std::error::Error>> {
+    assert_a_fifo_named_does_not_hang(".gitignore", &[("package.json", "{}")])
 }
