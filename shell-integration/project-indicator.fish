@@ -6,8 +6,10 @@
 function project_indicator_prompt
     command -q project-indicator; or return
     set -l info (project-indicator 2>/dev/null)
+    set -l normal (set_color normal)
+    set -l gray (set_color brblack)
     test -n "$info"
-    and echo -n (set_color brblack)"["(set_color normal)$info(set_color brblack)"]"(set_color normal)
+    and printf '%s[%s%s%s]%s' "$gray" "$normal" "$info" "$gray" "$normal"
 end
 
 function fish_right_prompt

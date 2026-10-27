@@ -24,6 +24,19 @@ fn test_failing_editor_fails_the_command() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
+fn test_missing_editor_fails_the_command() -> Result<(), Box<dyn std::error::Error>> {
+    let home = TempDir::new()?;
+    let out = common::cli(home.path())
+        .args(["config", "edit"])
+        .env_remove("EDITOR")
+        .output()?;
+
+    assert!(!out.status.success(), "a missing editor must not exit 0");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("EDITOR"));
+    Ok(())
+}
+
+#[test]
 fn test_config_directory_exists_for_the_editor() -> Result<(), Box<dyn std::error::Error>> {
     let home = TempDir::new()?;
     let out = edit_with("true", &home)?;

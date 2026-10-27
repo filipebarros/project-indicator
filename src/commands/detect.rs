@@ -9,6 +9,8 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
     let path = resolve_and_validate_path(cli.path.as_ref())?;
 
     let format = cli.format;
+    let cache_path = project_indicator::detection::repository::find_vcs_root(&path)
+        .unwrap_or_else(|| path.clone());
 
     let cache_eligible = !cli.no_cache;
     let config_path = parser::active_config_path();
@@ -19,8 +21,8 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
     };
 
     if let Some(cache) = &cache {
-        if let Some((result, display)) = cache.load(&path, config_path.as_deref()) {
-            log::debug!("persistent cache hit for {}", path.display());
+        if let Some((result, display)) = cache.load(&cache_path, config_path.as_deref()) {
+            log::debug!("persistent cache hit for {}", cache_path.display());
             outln!("{}", render(&result, format, &display));
             return Ok(());
         }
@@ -38,7 +40,7 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
 
     if let Some(cache) = &cache {
         cache.store(
-            &path,
+            &cache_path,
             config_path.as_deref(),
             &result,
             &config.display,

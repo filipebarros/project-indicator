@@ -45,13 +45,21 @@ mod tests {
     use super::*;
     use crate::test_utils::create_test_result;
 
+    fn expected_simple(icon: &str, rgb: (u8, u8, u8)) -> String {
+        if std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty()) {
+            format!("\x1b[38;2;{};{};{}m{icon}\x1b[0m", rgb.0, rgb.1, rgb.2)
+        } else {
+            icon.to_string()
+        }
+    }
+
     #[test]
     fn test_simple_format() {
         let result = create_test_result();
         let display_config = DisplayConfig::default();
 
         let output = render(&result, OutputFormat::Simple, &display_config);
-        assert_eq!(output, "\x1b[38;2;97;218;251m⚛️\x1b[0m");
+        assert_eq!(output, expected_simple("⚛️", (97, 218, 251)));
     }
 
     #[test]
@@ -94,12 +102,10 @@ mod tests {
         let off = DisplayConfig { max_frameworks: 0 };
         let on = DisplayConfig::default();
 
-        // JSON lists no frameworks (nor their evidence)
         let json = render(&result, OutputFormat::Json, &off);
         assert!(json.contains("\"frameworks\":[]"), "{json}");
         assert!(render(&result, OutputFormat::Json, &on).contains("React"));
 
-        // The prompt glyph falls back to the language, not the framework
         assert_ne!(
             render(&result, OutputFormat::Simple, &off),
             render(&result, OutputFormat::Simple, &on)
@@ -111,7 +117,6 @@ mod tests {
             render(&language_only, OutputFormat::Simple, &on)
         );
 
-        // Debug is a diagnostic dump: always complete
         assert!(render(&result, OutputFormat::Debug, &off).contains("React"));
     }
 
@@ -144,11 +149,10 @@ mod tests {
         }];
         let config = DisplayConfig { max_frameworks: 0 };
 
-        // every user-facing format, not just the one that filters on its own
         assert_eq!(render(&result, OutputFormat::Full, &config), "J|#f7df1e");
         assert_eq!(
             render(&result, OutputFormat::Simple, &config),
-            "\x1b[38;2;247;223;30mJ\x1b[0m",
+            expected_simple("J", (247, 223, 30)),
             "simple must show the language glyph, not React's"
         );
         let json: serde_json::Value =

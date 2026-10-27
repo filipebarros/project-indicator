@@ -1,6 +1,6 @@
 use crate::constants::*;
 use crate::detection::caches::ParsedFileCache;
-use crate::detection::scanner::scanning_engine::{probe_shape_matches, EXTREME_SIZE_THRESHOLD};
+use crate::detection::scanner::scanning_engine::probe_shape_matches;
 use crate::patterns::matches_pattern;
 use crate::performance::FileSystemCache;
 use crate::types::{DetectionConfig, Indicator};
@@ -12,37 +12,69 @@ use std::sync::Arc;
 /// subproject scan (`DetectionEngine::detect`)
 pub(crate) const VCS_MARKERS: [&str; 3] = [DOT_GIT, ".hg", ".svn"];
 
-/// Sorted entry names of a directory (names only — no per-entry stat; callers
-/// check candidates with `is_file()`). Sorted for a stable choice among
-/// several wildcard matches and for binary search. `None` when the directory
-/// has more entries than the scanner would walk: listing it at every level
-/// of the upward traversal would cost more than any marker is worth.
-fn list_names(path: &Path) -> Option<Vec<String>> {
-    let mut names: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(path).ok()?.filter_map(|e| e.ok()) {
-        if names.len() >= EXTREME_SIZE_THRESHOLD {
-            return None;
-        }
-        if let Ok(name) = entry.file_name().into_string() {
-            names.push(name);
-        }
-    }
-    names.sort();
-    Some(names)
+#[derive(Default)]
+struct RootDirectoryListing {
+    literal_names: std::collections::HashSet<String>,
+    wildcard_matches: std::collections::HashMap<String, String>,
 }
 
-/// Windows system directories, matched case-insensitively with any verbatim
-/// `\\?\` prefix (which `canonicalize` adds) stripped
-fn is_windows_system_dir(path: &str) -> bool {
-    let path = path.strip_prefix(r"\\?\").unwrap_or(path);
-    [
-        r"C:\Windows",
-        r"C:\Program Files",
-        r"C:\Program Files (x86)",
-        r"C:\Users",
-    ]
-    .iter()
-    .any(|dir| path.eq_ignore_ascii_case(dir))
+fn list_root_markers(
+    path: &Path,
+    indicators: &[Arc<Indicator>],
+    file_cache: &FileSystemCache,
+) -> Option<RootDirectoryListing> {
+    let roots = || {
+        indicators
+            .iter()
+            .flat_map(|indicator| &indicator.root_indicators)
+    };
+    let literal_patterns: std::collections::HashSet<&str> = roots()
+        .map(|root| root.pattern.as_str())
+        .filter(|pattern| !pattern.contains('*') && !pattern.contains('/'))
+        .collect();
+    let wildcard_patterns: Vec<&str> = roots()
+        .map(|root| root.pattern.as_str())
+        .filter(|pattern| pattern.contains('*'))
+        .collect();
+    let mut listing = RootDirectoryListing::default();
+    let Ok(entries) = std::fs::read_dir(path) else {
+        file_cache.mark_read_failed();
+        return None;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            file_cache.mark_read_failed();
+            continue;
+        };
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if literal_patterns.contains(name.as_str()) {
+            listing.literal_names.insert(name.clone());
+        }
+        if wildcard_patterns
+            .iter()
+            .any(|pattern| matches_pattern(&name, pattern))
+            && file_cache.exists(&entry.path())
+            && entry.path().is_file()
+        {
+            for pattern in wildcard_patterns
+                .iter()
+                .filter(|pattern| matches_pattern(&name, pattern))
+            {
+                listing
+                    .wildcard_matches
+                    .entry((*pattern).to_string())
+                    .and_modify(|current| {
+                        if name < *current {
+                            *current = name.clone();
+                        }
+                    })
+                    .or_insert_with(|| name.clone());
+            }
+        }
+    }
+    Some(listing)
 }
 
 #[derive(Debug, Clone)]
@@ -177,49 +209,29 @@ impl RootIndicatorEngine {
 
     /// Home, any filesystem root, and per-OS system directories: never traversed or scanned
     pub fn is_boundary_directory(&self, path: &Path) -> bool {
-        if self.cached_home_dir.as_deref() == Some(path) {
-            return true;
-        }
-
-        // Any filesystem root: "/" on Unix, drive roots (C:\, D:\) on Windows
-        if path.parent().is_none() {
-            return true;
-        }
-
-        let path_str = path.to_string_lossy();
-
-        if is_windows_system_dir(&path_str) {
-            return true;
-        }
-
-        // Exact matches only: a project under /tmp/x or /Volumes/Work/repo
-        // must still detect; only the shared roots themselves are refused
-        matches!(
-            path_str.as_ref(),
-            "/Users"
-                | "/home"
-                | "/root"
-                | "/System"
-                | "/Library"
-                | "/Applications"
-                | "/tmp"
-                | "/private/tmp"
-                | "/var"
-                | "/private/var"
-                | "/opt"
-                | "/usr"
-                | "/etc"
-                | "/srv"
-                | "/mnt"
-                | "/media"
-                | "/Volumes"
-        )
+        crate::detection::repository::is_boundary_directory(path, self.cached_home_dir.as_deref())
     }
 
     fn has_vcs_marker(path: &Path, file_cache: &FileSystemCache) -> bool {
         VCS_MARKERS
             .iter()
             .any(|marker| file_cache.exists(&path.join(marker)))
+    }
+
+    pub fn vcs_requirement_met(
+        &self,
+        start_path: &Path,
+        max_levels: usize,
+        file_cache: &FileSystemCache,
+    ) -> bool {
+        if !self.config.require_vcs_root {
+            return true;
+        }
+        start_path
+            .ancestors()
+            .take(max_levels + 1)
+            .take_while(|dir| !self.is_boundary_directory(dir))
+            .any(|dir| Self::has_vcs_marker(dir, file_cache))
     }
 
     /// The strongest marker of a directory: highest certainty, then config
@@ -254,7 +266,7 @@ impl RootIndicatorEngine {
 
         // Wildcard patterns (*.csproj, *.kt) can't be checked with a literal
         // stat; they need the directory listing, built at most once per level
-        let mut listing: Option<Option<Vec<String>>> = None;
+        let mut listing: Option<Option<RootDirectoryListing>> = None;
 
         for indicator in &self.indicators {
             for root_indicator in &indicator.root_indicators {
@@ -262,14 +274,16 @@ impl RootIndicatorEngine {
                 // literals it is the pattern itself
                 let matched_name = if root_indicator.pattern.contains('*') {
                     listing
-                        .get_or_insert_with(|| list_names(path))
-                        .iter()
-                        .flatten()
-                        .find(|name| {
-                            matches_pattern(name, &root_indicator.pattern)
-                                && path.join(name).is_file()
+                        .get_or_insert_with(|| {
+                            list_root_markers(path, &self.indicators, file_cache)
                         })
-                        .cloned()
+                        .as_ref()
+                        .and_then(|listing| {
+                            listing
+                                .wildcard_matches
+                                .get(&root_indicator.pattern)
+                                .cloned()
+                        })
                 } else {
                     let pattern = &root_indicator.pattern;
                     // A stat is enough to rule a marker out. A hit is
@@ -284,7 +298,13 @@ impl RootIndicatorEngine {
                         // 1-byte file named src/main/java is no source tree,
                         // and a directory named lib/main.dart is no manifest
                         file_cache.exists_watched(&candidate)
-                            && probe_shape_matches(&candidate, pattern)
+                            && match probe_shape_matches(&candidate, pattern) {
+                                Ok(matches) => matches,
+                                Err(_) => {
+                                    file_cache.mark_read_failed();
+                                    false
+                                }
+                            }
                     } else {
                         // A directory named like a manifest (a folder called
                         // "Cargo.toml") is no marker; only path probes
@@ -294,9 +314,11 @@ impl RootIndicatorEngine {
                     (present
                         && (pattern.contains('/')
                             || listing
-                                .get_or_insert_with(|| list_names(path))
+                                .get_or_insert_with(|| {
+                                    list_root_markers(path, &self.indicators, file_cache)
+                                })
                                 .as_ref()
-                                .is_none_or(|names| names.binary_search(pattern).is_ok())))
+                                .is_none_or(|listing| listing.literal_names.contains(pattern))))
                     .then(|| pattern.clone())
                 };
 
@@ -436,7 +458,8 @@ impl RootIndicatorEngine {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_windows_system_dir, FileSystemCache, FoundRootIndicator, ParsedFileCache};
+    use super::{FileSystemCache, FoundRootIndicator, ParsedFileCache};
+    use crate::detection::repository::is_windows_system_dir;
     use crate::detection::root_indicators::RootIndicatorEngine;
     use crate::types::{DetectionConfig, Indicator};
     use std::fs;
@@ -833,18 +856,19 @@ mod tests {
         Ok(())
     }
 
-    /// Listing a huge directory at every level costs milliseconds: past the
-    /// scanner's own entry limit, wildcard markers are not looked for
     #[test]
-    fn test_wildcard_marker_is_not_listed_for_in_a_huge_directory(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn test_wildcard_marker_is_found_in_a_huge_directory() -> Result<(), Box<dyn std::error::Error>>
+    {
         let dir = directory_with_many_files("App.csproj")?;
         let found = engine_with_root("*.csproj").find_project_root(
             dir.path(),
             &FileSystemCache::default(),
             &ParsedFileCache::new(),
         );
-        assert!(found.is_none());
+        assert_eq!(
+            found.map(|(_, marker)| marker.pattern),
+            Some("App.csproj".to_string())
+        );
         Ok(())
     }
 

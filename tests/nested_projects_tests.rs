@@ -1,8 +1,6 @@
-//! A VCS-tracked folder that is not a project itself (a monorepo root)
-//! reports the projects inside, up to two levels down (`apps/*`). Always on,
-//! bounded and stable: sorted by name, at most `MAX_NESTED_EXAMINED`
-//! subdirectories looked at across both levels and `MAX_NESTED_SHOWN`
-//! projects reported. Plain folders without a VCS marker are never scanned.
+//! A VCS repository reports every project beneath its root in stable order,
+//! including nested and source-only projects. Plain folders without a VCS
+//! marker keep the existing bounded non-VCS behavior.
 
 mod common;
 
@@ -100,18 +98,18 @@ fn test_projects_two_levels_down_are_found() -> TestResult {
 }
 
 #[test]
-fn test_first_level_projects_are_not_looked_into() -> TestResult {
+fn test_nested_projects_inside_projects_are_also_found() -> TestResult {
     let dir = create_test_project(&[
         (".git/HEAD", ""),
         ("apps/web/package.json", REACT_PACKAGE),
         ("backend/Cargo.toml", AXUM_CARGO),
-        // inside a project: must not be reported as its own project
         ("backend/tools/package.json", REACT_PACKAGE),
     ])?;
 
-    // first level in name order (apps holds no project itself), then the
-    // grandchildren of expanded non-projects
-    assert_eq!(names(&detect(dir.path())?), ["backend", "apps/web"]);
+    assert_eq!(
+        names(&detect(dir.path())?),
+        ["backend", "apps/web", "backend/tools"]
+    );
     Ok(())
 }
 
@@ -142,7 +140,7 @@ fn test_noise_directories_are_not_examined() -> TestResult {
 }
 
 #[test]
-fn test_a_project_is_not_a_container() -> TestResult {
+fn test_root_and_nested_projects_are_aggregated() -> TestResult {
     let dir = create_test_project(&[
         (".git/HEAD", ""),
         ("Cargo.toml", AXUM_CARGO),
@@ -151,8 +149,8 @@ fn test_a_project_is_not_a_container() -> TestResult {
 
     let result = detect(dir.path())?;
 
-    assert!(result.indicator.is_some());
-    assert!(result.nested.is_empty());
+    assert!(result.indicator.is_none());
+    assert_eq!(names(&result), [".", "tools"]);
     Ok(())
 }
 
@@ -198,7 +196,7 @@ fn test_hidden_directories_and_symlinks_are_skipped() -> TestResult {
 }
 
 #[test]
-fn test_no_more_than_the_shown_limit_are_reported_in_name_order() -> TestResult {
+fn test_every_project_is_reported_in_name_order() -> TestResult {
     let dir = create_test_project(&[(".git/HEAD", "")])?;
     for i in 0..(MAX_NESTED_SHOWN + 3) {
         let sub = dir.path().join(format!("p{i:02}"));
@@ -208,23 +206,27 @@ fn test_no_more_than_the_shown_limit_are_reported_in_name_order() -> TestResult 
 
     let result = detect(dir.path())?;
 
-    let expected: Vec<String> = (0..MAX_NESTED_SHOWN).map(|i| format!("p{i:02}")).collect();
+    let expected: Vec<String> = (0..(MAX_NESTED_SHOWN + 3))
+        .map(|i| format!("p{i:02}"))
+        .collect();
     assert_eq!(names(&result), expected);
     Ok(())
 }
 
 #[test]
-fn test_only_the_first_examined_subdirectories_are_looked_at() -> TestResult {
+fn test_projects_beyond_the_old_examined_limit_are_found() -> TestResult {
     let dir = create_test_project(&[(".git/HEAD", "")])?;
     for i in 0..(MAX_NESTED_EXAMINED + 4) {
         fs::create_dir(dir.path().join(format!("d{i:02}")))?;
     }
-    // projects exist only beyond the examination limit
     for i in MAX_NESTED_EXAMINED..(MAX_NESTED_EXAMINED + 4) {
         fs::write(dir.path().join(format!("d{i:02}/go.mod")), "module x\n")?;
     }
 
-    assert!(detect(dir.path())?.nested.is_empty());
+    let expected: Vec<String> = (MAX_NESTED_EXAMINED..(MAX_NESTED_EXAMINED + 4))
+        .map(|i| format!("d{i:02}"))
+        .collect();
+    assert_eq!(names(&detect(dir.path())?), expected);
     Ok(())
 }
 

@@ -16,9 +16,13 @@ if ! command -v project-indicator >/dev/null 2>&1; then
 fi
 
 fixture="$(mktemp -d)"
+container="$(mktemp -d)"
 cache="$(mktemp -d)"
-trap 'rm -rf "$fixture" "$cache"' EXIT
+trap 'rm -rf "$fixture" "$container" "$cache"' EXIT
 printf '{"name":"t","dependencies":{"react":"1"}}' >"$fixture/package.json"
+mkdir -p "$container/.git" "$container/backend" "$container/frontend"
+printf '[package]\nname = "backend"\n' >"$container/backend/Cargo.toml"
+printf '{"name":"frontend","dependencies":{"react":"1"}}' >"$container/frontend/package.json"
 export XDG_CACHE_HOME="$cache"
 # The binary won't cache a result computed from files modified within a few ms
 # of the run (coarse mtime clocks): let the fixture age past that
@@ -33,7 +37,7 @@ if [[ -n "$out" ]]; then echo "✓ bash: $out"; else
     fail=1
 fi
 # Readline needs \001..\002 around every escape sequence or it miscounts width
-if [[ "$out" == *$'\033'* && "$out" != *$'\001\033[38;2'* ]]; then
+if [[ "$out" == *$'\033[38;2'* && "$out" != *$'\001\033[38;2'* ]]; then
     echo "✗ bash hook: colour escapes are not wrapped in \\001..\\002"
     fail=1
 fi
@@ -52,6 +56,30 @@ if command -v zsh >/dev/null 2>&1; then
     fi
 else
     echo "- zsh not available, skipped"
+fi
+
+echo "Testing multi-project prompt escaping..."
+out="$(cd "$container" && bash -c "source '$SCRIPT_DIR/project-indicator.bash'; project_indicator_prompt")"
+if [[ "$out" == *$'\033[38;2'* ]]; then
+    wrapped="$(grep -o $'\001\033\[38;2' <<<"$out" | wc -l | tr -d ' ' || true)"
+    if [[ "$wrapped" == 2 ]]; then
+        echo "✓ bash: every project colour is zero-width"
+    else
+        echo "✗ bash hook: expected 2 wrapped project colours, found $wrapped"
+        fail=1
+    fi
+fi
+if command -v zsh >/dev/null 2>&1; then
+    out="$(cd "$container" && zsh -c "source '$SCRIPT_DIR/project-indicator.zsh'; project_indicator_prompt")"
+    if [[ "$out" == *$'\033[38;2'* ]]; then
+        wrapped="$(grep -o '%{'$'\033\[38;2' <<<"$out" | wc -l | tr -d ' ' || true)"
+        if [[ "$wrapped" == 2 ]]; then
+            echo "✓ zsh: every project colour is zero-width"
+        else
+            echo "✗ zsh hook: expected 2 wrapped project colours, found $wrapped"
+            fail=1
+        fi
+    fi
 fi
 
 echo "Testing fish hook..."

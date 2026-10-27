@@ -45,7 +45,7 @@ fn counts_as_file(file_type: Option<std::fs::FileType>, path: &Path) -> bool {
 
 /// How long the walk may run, scaled with the size of the scan root (roots
 /// over `EXTREME_SIZE_THRESHOLD` entries are never walked)
-fn scan_timeout(entry_count: usize) -> Duration {
+pub(crate) fn scan_timeout(entry_count: usize) -> Duration {
     match entry_count {
         0..=50 => Duration::from_millis(100),
         51..=200 => Duration::from_millis(300),
@@ -66,16 +66,14 @@ pub struct ScanningEngine {
 /// component (`lib/main.dart`) must be a file; a bare one (`src/main/java`)
 /// must be a directory with at least one entry — a 1-byte file or an empty
 /// scaffold directory is no source tree.
-pub(crate) fn probe_shape_matches(candidate: &Path, pattern: &str) -> bool {
+pub(crate) fn probe_shape_matches(candidate: &Path, pattern: &str) -> std::io::Result<bool> {
     let expects_file = pattern.rsplit('/').next().is_some_and(|c| c.contains('.'));
     if expects_file {
-        candidate.is_file()
+        Ok(candidate.is_file())
+    } else if !candidate.is_dir() {
+        Ok(false)
     } else {
-        candidate.is_dir()
-            && std::fs::read_dir(candidate)
-                .ok()
-                .and_then(|mut entries| entries.next())
-                .is_some()
+        std::fs::read_dir(candidate).map(|mut entries| entries.next().is_some())
     }
 }
 
@@ -125,12 +123,11 @@ impl ScanningEngine {
     }
 
     /// Exact patterns that are relative paths (`src/main/java`) are probed,
-    /// since the walk never leaves the root. Returns the matches and
-    /// the directories to watch: the deepest existing parent of each probe,
-    /// whose mtime changes when the next component is created. Existence is
-    /// checked prefix by prefix and shared across probes, so a project
-    /// without `src/` pays a single `stat`. Sorted for a stable result.
-    fn probe_paths(&self, root: &Path) -> (Vec<MatchedFile>, Vec<String>) {
+    /// since the walk never leaves the root. Returns the matches, directories
+    /// to watch, and whether a probe could not be read. Existence is checked
+    /// prefix by prefix and shared across probes, so a project without `src/`
+    /// pays a single `stat`. Sorted for a stable result.
+    fn probe_paths(&self, root: &Path) -> (Vec<MatchedFile>, Vec<String>, bool) {
         let mut patterns: Vec<&String> = self
             .pattern_processor
             .get_exact_patterns()
@@ -141,6 +138,7 @@ impl ScanningEngine {
 
         let mut exists: HashMap<&str, bool> = HashMap::new();
         let (mut matches, mut watched) = (Vec::new(), Vec::new());
+        let mut unreadable = false;
         for pattern in patterns {
             let mut parent: Option<&str> = None;
             let prefixes = pattern
@@ -160,8 +158,12 @@ impl ScanningEngine {
                     parent = Some(prefix);
                 }
             }
-            if all_exist && probe_shape_matches(&root.join(pattern.as_str()), pattern) {
-                matches.push(MatchedFile::new(pattern.clone(), pattern.clone()));
+            if all_exist {
+                match probe_shape_matches(&root.join(pattern.as_str()), pattern) {
+                    Ok(true) => matches.push(MatchedFile::new(pattern.clone(), pattern.clone())),
+                    Ok(false) => {}
+                    Err(_) => unreadable = true,
+                }
             }
             if let Some(parent) = parent {
                 watched.push(parent.to_string());
@@ -169,7 +171,7 @@ impl ScanningEngine {
         }
         watched.sort();
         watched.dedup();
-        (matches, watched)
+        (matches, watched, unreadable)
     }
 
     /// Root-level files matching a wildcard pattern (`*.csproj`, `*.gemspec`),
@@ -206,21 +208,21 @@ impl ScanningEngine {
             // root (e.g. a big monorepo) is not reported as empty
             let mut matches = self.root_manifest_matches(&root_names);
             matches.extend(self.root_wildcard_matches(&root_names, &matches));
-            let (probed, watched_dirs) = self.probe_paths(path);
+            let (probed, watched_dirs, unreadable) = self.probe_paths(path);
             matches.extend(probed);
             return ScanOutcome {
                 matches,
                 truncated: false,
                 watched_dirs,
-                unreadable: !listed,
+                unreadable: !listed || unreadable,
             };
         }
 
-        let (probed, probe_dirs) = self.probe_paths(path);
+        let (probed, probe_dirs, probe_unreadable) = self.probe_paths(path);
         let mut seeded = self.root_manifest_matches(&root_names);
         seeded.extend(probed);
         let mut outcome = self.scan_sequential(path, scan_timeout(entry_count), seeded);
-        outcome.unreadable |= !listed;
+        outcome.unreadable |= !listed || probe_unreadable;
         outcome.watched_dirs.extend(probe_dirs);
         outcome.watched_dirs.sort();
         outcome.watched_dirs.dedup();
@@ -725,18 +727,22 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_timeout_for_a_small_directory() {
-        assert_eq!(scan_timeout(25), std::time::Duration::from_millis(100));
-    }
-
-    #[test]
-    fn test_scan_timeout_for_a_medium_directory() {
-        assert_eq!(scan_timeout(100), std::time::Duration::from_millis(300));
-    }
-
-    #[test]
-    fn test_scan_timeout_for_a_large_directory() {
-        assert_eq!(scan_timeout(500), std::time::Duration::from_millis(500));
+    fn test_scan_timeout_scales_with_directory_size() {
+        for (entries, expected_ms) in [
+            (25, 100),
+            (50, 100),
+            (51, 300),
+            (100, 300),
+            (200, 300),
+            (201, 500),
+            (500, 500),
+        ] {
+            assert_eq!(
+                scan_timeout(entries),
+                Duration::from_millis(expected_ms),
+                "entries: {entries}"
+            );
+        }
     }
 
     /// A scan that could not see part of the tree reports it, so the result
@@ -764,6 +770,24 @@ mod tests {
 
             fs::set_permissions(temp_dir.path(), fs::Permissions::from_mode(0o755))?;
             assert!(outcome.unreadable);
+            Ok(())
+        }
+
+        #[test]
+        fn test_an_unlistable_probed_source_directory_is_reported() -> Result<()> {
+            if running_as_root() {
+                return Ok(());
+            }
+            let temp_dir = TempDir::new()?;
+            let source = temp_dir.path().join("src/main/java");
+            fs::create_dir_all(&source)?;
+            fs::set_permissions(&source, fs::Permissions::from_mode(0o000))?;
+
+            let outcome = probe_engine().scan_with_status(temp_dir.path());
+
+            fs::set_permissions(&source, fs::Permissions::from_mode(0o755))?;
+            assert!(outcome.unreadable);
+            assert!(outcome.matches.is_empty());
             Ok(())
         }
 

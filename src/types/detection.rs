@@ -92,6 +92,9 @@ pub struct DetectionEvidence {
     /// The directory root discovery settled on (absolute) and the scan ran
     /// in, when it found one; scan and framework evidence is relative to it
     pub scan_root: Option<std::path::PathBuf>,
+    /// Whether this result was aggregated at a VCS repository root
+    #[serde(default)]
+    pub repository: bool,
     pub confidence_factors: Vec<ConfidenceFactor>,
     pub files_matched: usize,
     pub total_scan_time_ms: u64,
@@ -160,7 +163,7 @@ pub struct DetectionResult {
     pub frameworks: Vec<FrameworkMatch>,
     pub confidence: f32,
     pub evidence: DetectionEvidence,
-    /// Projects found one level down, when this folder is not one itself
+    /// Projects discovered within a repository or a bounded non-VCS container
     pub nested: Vec<NestedProject>,
 }
 
@@ -198,10 +201,10 @@ fn display_source_of<'a>(
     )
 }
 
-/// A project in a direct subdirectory of a folder that is not itself one
+/// A project below a folder that is not itself one
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NestedProject {
-    /// The subdirectory's name
+    /// The path relative to the containing folder, using `/` separators
     pub name: String,
     pub indicator: Arc<Indicator>,
     pub frameworks: Vec<FrameworkMatch>,

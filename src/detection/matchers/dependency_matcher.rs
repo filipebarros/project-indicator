@@ -141,6 +141,7 @@ mod tests {
     /// `dependency` is declared in `file` (holding `content`): exactly one
     /// full-confidence match, citing `file`
     fn assert_found_in(
+        case: &str,
         file: &str,
         content: &str,
         ecosystem: Ecosystem,
@@ -151,9 +152,9 @@ mod tests {
             &[framework("F", ecosystem, &[dependency])],
             &ALL_ECOSYSTEMS,
         )?;
-        assert_eq!(matches.len(), 1, "{file}");
-        assert_eq!(matches[0].confidence, 1.0, "{file}");
-        assert_eq!(matches[0].evidence, vec![file], "{file}");
+        assert_eq!(matches.len(), 1, "{case}");
+        assert_eq!(matches[0].confidence, 1.0, "{case}");
+        assert_eq!(matches[0].evidence, vec![file], "{case}");
         Ok(())
     }
 
@@ -216,174 +217,151 @@ mod tests {
     }
 
     #[test]
-    fn test_broken_package_json_ignores_package_lock() -> TestResult {
-        assert_broken_manifest_ignores_lockfile(
-            "package.json",
+    fn test_broken_manifests_ignore_lockfiles() -> TestResult {
+        let cases = [
             (
-                "package-lock.json",
-                r#"{"packages":{"node_modules/vite":{"version":"5"}}}"#,
+                "package.json",
+                (
+                    "package-lock.json",
+                    r#"{"packages":{"node_modules/vite":{"version":"5"}}}"#,
+                ),
+                Ecosystem::Npm,
+                "vite",
             ),
-            Ecosystem::Npm,
-            "vite",
-        )
+            (
+                "composer.json",
+                (
+                    "composer.lock",
+                    r#"{"packages":[{"name":"laravel/framework"}]}"#,
+                ),
+                Ecosystem::Packagist,
+                "laravel/framework",
+            ),
+            (
+                "pyproject.toml",
+                (
+                    "poetry.lock",
+                    "[[package]]\nname = \"django\"\nversion = \"4.2\"\n",
+                ),
+                Ecosystem::Pypi,
+                "django",
+            ),
+            (
+                "Cargo.toml",
+                (
+                    "Cargo.lock",
+                    "[[package]]\nname = \"axum\"\nversion = \"0.6\"\n",
+                ),
+                Ecosystem::Cargo,
+                "axum",
+            ),
+        ];
+
+        for (manifest, lock, ecosystem, dependency) in cases {
+            assert_broken_manifest_ignores_lockfile(manifest, lock, ecosystem, dependency)?;
+        }
+        Ok(())
     }
 
     #[test]
-    fn test_broken_composer_json_ignores_composer_lock() -> TestResult {
-        assert_broken_manifest_ignores_lockfile(
-            "composer.json",
+    fn test_dependency_manifest_formats() -> TestResult {
+        let cases = [
             (
+                "Cargo manifest",
+                "Cargo.toml",
+                "[dependencies]\ntokio = \"1\"\n",
+                Ecosystem::Cargo,
+                "tokio",
+            ),
+            (
+                "npm manifest",
+                "package.json",
+                r#"{"dependencies":{"react":"18"}}"#,
+                Ecosystem::Npm,
+                "react",
+            ),
+            (
+                "npm modern lockfile",
+                "package-lock.json",
+                r#"{"packages":{"node_modules/react":{"version":"18"}}}"#,
+                Ecosystem::Npm,
+                "react",
+            ),
+            (
+                "npm v1 nested lockfile",
+                "package-lock.json",
+                r#"{"lockfileVersion":1,"dependencies":{"app":{"version":"1","dependencies":{"react":{"version":"18"}}}}}"#,
+                Ecosystem::Npm,
+                "react",
+            ),
+            (
+                "Yarn lockfile",
+                "yarn.lock",
+                "react@^18.2.0:\n  version \"18.2.0\"\n",
+                Ecosystem::Npm,
+                "react",
+            ),
+            (
+                "pnpm lockfile",
+                "pnpm-lock.yaml",
+                "dependencies:\n  react: 18.2.0\n",
+                Ecosystem::Npm,
+                "react",
+            ),
+            (
+                "Composer lockfile",
                 "composer.lock",
                 r#"{"packages":[{"name":"laravel/framework"}]}"#,
+                Ecosystem::Packagist,
+                "laravel/framework",
             ),
-            Ecosystem::Packagist,
-            "laravel/framework",
-        )
-    }
-
-    #[test]
-    fn test_broken_pyproject_ignores_poetry_lock() -> TestResult {
-        assert_broken_manifest_ignores_lockfile(
-            "pyproject.toml",
             (
+                "Gemfile lockfile",
+                "Gemfile.lock",
+                "GEM\n  specs:\n    rails (7.0.5)\n",
+                Ecosystem::Rubygems,
+                "rails",
+            ),
+            (
+                "Poetry lockfile",
                 "poetry.lock",
                 "[[package]]\nname = \"django\"\nversion = \"4.2\"\n",
+                Ecosystem::Pypi,
+                "django",
             ),
-            Ecosystem::Pypi,
-            "django",
-        )
-    }
-
-    #[test]
-    fn test_broken_cargo_toml_ignores_cargo_lock() -> TestResult {
-        assert_broken_manifest_ignores_lockfile(
-            "Cargo.toml",
             (
+                "Cargo lockfile",
                 "Cargo.lock",
                 "[[package]]\nname = \"axum\"\nversion = \"0.6\"\n",
+                Ecosystem::Cargo,
+                "axum",
             ),
-            Ecosystem::Cargo,
-            "axum",
-        )
-    }
+            (
+                "Maven manifest",
+                "pom.xml",
+                "<dependency><artifactId>spring-boot-starter</artifactId></dependency>",
+                Ecosystem::Maven,
+                "spring-boot-starter",
+            ),
+            (
+                "Gradle manifest",
+                "build.gradle",
+                "implementation 'org.springframework.boot:spring-boot-starter'",
+                Ecosystem::Gradle,
+                "spring-boot-starter",
+            ),
+            (
+                ".NET project",
+                "web.csproj",
+                r#"<PackageReference Include="Microsoft.AspNetCore.App" Version="2.1.1" />"#,
+                Ecosystem::Nuget,
+                "Microsoft.AspNetCore.App",
+            ),
+        ];
 
-    #[test]
-    fn test_cargo_toml() -> TestResult {
-        assert_found_in(
-            "Cargo.toml",
-            "[dependencies]\ntokio = \"1\"\n",
-            Ecosystem::Cargo,
-            "tokio",
-        )
-    }
-
-    #[test]
-    fn test_package_json() -> TestResult {
-        assert_found_in(
-            "package.json",
-            r#"{"dependencies":{"react":"18"}}"#,
-            Ecosystem::Npm,
-            "react",
-        )
-    }
-
-    #[test]
-    fn test_package_lock_json() -> TestResult {
-        assert_found_in(
-            "package-lock.json",
-            r#"{"packages":{"node_modules/react":{"version":"18"}}}"#,
-            Ecosystem::Npm,
-            "react",
-        )
-    }
-
-    #[test]
-    fn test_yarn_lock() -> TestResult {
-        assert_found_in(
-            "yarn.lock",
-            "react@^18.2.0:\n  version \"18.2.0\"\n",
-            Ecosystem::Npm,
-            "react",
-        )
-    }
-
-    #[test]
-    fn test_pnpm_lock_yaml() -> TestResult {
-        assert_found_in(
-            "pnpm-lock.yaml",
-            "dependencies:\n  react: 18.2.0\n",
-            Ecosystem::Npm,
-            "react",
-        )
-    }
-
-    #[test]
-    fn test_composer_lock() -> TestResult {
-        assert_found_in(
-            "composer.lock",
-            r#"{"packages":[{"name":"laravel/framework"}]}"#,
-            Ecosystem::Packagist,
-            "laravel/framework",
-        )
-    }
-
-    #[test]
-    fn test_gemfile_lock() -> TestResult {
-        assert_found_in(
-            "Gemfile.lock",
-            "GEM\n  specs:\n    rails (7.0.5)\n",
-            Ecosystem::Rubygems,
-            "rails",
-        )
-    }
-
-    #[test]
-    fn test_poetry_lock() -> TestResult {
-        assert_found_in(
-            "poetry.lock",
-            "[[package]]\nname = \"django\"\nversion = \"4.2\"\n",
-            Ecosystem::Pypi,
-            "django",
-        )
-    }
-
-    #[test]
-    fn test_cargo_lock() -> TestResult {
-        assert_found_in(
-            "Cargo.lock",
-            "[[package]]\nname = \"axum\"\nversion = \"0.6\"\n",
-            Ecosystem::Cargo,
-            "axum",
-        )
-    }
-
-    #[test]
-    fn test_maven_pom() -> TestResult {
-        assert_found_in(
-            "pom.xml",
-            "<dependency><artifactId>spring-boot-starter</artifactId></dependency>",
-            Ecosystem::Maven,
-            "spring-boot-starter",
-        )
-    }
-
-    #[test]
-    fn test_gradle_build_script() -> TestResult {
-        assert_found_in(
-            "build.gradle",
-            "implementation 'org.springframework.boot:spring-boot-starter'",
-            Ecosystem::Gradle,
-            "spring-boot-starter",
-        )
-    }
-
-    #[test]
-    fn test_dotnet_csproj() -> TestResult {
-        assert_found_in(
-            "web.csproj",
-            r#"<PackageReference Include="Microsoft.AspNetCore.App" Version="2.1.1" />"#,
-            Ecosystem::Nuget,
-            "Microsoft.AspNetCore.App",
-        )
+        for (case, file, content, ecosystem, dependency) in cases {
+            assert_found_in(case, file, content, ecosystem, dependency)?;
+        }
+        Ok(())
     }
 }

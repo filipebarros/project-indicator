@@ -119,9 +119,20 @@ prompt redraws cost almost nothing:
 - Worst case (deep nesting, cold): under 50ms
 
 The cache lives under `$XDG_CACHE_HOME/project-indicator/` (default
-`~/.cache`) and invalidates automatically when the project directory, the
-manifests and ignore files that produced the result, the directories the
-scan listed, your config file, or the binary itself change.
+`~/.cache`). A VCS repository uses its canonical root as the key, so every
+subdirectory shares one entry; non-VCS projects keep their project-directory
+key. Entries invalidate when manifests, ignore files, watched directories,
+your config, or the binary change. Cache-hit cost scales with the number of
+watched inputs rather than being constant. Timed-out, partial, and unreadable
+scans are never cached.
+
+Repository-wide cold scans use a five-second safety timeout; partial results
+are marked truncated and are not persisted. Synthetic benchmarks show the
+expected scaling: 1,000 candidate directories cost about 238ms cold and 2.52ms
+warm, while 10,000 cost about 2.61s cold and 31.6ms warm with 20,001 watched
+paths and a 6.52MB cache entry. Repository entries are not dropped based on
+watch count; larger repositories simply pay higher cold-scan and validation
+costs.
 
 ```bash
 project-indicator cache stats   # entry count and disk usage
@@ -177,9 +188,9 @@ priority = 1
 dependencies = ["my-framework"]
 ```
 
-### Workspace folders
+### Repositories
 
-A VCS-tracked folder that is not a project itself can still *hold* projects: a monorepo root whose code lives in `apps/*` or `services/*`. Such a folder reports the projects inside, up to two levels down:
+Inside a VCS repository (`.git` — file or directory — `.hg`, `.svn`), detection is repository-wide. The tool finds the nearest VCS root and recursively discovers projects beneath it, including the root project and nested projects. The result is the same whether you run it at the root or deep inside a package:
 
 ```
 $ cd ~/work/shop              # has .git; contains backend/ (Rust, Axum) and frontend/ (React)
@@ -190,7 +201,7 @@ $ project-indicator --format json
                                 {"name":"frontend","indicator":"JavaScript","frameworks":["React"],…}]}
 ```
 
-It triggers only on a VCS marker (`.git` — file or directory — `.hg`, `.svn`), so a plain folder of checkouts like `~/Developer` stays a single blank prompt. It is bounded and stable: up to 24 subdirectories by name across both levels are examined (hidden ones, symlinks and noise directories like `node_modules` skipped; a found project is not looked into) and at most 4 projects are reported; the simple format shows one glyph per distinct result. Inside a project, or anywhere below one, nothing changes.
+Traversal is stable by name. Hidden directories, directory symlinks, and noise directories such as `node_modules` are skipped. Source-only projects are detected when they have no marked project ancestor. Simple and full output show each distinct rendered indicator once; JSON and debug output retain individual project paths. Outside a VCS repository, the existing nearest-project fallback remains, including its four-level upward search and bounded nested-project discovery.
 
 ### Configuration Locations
 

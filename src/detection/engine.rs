@@ -47,8 +47,8 @@ pub struct DetectionEngine {
     indicators: Vec<Arc<Indicator>>,
     frameworks: Arc<[Framework]>,
 
-    scanning_engine: ScanningEngine,
-    root_indicator_engine: RootIndicatorEngine,
+    pub(crate) scanning_engine: ScanningEngine,
+    pub(crate) root_indicator_engine: RootIndicatorEngine,
 }
 
 impl DetectionEngine {
@@ -105,7 +105,17 @@ impl DetectionEngine {
     }
 
     pub fn detect(&self, path: &Path) -> Result<DetectionResult> {
-        let mut result = self.detect_one(path, MAX_UPWARD_TRAVERSAL);
+        if let Some(repository_root) = crate::detection::repository::find_vcs_root(path) {
+            return Ok(crate::detection::repository::detect_repository(
+                self,
+                &repository_root,
+            ));
+        }
+        Ok(self.detect_project(path))
+    }
+
+    fn detect_project(&self, path: &Path) -> DetectionResult {
+        let mut result = self.detect_one(path, MAX_UPWARD_TRAVERSAL, false);
         // A VCS-tracked folder (worktrees keep .git as a FILE, so a plain
         // existence check is right) that is no project and has none above it
         // reports the projects inside instead. Plain folders (~/Developer)
@@ -123,11 +133,11 @@ impl DetectionEngine {
         {
             self.attach_nested_projects(path, &mut result);
         }
-        Ok(result)
+        result
     }
 
-    /// Detection for the projects up to two levels below `path` (monorepo
-    /// layouts keep them in `apps/*`, `services/*`): at most
+    /// Non-VCS fallback detection for projects up to two levels below `path`
+    /// (monorepo layouts keep them in `apps/*`, `services/*`): at most
     /// `MAX_NESTED_EXAMINED` subdirectories across both levels, by name;
     /// hidden ones, symlinks and noise directories (node_modules, vendor,
     /// target, dist, …) skipped; stopping at `MAX_NESTED_SHOWN` projects.
@@ -149,7 +159,7 @@ impl DetectionEngine {
             }
             examined += 1;
             let child = path.join(&name);
-            let found = self.detect_one(&child, 0);
+            let found = self.detect_one(&child, 0, true);
 
             merge_child_evidence(&mut result.evidence, &child, &found.evidence);
 
@@ -312,7 +322,12 @@ impl DetectionEngine {
         Some((winner.indicator, confidence))
     }
 
-    fn detect_one(&self, path: &Path, max_levels_above: usize) -> DetectionResult {
+    pub(crate) fn detect_one(
+        &self,
+        path: &Path,
+        max_levels_above: usize,
+        vcs_root_known: bool,
+    ) -> DetectionResult {
         let mut evidence = DetectionEvidence::default();
         let file_cache = FileSystemCache::default();
         let parsed_cache = ParsedFileCache::new();
@@ -322,6 +337,15 @@ impl DetectionEngine {
                 "Refusing to scan from boundary directory: {}",
                 path.display()
             );
+            return no_match(evidence);
+        }
+
+        if !vcs_root_known
+            && !self
+                .root_indicator_engine
+                .vcs_requirement_met(path, max_levels_above, &file_cache)
+        {
+            evidence.read_failed |= file_cache.read_failed();
             return no_match(evidence);
         }
 
@@ -510,7 +534,7 @@ impl DetectionEngine {
 /// directory, and what it read and listed as absolute paths (its own evidence
 /// is relative to its scan root). An incomplete child makes the folder's
 /// result incomplete.
-fn merge_child_evidence(
+pub(crate) fn merge_child_evidence(
     parent: &mut DetectionEvidence,
     child_dir: &Path,
     found: &DetectionEvidence,
@@ -542,7 +566,7 @@ fn finish_evidence(
     let name = |path: &Path| {
         normalized_relative(path, scan_path).unwrap_or_else(|| path.to_string_lossy().into_owned())
     };
-    evidence.read_failed |= parsed_cache.read_failed() || file_cache.saw_dangling_symlink();
+    evidence.read_failed |= parsed_cache.read_failed() || file_cache.read_failed();
     evidence.read_files = parsed_cache.read_paths().iter().map(|p| name(p)).collect();
     // the scan root itself is always watched: no entry for it
     evidence.watched_dirs.extend(
@@ -585,6 +609,75 @@ mod tests {
             "Rust"
         );
         assert!(result.confidence > 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_large_directory_wildcard_root_marker_wins() -> Result<(), Box<dyn std::error::Error>> {
+        let config = crate::config::built_in_config();
+        let engine = DetectionEngine::new(config.indicators, config.frameworks);
+        let dir = tempfile::TempDir::new()?;
+        for index in 0..520 {
+            std::fs::write(dir.path().join(format!("f{index:03}.rs")), "")?;
+        }
+        std::fs::write(dir.path().join("zz.csproj"), "<Project/>")?;
+
+        let result = engine.detect(dir.path())?;
+
+        assert_eq!(
+            result
+                .indicator
+                .as_ref()
+                .map(|indicator| indicator.name.as_str()),
+            Some("C#")
+        );
+        Ok(())
+    }
+
+    fn engine_requiring_vcs() -> DetectionEngine {
+        let mut config = crate::config::built_in_config();
+        config.detection.require_vcs_root = true;
+        DetectionEngine::with_config(config.indicators, config.frameworks, config.detection)
+    }
+
+    #[test]
+    fn test_vcs_root_is_required_for_manifest_detection() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::TempDir::new()?;
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
+        let engine = engine_requiring_vcs();
+
+        assert!(engine.detect(dir.path())?.indicator.is_none());
+
+        std::fs::create_dir(dir.path().join(".git"))?;
+        assert_eq!(
+            engine
+                .detect(dir.path())?
+                .nested
+                .first()
+                .map(|project| project.indicator.name.as_str()),
+            Some("Rust")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_vcs_root_is_required_for_source_detection() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::TempDir::new()?;
+        std::fs::write(dir.path().join("main.rs"), "fn main() {}\n")?;
+        let engine = engine_requiring_vcs();
+
+        assert!(engine.detect(dir.path())?.indicator.is_none());
+
+        std::fs::create_dir(dir.path().join(".git"))?;
+        assert_eq!(
+            engine
+                .detect(dir.path())?
+                .nested
+                .first()
+                .map(|project| project.indicator.name.as_str()),
+            Some("Rust")
+        );
         Ok(())
     }
 
