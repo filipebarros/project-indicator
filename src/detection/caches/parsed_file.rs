@@ -98,27 +98,26 @@ pub(crate) fn read_text(path: &Path, limit: u64) -> std::io::Result<String> {
     })
 }
 
-/// Remove `//` and `/* */` comments, leaving double-quoted string contents
-/// (URLs, coordinates) untouched. Single quotes are not tracked, so a `//`
-/// inside a single-quoted string drops the rest of its line.
+/// Remove `//` and `/* */` comments, leaving single- and double-quoted string
+/// contents (URLs, coordinates) untouched.
 pub(crate) fn strip_c_comments(src: &str) -> String {
     let mut out = String::with_capacity(src.len());
     let mut chars = src.chars().peekable();
-    let (mut in_str, mut escaped) = (false, false);
+    let (mut in_str, mut escaped) = (None, false);
     while let Some(c) = chars.next() {
-        if in_str {
+        if let Some(quote) = in_str {
             out.push(c);
             match (escaped, c) {
                 (true, _) => escaped = false,
                 (false, '\\') => escaped = true,
-                (false, '"') => in_str = false,
+                (false, _) if c == quote => in_str = None,
                 _ => {}
             }
             continue;
         }
         match (c, chars.peek()) {
-            ('"', _) => {
-                in_str = true;
+            ('"' | '\'', _) => {
+                in_str = Some(c);
                 out.push(c);
             }
             ('/', Some('/')) => {

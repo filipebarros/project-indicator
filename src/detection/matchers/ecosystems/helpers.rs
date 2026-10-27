@@ -247,12 +247,16 @@ fn has_pyproject_dependency(toml_value: &toml::Value, dep_name: &str) -> bool {
     };
 
     let project = toml_value.get("project");
+    let tool = toml_value.get("tool");
     // PEP 621: [project].dependencies and [project.optional-dependencies.<extra>]
     project.and_then(|p| p.get("dependencies")).is_some_and(lists_it)
         || table_values(project.and_then(|p| p.get("optional-dependencies"))).any(lists_it)
         // PEP 735: [dependency-groups]
         || table_values(toml_value.get("dependency-groups")).any(lists_it)
-        || table_values(toml_value.get("tool")).any(|section| {
+        || ["poetry", "pdm", "uv"]
+            .iter()
+            .filter_map(|name| tool?.get(name))
+            .any(|section| {
             // [tool.poetry.dependencies]
             names_it(section.get("dependencies"))
                 // [tool.poetry.group.<g>.dependencies]
@@ -282,6 +286,14 @@ pub fn check_go_mod_dependencies(content: &str, dep_names: &[String]) -> bool {
     check_text_dependencies(&normalized, dep_names)
 }
 
+/// Only real `gem 'name'` / `gem("name")` declarations count
+pub fn check_gemfile_dependencies(content: &str, gems: &[String]) -> bool {
+    content
+        .lines()
+        .map(str::trim)
+        .any(|line| gems.iter().any(|gem| gem_line_names(line, gem)))
+}
+
 pub fn check_text_dependencies(content: &str, dep_names: &[String]) -> bool {
     dep_names
         .iter()
@@ -293,10 +305,6 @@ fn has_text_dependency(content: &str, dep_name: &str) -> bool {
         let line = line.trim();
         if line.starts_with('#') {
             continue;
-        }
-
-        if gem_line_names(line, dep_name) {
-            return true;
         }
 
         // requirements.txt style: name anchored at line start, followed by end
@@ -991,7 +999,7 @@ mod tests {
 
     #[test]
     fn test_gem_with_extra_spaces_is_found() {
-        assert!(check_text_dependencies(
+        assert!(check_gemfile_dependencies(
             "gem   'rails', '~> 7'\n",
             &names(&["rails"])
         ));
@@ -999,7 +1007,7 @@ mod tests {
 
     #[test]
     fn test_gem_with_parentheses_is_found() {
-        assert!(check_text_dependencies(
+        assert!(check_gemfile_dependencies(
             "gem(\"rails\")\n",
             &names(&["rails"])
         ));
@@ -1007,9 +1015,38 @@ mod tests {
 
     #[test]
     fn test_gem_name_prefix_is_not_a_match() {
-        assert!(!check_text_dependencies(
+        assert!(!check_gemfile_dependencies(
             "gem 'rails-html-sanitizer'\n",
             &names(&["rails"])
+        ));
+    }
+
+    #[test]
+    fn test_gemfile_assignment_is_not_a_gem() {
+        assert!(!check_gemfile_dependencies(
+            "rails = \"7\"\n",
+            &names(&["rails"])
+        ));
+    }
+
+    #[test]
+    fn test_unrelated_tool_table_is_not_python_dependency_evidence() -> Result<(), toml::de::Error>
+    {
+        let manifest: toml::Value =
+            toml::from_str("[tool.example.dependencies]\ndjango = \"*\"\n")?;
+        assert!(!check_pyproject_dependencies(
+            &manifest,
+            &names(&["django"])
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_gradle_single_quoted_url_does_not_hide_a_same_line_dependency() {
+        let gradle = "maven { url 'https://repo.example.com' }; implementation 'io.ktor:ktor-server-core:2.3'";
+        assert!(check_gradle_dependencies(
+            gradle,
+            &names(&["ktor-server-core"])
         ));
     }
 
@@ -1202,13 +1239,6 @@ mod tests {
                 "should match line: {line}"
             );
         }
-    }
-
-    #[test]
-    fn test_text_dependency_matches_gemfile() {
-        let content = "source 'https://rubygems.org'\ngem 'rails', '~> 7.1'\n";
-        let deps = vec!["rails".to_string()];
-        assert!(check_text_dependencies(content, &deps));
     }
 
     #[test]

@@ -10,14 +10,14 @@ use crate::detection::caches::ParsedFileCache;
 use crate::Result;
 use helpers::{
     check_cargo_lock_dependencies, check_composer_lock_dependencies, check_csproj_dependencies,
-    check_gemfile_lock_dependencies, check_go_mod_dependencies, check_gradle_dependencies,
-    check_json_dependencies, check_luarocks_lock_dependencies, check_mill_dependencies,
-    check_mix_dependencies, check_package_lock_dependencies, check_packages_config_dependencies,
-    check_pnpm_lock_dependencies, check_poetry_lock_dependencies, check_pom_xml_dependencies,
-    check_pubspec_dependencies, check_pubspec_lock_dependencies, check_pyproject_dependencies,
-    check_python_text_dependencies, check_rockspec_dependencies, check_sbt_dependencies,
-    check_swift_package_dependencies, check_text_dependencies, check_toml_dependencies,
-    check_yarn_lock_dependencies, files_with_extension, first_hit, hit,
+    check_gemfile_dependencies, check_gemfile_lock_dependencies, check_go_mod_dependencies,
+    check_gradle_dependencies, check_json_dependencies, check_luarocks_lock_dependencies,
+    check_mill_dependencies, check_mix_dependencies, check_package_lock_dependencies,
+    check_packages_config_dependencies, check_pnpm_lock_dependencies,
+    check_poetry_lock_dependencies, check_pom_xml_dependencies, check_pubspec_dependencies,
+    check_pubspec_lock_dependencies, check_pyproject_dependencies, check_python_text_dependencies,
+    check_rockspec_dependencies, check_sbt_dependencies, check_swift_package_dependencies,
+    check_toml_dependencies, check_yarn_lock_dependencies, files_with_extension, first_hit, hit,
     pubspec_declares_dependencies, rockspec_declares_dependencies, TextCheck,
 };
 use std::path::Path;
@@ -278,7 +278,7 @@ pub fn check_ruby_ecosystem(
     if let Some(file) = first_hit(
         parsed_cache,
         path,
-        &[(GEMFILE, check_text_dependencies)],
+        &[(GEMFILE, check_gemfile_dependencies)],
         gems,
     )? {
         return Ok(Some(file));

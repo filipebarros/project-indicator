@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "project-indicator")]
 #[command(about = "A fast project type and framework detection tool")]
-#[command(version)]
+#[command(version, args_conflicts_with_subcommands = true)]
 pub struct Cli {
     /// Directory to inspect (default: the current directory)
     pub path: Option<PathBuf>,
@@ -14,7 +14,7 @@ pub struct Cli {
     #[arg(long, value_enum, ignore_case = true, default_value = "simple")]
     pub format: OutputFormat,
 
-    #[arg(short, long, help = "Enable verbose logging output")]
+    #[arg(short, long, global = true, help = "Enable verbose logging output")]
     pub verbose: bool,
 
     #[arg(long, help = "Skip the persistent result cache for this invocation")]
@@ -127,24 +127,20 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_combined_options() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from([
-            "project-indicator",
-            "/custom/path",
-            "--format",
-            "full",
-            "cache",
-            "stats",
-        ])?;
+    fn test_management_subcommands_reject_detection_arguments() {
+        for args in [
+            &["project-indicator", "/custom/path", "cache", "stats"][..],
+            &["project-indicator", "--format", "json", "cache", "stats"],
+            &["project-indicator", "--no-cache", "config", "show"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err(), "{args:?}");
+        }
+    }
 
-        assert_eq!(cli.path, Some(PathBuf::from("/custom/path")));
-        assert_eq!(cli.format, OutputFormat::Full);
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Cache {
-                action: CacheAction::Stats
-            })
-        ));
+    #[test]
+    fn test_verbose_still_works_with_subcommands() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["project-indicator", "cache", "stats", "-v"])?;
+        assert!(cli.verbose);
         Ok(())
     }
 }
