@@ -4,7 +4,7 @@ use project_indicator::config::parser;
 use std::fs;
 use tempfile::TempDir;
 #[test]
-fn test_config_file_loading_with_detection() -> Result<(), Box<dyn std::error::Error>> {
+fn test_config_file_loading() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let config_file = temp_dir.path().join("config.toml");
 

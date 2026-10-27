@@ -28,6 +28,7 @@ pub struct FileSystemCache {
     /// A probed path was a symlink whose target is missing: creating the
     /// target moves no timestamp the persistent cache could watch
     dangling_symlink: Cell<bool>,
+    read_failed: Cell<bool>,
 }
 
 impl FileSystemCache {
@@ -58,9 +59,12 @@ impl FileSystemCache {
         exists
     }
 
-    /// Whether any probed path was a symlink to nowhere
-    pub fn saw_dangling_symlink(&self) -> bool {
-        self.dangling_symlink.get()
+    pub fn mark_read_failed(&self) {
+        self.read_failed.set(true);
+    }
+
+    pub fn read_failed(&self) -> bool {
+        self.dangling_symlink.get() || self.read_failed.get()
     }
 
     /// The directories recorded by `exists_watched`, sorted
@@ -129,7 +133,7 @@ mod tests {
         assert!(!cache.exists(&link));
         assert!(!cache.exists(&temp_dir.path().join("absent")));
 
-        assert!(cache.saw_dangling_symlink());
+        assert!(cache.read_failed());
         Ok(())
     }
 
@@ -141,7 +145,7 @@ mod tests {
 
         assert!(!cache.exists(&temp_dir.path().join("absent")));
 
-        assert!(!cache.saw_dangling_symlink());
+        assert!(!cache.read_failed());
         Ok(())
     }
 

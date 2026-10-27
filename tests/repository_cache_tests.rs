@@ -1,0 +1,151 @@
+mod common;
+
+use std::fs;
+use std::path::Path;
+use std::process::Output;
+use std::time::Duration;
+use tempfile::TempDir;
+
+type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+fn run(home: &Path, path: &Path, extra: &[&str]) -> Result<Output, std::io::Error> {
+    common::cli(home)
+        .arg(path)
+        .args(["--format", "json"])
+        .args(extra)
+        .env("RUST_LOG", "project_indicator=debug")
+        .output()
+}
+
+fn entry_count(home: &Path) -> usize {
+    fs::read_dir(home.join("xdg-cache/project-indicator/results"))
+        .map_or(0, |entries| entries.count())
+}
+
+fn success(out: &Output) {
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn test_repository_cache_is_shared_from_deep_directories() -> TestResult {
+    let repo = TempDir::new()?;
+    let home = TempDir::new()?;
+    common::write_files(
+        repo.path(),
+        &[
+            (".git/HEAD", ""),
+            (
+                "apps/shop/pom.xml",
+                "<project><dependencies><dependency><artifactId>spring-boot-starter</artifactId></dependency></dependencies></project>",
+            ),
+            ("apps/shop/src/main/java/com/acme/foo/Hello.java", "class Hello {}"),
+        ],
+    )?;
+    std::thread::sleep(Duration::from_millis(60));
+
+    let root = run(home.path(), repo.path(), &[])?;
+    success(&root);
+    let deep = run(
+        home.path(),
+        &repo.path().join("apps/shop/src/main/java/com/acme"),
+        &[],
+    )?;
+    success(&deep);
+
+    assert_eq!(root.stdout, deep.stdout);
+    assert_eq!(entry_count(home.path()), 1);
+    let stderr = String::from_utf8_lossy(&deep.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "persistent cache hit for {}",
+            repo.path().canonicalize()?.display()
+        )),
+        "{stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_deep_repository_changes_match_fresh_output() -> TestResult {
+    let repo = TempDir::new()?;
+    let home = TempDir::new()?;
+    common::write_files(
+        repo.path(),
+        &[
+            (".git/HEAD", ""),
+            ("app/package.json", r#"{"dependencies":{"react":"18"}}"#),
+        ],
+    )?;
+    std::thread::sleep(Duration::from_millis(60));
+    let before = run(home.path(), repo.path(), &[])?;
+    success(&before);
+
+    common::write_files(
+        repo.path(),
+        &[(
+            "nested/deep/package.json",
+            r#"{"dependencies":{"vue":"3"}}"#,
+        )],
+    )?;
+    let fresh = run(home.path(), repo.path(), &["--no-cache"])?;
+    let cached = run(home.path(), repo.path(), &[])?;
+    success(&fresh);
+    success(&cached);
+    assert_ne!(before.stdout, fresh.stdout);
+    assert_eq!(fresh.stdout, cached.stdout);
+    assert!(String::from_utf8_lossy(&cached.stdout).contains("Vue"));
+
+    common::write_files(
+        repo.path(),
+        &[(
+            "nested/deep/package.json",
+            r#"{"dependencies":{"svelte":"4"}}"#,
+        )],
+    )?;
+    let fresh = run(home.path(), repo.path(), &["--no-cache"])?;
+    let cached = run(home.path(), repo.path(), &[])?;
+    assert_eq!(fresh.stdout, cached.stdout);
+    assert!(String::from_utf8_lossy(&cached.stdout).contains("Svelte"));
+
+    fs::remove_file(repo.path().join("nested/deep/package.json"))?;
+    let fresh = run(home.path(), repo.path(), &["--no-cache"])?;
+    let cached = run(home.path(), repo.path(), &[])?;
+    assert_eq!(fresh.stdout, cached.stdout);
+    assert_eq!(before.stdout, cached.stdout);
+    Ok(())
+}
+
+#[test]
+fn test_repository_entry_is_not_served_after_vcs_marker_is_removed() -> TestResult {
+    let repo = TempDir::new()?;
+    let home = TempDir::new()?;
+    common::write_files(
+        repo.path(),
+        &[
+            (".git/HEAD", ""),
+            ("Cargo.toml", "[package]\nname = \"x\"\n"),
+        ],
+    )?;
+    let initialized = common::cli(home.path()).args(["config", "init"]).output()?;
+    success(&initialized);
+    let config = home.path().join("xdg-config/project-indicator/config.toml");
+    let text =
+        fs::read_to_string(&config)?.replace("require_vcs_root = false", "require_vcs_root = true");
+    fs::write(config, text)?;
+    std::thread::sleep(Duration::from_millis(60));
+    let before = run(home.path(), repo.path(), &[])?;
+    success(&before);
+    assert!(String::from_utf8_lossy(&before.stdout).contains("Rust"));
+
+    fs::remove_dir_all(repo.path().join(".git"))?;
+    let after = run(home.path(), repo.path(), &[])?;
+    success(&after);
+    let json: serde_json::Value = serde_json::from_slice(&after.stdout)?;
+    assert_eq!(json["indicator"], serde_json::Value::Null);
+    assert!(json.get("projects").is_none());
+    Ok(())
+}

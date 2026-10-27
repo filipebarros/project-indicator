@@ -1,8 +1,7 @@
 use crate::types::{DetectionResult, DisplayConfig, EvidenceItem, FrameworkMatch, Indicator};
 use serde::Serialize;
 
-/// Icon and color text comes from config files, which can sit in a cloned
-/// repository: drop control characters so it can't drive the terminal.
+/// Drop control characters from user-configured display text.
 fn printable(text: &str) -> String {
     text.chars().filter(|c| !is_unprintable(*c)).collect()
 }
@@ -138,7 +137,7 @@ pub fn render_json(result: &DetectionResult, config: &DisplayConfig) -> String {
         color: Option<String>,
         confidence: f32,
         evidence: Vec<&'a str>,
-        /// Projects found one level down; absent for an ordinary result
+        /// Projects discovered in this result; absent for an ordinary result
         #[serde(skip_serializing_if = "Vec::is_empty")]
         projects: Vec<JsonProject<'a>>,
     }
@@ -406,8 +405,7 @@ mod tests {
         assert!(debug.contains("3 files matched in 7ms"), "{debug}");
     }
 
-    /// The icon and color come from a config file that may live in a cloned
-    /// repository: they must not reach the terminal as control sequences.
+    /// User-configured display text must not emit terminal control sequences.
     fn hostile_result(icon: &str, color: &str) -> DetectionResult {
         let indicator = crate::types::Indicator::new(
             "Hostile".to_string(),
@@ -566,7 +564,11 @@ mod tests {
         }
 
         fn glyph(icon: &str, rgb: (u8, u8, u8)) -> String {
-            format!("\x1b[38;2;{};{};{}m{icon}\x1b[0m", rgb.0, rgb.1, rgb.2)
+            if color_enabled(std::env::var_os("NO_COLOR").as_deref()) {
+                format!("\x1b[38;2;{};{};{}m{icon}\x1b[0m", rgb.0, rgb.1, rgb.2)
+            } else {
+                icon.to_string()
+            }
         }
 
         #[test]

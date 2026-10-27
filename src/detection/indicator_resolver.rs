@@ -120,8 +120,6 @@ pub fn resolve_indicator(
 /// Markerless conflicts are rare (two languages' sources in one folder with
 /// no manifest): the most root source files win (five .py beside one stray
 /// .js is Python), then the higher ratio, then config order.
-/// ponytail: no confidence tiers or bonuses — bring evidence-weighting back
-/// only if real folders rank wrongly.
 fn resolve_indicator_conflicts(candidates: Vec<(usize, f32, usize)>) -> usize {
     candidates
         .into_iter()

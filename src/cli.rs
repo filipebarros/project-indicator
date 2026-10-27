@@ -86,7 +86,6 @@ mod tests {
 
     #[test]
     fn test_unknown_format_error_lists_the_valid_ones() {
-        // the removed "compact" must be rejected, naming what is accepted
         let err = match Cli::try_parse_from(["project-indicator", "--format", "compact"]) {
             Err(err) => err.to_string(),
             Ok(_) => panic!("removed format must not parse"),

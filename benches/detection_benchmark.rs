@@ -520,6 +520,101 @@ fn benchmark_framework_count_scaling(c: &mut Criterion) -> Result<(), Box<dyn st
     Ok(())
 }
 
+fn setup_repository(
+    temp_dir: &TempDir,
+    candidate_dirs: usize,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let root = temp_dir.path();
+    fs::create_dir_all(root.join(".git"))?;
+    for index in 0..candidate_dirs {
+        let project = root.join(format!("group_{index:05}/project_{index:05}"));
+        fs::create_dir_all(&project)?;
+        if index % 100 == 0 {
+            fs::write(project.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
+        } else {
+            fs::write(project.join(".keep"), "")?;
+        }
+    }
+    Ok(root.to_path_buf())
+}
+
+fn benchmark_repository_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
+    let mut group = c.benchmark_group("repository_scaling");
+    group.sample_size(10);
+    group.warm_up_time(std::time::Duration::from_millis(250));
+    let config = built_in_config();
+    let engine = DetectionEngine::with_config(
+        config.indicators.clone(),
+        config.frameworks.clone(),
+        config.detection.clone(),
+    );
+
+    for candidate_dirs in [100, 1_000, 10_000] {
+        let repository = TempDir::new()?;
+        let root = setup_repository(&repository, candidate_dirs)?;
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let started = project_indicator::cache::detection_started();
+        let result = engine.detect(&root)?;
+        assert!(
+            !result.evidence.scan_truncated,
+            "{candidate_dirs} directories truncated the repository scan"
+        );
+        println!(
+            "repository dirs={candidate_dirs} watched={} read_files={} projects={}",
+            result.evidence.watched_dirs.len(),
+            result.evidence.read_files.len(),
+            result.nested.len()
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("cold", candidate_dirs),
+            &root,
+            |b, root| {
+                b.iter(|| {
+                    if let Err(e) = engine.detect(black_box(root)) {
+                        eprintln!("Detection failed: {e}");
+                    }
+                });
+            },
+        );
+
+        let cache_dir = TempDir::new()?;
+        let cache =
+            project_indicator::cache::PersistentCache::at_base(cache_dir.path().join("results"));
+        cache.store(
+            &root,
+            None,
+            &result,
+            &config.display,
+            &config.detection,
+            started,
+        );
+        let entry_bytes = fs::read_dir(cache_dir.path().join("results"))?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| entry.metadata().ok())
+            .map(|metadata| metadata.len())
+            .sum::<u64>();
+        println!("repository dirs={candidate_dirs} cache_bytes={entry_bytes}");
+        assert!(
+            cache.load(&root, None).is_some(),
+            "{candidate_dirs} directories did not produce a cache entry"
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("warm", candidate_dirs),
+            &root,
+            |b, root| {
+                b.iter(|| {
+                    assert!(cache.load(black_box(root), None).is_some());
+                });
+            },
+        );
+    }
+
+    group.finish();
+    Ok(())
+}
+
 /// Criterion wants `fn(&mut Criterion)`: a failing setup aborts the run
 macro_rules! infallible {
     ($($wrapper:ident => $bench:ident),+ $(,)?) => {$(
@@ -540,6 +635,7 @@ infallible!(
     benchmark_single_language_detection_wrapper => benchmark_single_language_detection,
     benchmark_polyglot_detection_wrapper => benchmark_polyglot_detection,
     benchmark_framework_count_scaling_wrapper => benchmark_framework_count_scaling,
+    benchmark_repository_scaling_wrapper => benchmark_repository_scaling,
 );
 
 criterion_group!(
@@ -552,5 +648,6 @@ criterion_group!(
     benchmark_single_language_detection_wrapper,
     benchmark_polyglot_detection_wrapper,
     benchmark_framework_count_scaling_wrapper,
+    benchmark_repository_scaling_wrapper,
 );
 criterion_main!(benches);

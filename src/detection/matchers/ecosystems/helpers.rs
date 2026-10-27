@@ -18,6 +18,119 @@ fn strip_xml_comments(src: &str) -> String {
     out
 }
 
+/// Strip `#` comments outside single- and double-quoted strings.
+fn strip_hash_comments(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    for line in src.lines() {
+        let mut quote = None;
+        let mut escaped = false;
+        let mut end = line.len();
+        for (index, c) in line.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if c == '\\' && quote.is_some() {
+                escaped = true;
+                continue;
+            }
+            match (quote, c) {
+                (Some(delimiter), current) if delimiter == current => quote = None,
+                (None, '\'' | '"') => quote = Some(c),
+                (None, '#') => {
+                    end = index;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        out.push_str(&line[..end]);
+        out.push('\n');
+    }
+    out
+}
+
+fn lua_long_bracket_level(src: &str) -> Option<usize> {
+    let bytes = src.as_bytes();
+    if bytes.first() != Some(&b'[') {
+        return None;
+    }
+    let mut level = 0;
+    let mut index = 1;
+    while bytes.get(index) == Some(&b'=') {
+        level += 1;
+        index += 1;
+    }
+    (bytes.get(index) == Some(&b'[')).then_some(level)
+}
+
+fn lua_long_bracket_end(src: &str, start: usize, level: usize) -> usize {
+    let content_start = start + level + 2;
+    let closing = format!("]{}]", "=".repeat(level));
+    src[content_start..]
+        .find(&closing)
+        .map_or(src.len(), |end| content_start + end + closing.len())
+}
+
+fn strip_lua_comments(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut index = 0;
+    let mut quote = None;
+    let mut escaped = false;
+    while index < src.len() {
+        let Some(c) = src[index..].chars().next() else {
+            break;
+        };
+        if let Some(delimiter) = quote {
+            out.push(c);
+            index += c.len_utf8();
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == delimiter {
+                quote = None;
+            }
+            continue;
+        }
+        if matches!(c, '\'' | '"') {
+            quote = Some(c);
+            out.push(c);
+            index += c.len_utf8();
+            continue;
+        }
+        if src[index..].starts_with("--") {
+            let after_open = index + 2;
+            if let Some(level) = lua_long_bracket_level(&src[after_open..]) {
+                index = lua_long_bracket_end(src, after_open, level);
+            } else {
+                index = after_open;
+                while index < src.len() {
+                    let Some(c) = src[index..].chars().next() else {
+                        break;
+                    };
+                    if c == '\n' {
+                        break;
+                    }
+                    index += c.len_utf8();
+                }
+            }
+            continue;
+        }
+        if c == '[' {
+            if let Some(level) = lua_long_bracket_level(&src[index..]) {
+                let end = lua_long_bracket_end(src, index, level);
+                out.push_str(&src[index..end]);
+                index = end;
+                continue;
+            }
+        }
+        out.push(c);
+        index += c.len_utf8();
+    }
+    out
+}
+
 pub fn check_toml_dependencies(toml_value: &toml::Value, dep_names: &[String]) -> bool {
     // The manifest itself, Cargo workspaces ([workspace.dependencies]) and
     // platform tables ([target.'cfg(unix)'.dependencies])
@@ -221,12 +334,28 @@ pub fn check_package_lock_dependencies(
     json_value: &serde_json::Value,
     dep_names: &[String],
 ) -> bool {
-    let Some(packages) = json_value.get("packages").and_then(|v| v.as_object()) else {
-        return false;
-    };
-    dep_names
-        .iter()
-        .any(|dep| packages.contains_key(&format!("node_modules/{dep}")))
+    if let Some(packages) = json_value.get("packages").and_then(|v| v.as_object()) {
+        if dep_names
+            .iter()
+            .any(|dep| packages.contains_key(&format!("node_modules/{dep}")))
+        {
+            return true;
+        }
+    }
+
+    let mut pending = vec![json_value];
+    while let Some(value) = pending.pop() {
+        let Some(dependencies) = value.get("dependencies").and_then(|v| v.as_object()) else {
+            continue;
+        };
+        for (name, details) in dependencies {
+            if dep_names.contains(name) {
+                return true;
+            }
+            pending.push(details);
+        }
+    }
+    false
 }
 
 pub fn check_yarn_lock_dependencies(content: &str, dep_names: &[String]) -> bool {
@@ -271,6 +400,7 @@ pub fn check_composer_lock_dependencies(
 }
 
 pub fn check_gemfile_lock_dependencies(content: &str, gem_names: &[String]) -> bool {
+    let content = strip_hash_comments(content);
     let Some(specs_start) = content.find("specs:") else {
         return false;
     };
@@ -283,6 +413,7 @@ pub fn check_gemfile_lock_dependencies(content: &str, gem_names: &[String]) -> b
 }
 
 pub fn check_poetry_lock_dependencies(content: &str, dep_names: &[String]) -> bool {
+    let content = strip_hash_comments(content);
     dep_names.iter().any(|dep| {
         content.contains(&format!("name = \"{dep}\""))
             || content.contains(&format!("name = '{dep}'"))
@@ -290,6 +421,7 @@ pub fn check_poetry_lock_dependencies(content: &str, dep_names: &[String]) -> bo
 }
 
 pub fn check_cargo_lock_dependencies(content: &str, dep_names: &[String]) -> bool {
+    let content = strip_hash_comments(content);
     dep_names
         .iter()
         .any(|dep| content.contains(&format!("name = \"{dep}\"")))
@@ -308,15 +440,21 @@ pub fn check_sbt_dependencies(content: &str, dep_names: &[String]) -> bool {
 }
 
 pub fn check_pubspec_dependencies(content: &str, dep_names: &[String]) -> bool {
-    dep_names
-        .iter()
-        .any(|dep| content.contains(&format!("  {dep}:")) || content.contains(&format!("\n{dep}:")))
+    let content = strip_hash_comments(content);
+    dep_names.iter().any(|dep| {
+        content.lines().any(|line| {
+            line.trim_start()
+                .strip_prefix(dep.as_str())
+                .is_some_and(|rest| rest.starts_with(':'))
+        })
+    })
 }
 
 /// True when a top-level `dependencies:` / `dev_dependencies:` section has at
 /// least one entry, i.e. the manifest is authoritative and the lock (which
 /// also lists transitive packages) must not be consulted.
 pub fn pubspec_declares_dependencies(content: &str) -> bool {
+    let content = strip_hash_comments(content);
     let mut in_section = false;
     for line in content.lines() {
         let trimmed = line.trim();
@@ -336,6 +474,7 @@ pub fn pubspec_declares_dependencies(content: &str) -> bool {
 }
 
 pub fn check_pubspec_lock_dependencies(content: &str, dep_names: &[String]) -> bool {
+    let content = strip_hash_comments(content);
     let Some(packages_start) = content.find("packages:") else {
         return false;
     };
@@ -425,8 +564,10 @@ pub fn check_csproj_dependencies(content: &str, package_names: &[String]) -> boo
 }
 
 pub fn check_packages_config_dependencies(content: &str, package_names: &[String]) -> bool {
+    let content = strip_xml_comments(content).to_lowercase();
     package_names.iter().any(|name| {
-        content.contains(&format!("id=\"{name}\"")) || content.contains(&format!("id='{name}'"))
+        let id = name.to_lowercase();
+        content.contains(&format!("id=\"{id}\"")) || content.contains(&format!("id='{id}'"))
     })
 }
 
@@ -464,6 +605,7 @@ pub fn check_mill_dependencies(content: &str, dep_names: &[String]) -> bool {
 }
 
 pub fn check_mix_dependencies(content: &str, dep_names: &[String]) -> bool {
+    let content = strip_hash_comments(content);
     dep_names.iter().any(|dep| {
         // {:phoenix, "~> 1.7"} / {:"phoenix", ...}: the atom must END
         // after the name (not `{:phoenix_pubsub`)
@@ -495,13 +637,15 @@ fn rockspec_dependency_table(content: &str) -> Option<&str> {
 
 /// True when the rockspec's `dependencies` table lists a package
 pub fn rockspec_declares_dependencies(content: &str) -> bool {
-    rockspec_dependency_table(content).is_some_and(|table| table.contains(['"', '\'']))
+    let content = strip_lua_comments(content);
+    rockspec_dependency_table(&content).is_some_and(|table| table.contains(['"', '\'']))
 }
 
 /// Check .rockspec dependencies. Entries are quoted constraint strings
 /// (`"lapis >= 1.0"`): the package is the first word.
 pub fn check_rockspec_dependencies(content: &str, package_names: &[String]) -> bool {
-    let Some(table) = rockspec_dependency_table(content) else {
+    let content = strip_lua_comments(content);
+    let Some(table) = rockspec_dependency_table(&content) else {
         return false;
     };
     let mut declared = Vec::new();
@@ -520,6 +664,7 @@ pub fn check_rockspec_dependencies(content: &str, package_names: &[String]) -> b
 }
 
 pub fn check_luarocks_lock_dependencies(content: &str, package_names: &[String]) -> bool {
+    let content = strip_lua_comments(content);
     package_names.iter().any(|name| {
         content.contains(&format!("[\"{name}\"]"))
             || content.contains(&format!("['{name}']"))
@@ -875,6 +1020,12 @@ mod tests {
             csproj,
             &names(&["Microsoft.AspNetCore.Mvc"])
         ));
+
+        let packages = "<package id=\"MICROSOFT.ASPNETCORE.MVC\" version=\"2\" />";
+        assert!(check_packages_config_dependencies(
+            packages,
+            &names(&["Microsoft.AspNetCore.Mvc"])
+        ));
     }
 
     #[test]
@@ -1103,6 +1254,67 @@ mod tests {
         assert!(!check_mix_dependencies(content, &names(&["phoenix"])));
         let real = "[{:phoenix, \"~> 1.7\"}]";
         assert!(check_mix_dependencies(real, &names(&["phoenix"])));
+    }
+
+    #[test]
+    fn test_hash_commented_dependencies_are_ignored() {
+        let pubspec = "dependencies:\n  #  flutter:\n  http: ^1 #  flutter:\n";
+        assert!(!check_pubspec_dependencies(pubspec, &names(&["flutter"])));
+        assert!(check_pubspec_dependencies(
+            "dependencies:\n  flutter: any\n",
+            &names(&["flutter"])
+        ));
+
+        let mix = "# {:phoenix, \"~> 1.7\"}\nIO.puts(:ok) # {:phoenix, \"~> 1.7\"}";
+        assert!(!check_mix_dependencies(mix, &names(&["phoenix"])));
+    }
+
+    #[test]
+    fn test_commented_sections_are_ignored_across_text_manifests() {
+        let packages_config = r#"<!-- <package id="Microsoft.AspNetCore.Mvc" version="2" /> -->"#;
+        assert!(!check_packages_config_dependencies(
+            packages_config,
+            &names(&["Microsoft.AspNetCore.Mvc"])
+        ));
+
+        let gemfile_lock = "GEM\n  specs:\n    #    rails (7.0)\n";
+        assert!(!check_gemfile_lock_dependencies(
+            gemfile_lock,
+            &names(&["rails"])
+        ));
+        assert!(!check_poetry_lock_dependencies(
+            "# name = \"django\"",
+            &names(&["django"])
+        ));
+        assert!(!check_cargo_lock_dependencies(
+            "# name = \"axum\"",
+            &names(&["axum"])
+        ));
+        assert!(!check_pubspec_lock_dependencies(
+            "packages:\n  #  flutter:\n",
+            &names(&["flutter"])
+        ));
+        assert!(pubspec_declares_dependencies(
+            "dependencies: # direct\n  http: ^1\n"
+        ));
+
+        let rockspec = r#"dependencies = {
+-- "lapis >= 1.0"
+--[=[
+"lapis >= 1.0"
+]=]
+}
+"#;
+        assert!(!check_rockspec_dependencies(rockspec, &names(&["lapis"])));
+        assert!(!rockspec_declares_dependencies(rockspec));
+
+        let luarocks_lock = r#"--[[
+return { dependencies = { ["lapis"] = "1.0" } }
+]]"#;
+        assert!(!check_luarocks_lock_dependencies(
+            luarocks_lock,
+            &names(&["lapis"])
+        ));
     }
 
     #[test]

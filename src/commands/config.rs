@@ -167,8 +167,9 @@ pub fn handle_config_command(action: ConfigAction) -> Result<()> {
                     anyhow::bail!("Editor exited with {}", status);
                 }
             } else {
-                outln!("❗ Set EDITOR environment variable to edit configuration");
-                outln!("💡 Example: export EDITOR=nano");
+                anyhow::bail!(
+                    "EDITOR environment variable is not set; set it to your editor (for example, export EDITOR=nano)"
+                );
             }
             Ok(())
         }

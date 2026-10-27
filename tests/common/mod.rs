@@ -79,14 +79,13 @@ fn framework(
     }
 }
 
-/// TypeScript, Rust and Python with React, Next.js (priority 0), Rocket and
-/// Django
+/// TypeScript, Rust and Python with React, Next.js, Rocket and Django
 pub fn create_test_config() -> Config {
     use Ecosystem::{Cargo, Npm, Pypi};
     Config {
         frameworks: vec![
-            framework("React", Npm, "react", "⚛️", "#61DAFB", 1),
-            framework("Next.js", Npm, "next", "▲", "#000000", 0),
+            framework("React", Npm, "react", "⚛️", "#61DAFB", 2),
+            framework("Next.js", Npm, "next", "▲", "#000000", 1),
             framework("Rocket", Cargo, "rocket", "🚀", "#D33847", 1),
             framework("Django", Pypi, "django", "📝", "#1E293B", 1),
         ],

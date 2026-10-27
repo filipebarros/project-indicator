@@ -7,6 +7,7 @@ pub use self::validator::validate_config;
 
 use crate::types::{DetectionConfig, DisplayConfig, Framework, Indicator};
 use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Config {

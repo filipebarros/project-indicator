@@ -3,9 +3,6 @@
 
 use crate::constants::DOT_GIT;
 
-// ponytail: three weight tiers, not a nine-class taxonomy — the weights only
-// shape the markerless ratio for probed source paths; bring finer classes
-// back only if real folders rank wrongly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirectoryType {
     /// A depth-0 file (no directory component)

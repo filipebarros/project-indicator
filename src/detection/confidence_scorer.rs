@@ -3,8 +3,6 @@ use crate::types::{Indicator, MatchedFile, RootIndicator};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-// Stateless scoring helpers for the markerless path (and the honest ratio a
-// sources-only arbitration winner reports).
 /// The weight, context authority, and alternative-group (if any) of the
 /// root indicator declaring `pattern`. Defaults to `(0.5, 1.0, None)`
 /// (neutral, ungrouped) when no indicator declares this
@@ -134,15 +132,18 @@ mod tests {
     fn test_grouped_sum_does_not_depend_on_hash_order() {
         // f32 addition is not associative: 2^24 swallows a lone +1, so the
         // total reveals the summation order
-        let entries = || {
-            [("b", 16_777_216.0_f32), ("a", 1.0), ("c", 1.0)]
-                .into_iter()
-                .map(|(group, weight)| (Some(group), weight))
-        };
-        let first = super::sum_with_grouped_max(entries());
-        for _ in 0..200 {
-            assert_eq!(super::sum_with_grouped_max(entries()), first);
-        }
+        let entries = [("b", 16_777_216.0_f32), ("a", 1.0), ("c", 1.0)];
+        let forward = entries
+            .iter()
+            .map(|(group, weight)| (Some(*group), *weight));
+        let reversed = entries
+            .iter()
+            .rev()
+            .map(|(group, weight)| (Some(*group), *weight));
+        assert_eq!(
+            super::sum_with_grouped_max(forward),
+            super::sum_with_grouped_max(reversed)
+        );
     }
 
     use std::sync::Arc;

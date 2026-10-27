@@ -3,8 +3,6 @@
 
 use serde::{Deserialize, Serialize};
 
-// Unknown keys fail loudly (deny_unknown_fields); OMITTED keys take the
-// Default value, so a partial [detection]/[display] section is valid
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct DetectionConfig {

@@ -49,7 +49,9 @@ fn test_nextjs_priority_over_react() -> Result<(), Box<dyn std::error::Error>> {
 
     let simple = render(&result, OutputFormat::Simple, &display_config);
     assert!(simple.contains("▲"));
-    assert!(simple.starts_with("\x1b[38;2;"), "icon should be colored");
+    if std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty()) {
+        assert!(simple.starts_with("\x1b[38;2;"), "icon should be colored");
+    }
     Ok(())
 }
 

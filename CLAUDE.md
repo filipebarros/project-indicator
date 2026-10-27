@@ -95,35 +95,32 @@ The detection flow follows this path:
 
 1. **DetectionEngine** (`src/detection/engine.rs`) - Orchestrator
    - Creates and coordinates all specialized components
-   - Wires the per-run caches and components together
-   - A VCS-tracked folder (`.git` — file or directory — `.hg` or `.svn`)
-     that is no project and has none above it (no scan root, no indicator,
-     not a boundary directory) is a *container*: `DetectionEngine::detect`
-     runs `detect_one` on up to `MAX_NESTED_EXAMINED` (24) subdirectories by
-     name across two levels (`apps/*`; hidden dirs, symlinks and noise dirs
-     like node_modules skipped; a found project is not looked into) and
-     keeps up to `MAX_NESTED_SHOWN` (4) projects in
-     `DetectionResult::nested`. Always on. Plain folders without a VCS
-     marker are never scanned inside. Every examined directory and each
-     subproject's read files / watched dirs are merged into the container's
-     evidence (absolute paths), so the persistent cache stays correct
+   - `find_vcs_root` (`src/detection/repository.rs`) finds the nearest VCS
+     root (`.git` — file or directory — `.hg`, `.svn`) with no numeric depth
+     cap, then `detect_repository` recursively aggregates projects beneath it
+   - Repository traversal is breadth-first and stable by name. It includes the
+     root project, nested projects at any depth, and source-only projects with
+     no marked ancestor; hidden dirs, symlinks and noise dirs are skipped.
+     `DetectionResult.indicator` is `None` and `nested` contains every project.
+     Simple/full rendering deduplicates rendered indicators; JSON/debug retain
+     project paths. Every visited directory and read file becomes cache evidence
+   - Outside VCS, the existing nearest-project fallback remains: up to
+     `MAX_UPWARD_TRAVERSAL` (4) levels upward, and a bounded container scan of
+     `MAX_NESTED_EXAMINED` (24) directories across two levels with at most
+     `MAX_NESTED_SHOWN` (4) projects
 
 2. **RootIndicatorEngine** - Project root discovery
-   - Walks upward from the start path (the start directory plus up to
-     `MAX_UPWARD_TRAVERSAL` (4) levels above it) looking for qualifying root
-     markers (`Cargo.toml`, `Gemfile`, …; `.git` is never itself a root
-     candidate — it only gates `require_vcs_root`) to pick the directory to
-     scan. Marker certainty = declared weight × context class; content
-     checks disambiguate shared files (`package.json` TS vs JS via a
-     `typescript`/`ts-node` dependency, `pyproject.toml` needs a
-     project/poetry/build-system table, `DESCRIPTION` needs a `Package:`
-     line). When upward discovery finds nothing (including a
-     `require_vcs_root` rejection), the start folder's own markers still
-     identify it
+   - VCS root discovery stops at the nearest VCS marker or shared boundary;
+     non-VCS root discovery retains the four-level bound. Marker certainty =
+     declared weight × context class; content checks disambiguate shared files
+     (`package.json` TS vs JS via a `typescript`/`ts-node` dependency,
+     `pyproject.toml` needs a project/poetry/build-system table, `DESCRIPTION`
+     needs a `Package:` line)
    - Refuses to scan from boundary directories (home, system dirs)
-   - Wildcard markers (`*.csproj`) need a directory listing, so they are not
-     looked for in directories with more than 500 entries (literal markers
-     are still found by `stat`)
+   - Wildcard root discovery streams `read_dir` once, retaining only literal
+     marker names and the smallest regular-file match per wildcard pattern.
+     Memory is bounded by root-pattern count, not directory-entry count, so
+     large directories no longer lose markers such as `*.csproj`
 
 3. **ScanningEngine** (`src/detection/scanner/`) - File discovery
    - A single sequential, name-sorted walk of the scan root's immediate
@@ -189,29 +186,28 @@ The detection flow follows this path:
 #### 0. PersistentCache (Cross-invocation)
 
 - **Location**: `src/cache.rs`
-- **Purpose**: One JSON entry per project directory under
-  `$XDG_CACHE_HOME/project-indicator/results/`; a warm prompt hit skips
-  config parsing and engine construction entirely
+- **Purpose**: One JSON entry per project or VCS-repository root under
+  `$XDG_CACHE_HOME/project-indicator/results/`; every subdirectory of the same
+  repository shares that entry. A warm prompt hit skips config parsing and
+  engine construction entirely
 - **Invalidation**: evidence-keyed mtimes — the entry stores mtimes of the
-  directory, active config file, and every file that influenced the result,
-  plus the binary build (package version + executable size/mtime, so a
-  rebuild without a version bump misses), the directories above it that
-  root discovery consulted (bounded by `MAX_UPWARD_TRAVERSAL`),
-  the watched directories (`watched_dirs`: the nearest existing parent of
-  each probed source dir, plus the container scan's entries; a result
-  watching more than 256 is not stored), and the `.gitignore`/`.ignore`/`.git/info/exclude`
-  files (and the `.git/info` directory, never `.git` itself: every git command
-  touches its mtime) that shaped the walk, every file read through the parse cache — matchers
-  and root-discovery candidates, rejected ones included (all file reads go
-  through it, which is what keeps this list complete); lockfiles no
-  indicator pattern lists, the nearest existing parent of every
-  `FileExists` probe path, and — with `require_vcs_root` — the ancestors up
-  to the traversal bound; any mismatch is a miss. A result is not stored when a probed path is a dangling
-  symlink (its target appearing moves no watched timestamp). A result is not stored if
-  anything it depends on changed after detection started (or within 20 ms
-  before it: file timestamps can come from a coarser clock; a whole-second
-  timestamp betrays a 1–2 s filesystem (FAT/exFAT, ext3, HFS+, some NFS), so
-  one under 4 s old is not trusted either)
+  root, active config file, and every file that influenced the result, plus
+  the binary build (package version + executable size/mtime), the directories
+  above a non-VCS project that root discovery consulted (bounded by
+  `MAX_UPWARD_TRAVERSAL`), every directory visited by repository aggregation,
+  and the `.gitignore`/`.ignore`/`.git/info/exclude` files that shaped each
+  walk. Repository results have no ancestor watches outside their VCS root.
+  Every file read through the parse cache is included, rejected candidates and
+  lockfiles included; every probed source/framework path and watched directory
+  is included too, so deep project creation and deletion invalidate correctly.
+  Non-repository results above 256 watched dirs or read files are not stored;
+  repository entries are bounded by scan completion and the cache-only policy
+  below, never by dropping projects. A result is not stored when a probed path
+  is a dangling symlink. It is also not stored if anything it depends on
+  changed after detection started (or within 20 ms before it: file timestamps
+  can come from a coarser clock; a whole-second timestamp betrays a 1–2 s
+  filesystem (FAT/exFAT, ext3, HFS+, some NFS), so one under 4 s old is not
+  trusted either)
 - **Failure policy**: every error degrades silently to a fresh detection
   (`log::debug` only) — the cache must never break a prompt
 - **Bypass**: `--no-cache`. (`--format debug` served from a cache hit shows the original
@@ -407,6 +403,12 @@ For ecosystem-specific dependency matching:
   in-process detection is ~0.2ms for a small project, per the criterion
   benchmarks, and grows ~2µs per non-matching file in the scan root)
 - Worst case (deep nesting): < 50ms
+- Repository scaling is measured separately. Synthetic fixtures cost ~24.5ms
+  cold / 0.279ms warm at 100 candidate dirs, ~238ms / 2.52ms at 1,000, and
+  ~2.61s / 31.6ms at 10,000 (20,001 watched paths, 6.52MB entry). Repository
+  scans have a five-second safety timeout and are never truncated by watch
+  count; incomplete or unreadable results are not cached. No repository cache
+  cap is needed at 1,000 paths because warm validation remains below 10ms.
 
 ## Project Structure Notes
 
@@ -448,6 +450,6 @@ Automated via GitHub Actions:
 
 - **Editor**: `config edit` spawns `$EDITOR` directly (never via a shell), splitting arguments
 - **Path traversal protection**: bounded upward traversal (`MAX_UPWARD_TRAVERSAL`), boundary checks
-- **No file modifications**: Tool is read-only
+- **No project file modifications**: detection is read-only; only the cache and explicit config commands write files
 - **File size**: per-class read limits and a per-run budget (see Memory limits)
 - **Symlink safety**: directory symlinks are never followed (no loops possible); symlinked files count as files

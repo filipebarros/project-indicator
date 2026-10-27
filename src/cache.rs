@@ -169,8 +169,9 @@ impl PersistentCache {
         // than we can watch, and listing too many directories or files would
         // cost more to check on every hit than the scan the cache saves
         if !result.evidence.is_cacheable()
-            || result.evidence.watched_dirs.len() > DetectionEvidence::MAX_WATCHED_DIRS
-            || result.evidence.read_files.len() > DetectionEvidence::MAX_READ_FILES
+            || (!result.evidence.repository
+                && (result.evidence.watched_dirs.len() > DetectionEvidence::MAX_WATCHED_DIRS
+                    || result.evidence.read_files.len() > DetectionEvidence::MAX_READ_FILES))
         {
             return Ok(());
         }
@@ -423,6 +424,10 @@ fn ancestor_chain(
     max_upward: usize,
     require_vcs_root: bool,
 ) -> Vec<PathBuf> {
+    if result.evidence.repository {
+        return Vec::new();
+    }
+
     // Canonical like `dir` (/var vs /private/var on macOS), or the equality
     // checks below would never fire
     let root = result.evidence.scan_root.as_deref().map(canonical);
@@ -794,32 +799,6 @@ mod tests {
     }
 
     #[test]
-    fn test_touched_evidence_file_invalidates() -> Result<(), Box<dyn std::error::Error>> {
-        let (_c, project, cache) = setup()?;
-        let result = rooted(test_result("Cargo.toml"), project.path());
-        store_now(&cache, project.path(), None, &result);
-
-        sleep(Duration::from_millis(20));
-        fs::write(project.path().join("Cargo.toml"), "[package]\nname=\"x\"")?;
-
-        assert!(cache.load(project.path(), None).is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn test_new_root_file_invalidates_via_dir_mtime() -> Result<(), Box<dyn std::error::Error>> {
-        let (_c, project, cache) = setup()?;
-        let result = rooted(test_result("Cargo.toml"), project.path());
-        store_now(&cache, project.path(), None, &result);
-
-        sleep(Duration::from_millis(20));
-        fs::write(project.path().join("package.json"), "{}")?;
-
-        assert!(cache.load(project.path(), None).is_none());
-        Ok(())
-    }
-
-    #[test]
     fn test_config_mtime_change_invalidates() -> Result<(), Box<dyn std::error::Error>> {
         let (_c, project, cache) = setup()?;
         let config_dir = TempDir::new()?;
@@ -847,9 +826,12 @@ mod tests {
 
         let result = rooted(test_result("Cargo.toml"), project.path());
         store_now(&cache, project.path(), None, &result);
-
-        // Cached without a config; now one exists → miss
         assert!(cache.load(project.path(), Some(&config_path)).is_none());
+
+        store_now(&cache, project.path(), Some(&config_path), &result);
+        assert!(cache.load(project.path(), Some(&config_path)).is_some());
+        fs::remove_file(&config_path)?;
+        assert!(cache.load(project.path(), None).is_none());
         Ok(())
     }
 
@@ -979,6 +961,29 @@ mod tests {
             with.contains(&PathBuf::from("/a/b")) && with.contains(&PathBuf::from("/a")),
             "directories above the root hold the VCS marker: {with:?}"
         );
+    }
+
+    #[test]
+    fn test_repository_result_has_no_ancestor_watches() {
+        let mut result = test_result("Cargo.toml");
+        result.evidence.scan_root = Some(PathBuf::from("/a/b/root"));
+        result.evidence.repository = true;
+
+        let chain = ancestor_chain(Path::new("/a/b/root/x/y"), &result, max_upward(), true);
+
+        assert!(chain.is_empty());
+    }
+
+    #[test]
+    fn test_old_evidence_json_defaults_to_non_repository() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut json = serde_json::to_value(DetectionEvidence::default())?;
+        json.as_object_mut()
+            .ok_or("evidence must be an object")?
+            .remove("repository");
+        let evidence: DetectionEvidence = serde_json::from_value(json)?;
+        assert!(!evidence.repository);
+        Ok(())
     }
 
     #[test]

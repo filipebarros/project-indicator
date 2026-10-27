@@ -159,10 +159,15 @@ pub fn check_node_ecosystem(
     // without a manifest or when the manifest declares no dependencies at
     // all (the rule every other ecosystem follows)
     let declares_dependencies = manifest.as_ref().is_some_and(|json| {
-        ["dependencies", "devDependencies", "peerDependencies"]
-            .iter()
-            .filter_map(|section| json.get(section).and_then(|v| v.as_object()))
-            .any(|deps| !deps.is_empty())
+        [
+            "dependencies",
+            "devDependencies",
+            "optionalDependencies",
+            "peerDependencies",
+        ]
+        .iter()
+        .filter_map(|section| json.get(section).and_then(|v| v.as_object()))
+        .any(|deps| !deps.is_empty())
     });
     let unparsable = manifest.is_none() && parsed_cache.is_present(path.join(PACKAGE_JSON))?;
     if !declares_dependencies && !unparsable {
@@ -396,6 +401,25 @@ mod tests {
         let found =
             check_lua_ecosystem(dir.path(), &["lapis".to_string()], &ParsedFileCache::new())?;
         assert_eq!(found.as_deref(), Some("luarocks.lock"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_optional_dependencies_make_package_json_authoritative(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        fs::write(
+            dir.path().join("package.json"),
+            r#"{"optionalDependencies":{"lodash":"4"}}"#,
+        )?;
+        fs::write(
+            dir.path().join("package-lock.json"),
+            r#"{"packages":{"node_modules/react":{"version":"18"}}}"#,
+        )?;
+
+        let found =
+            check_node_ecosystem(dir.path(), &["react".to_string()], &ParsedFileCache::new())?;
+        assert_eq!(found, None);
         Ok(())
     }
 }
