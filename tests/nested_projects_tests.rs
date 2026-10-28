@@ -114,6 +114,33 @@ fn test_nested_projects_inside_projects_are_also_found() -> TestResult {
 }
 
 #[test]
+fn test_nested_markers_are_found_beneath_a_root_project() -> TestResult {
+    let dir = create_test_project(&[
+        (".git/HEAD", ""),
+        ("Cargo.toml", AXUM_CARGO),
+        ("csharp/App.csproj", "<Project/>"),
+        (
+            "typescript/package.json",
+            r#"{"devDependencies":{"typescript":"5"}}"#,
+        ),
+        ("java/src/main/java/Main.java", "class Main {}"),
+        ("source_only/main.rs", "fn main() {}"),
+        ("source_only/main.py", "print('not a project')"),
+    ])?;
+
+    let result = detect(dir.path())?;
+
+    assert_eq!(names(&result), [".", "csharp", "java", "typescript"]);
+    let languages: Vec<&str> = result
+        .nested
+        .iter()
+        .map(|project| project.indicator.name.as_str())
+        .collect();
+    assert_eq!(languages, ["Rust", "C#", "Java", "TypeScript"]);
+    Ok(())
+}
+
+#[test]
 fn test_pnpm_style_packages_directories_are_examined() -> TestResult {
     // packages/* is THE standard pnpm/yarn monorepo layout: it must not be
     // treated as a dependency/noise directory by the subproject scan
