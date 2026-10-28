@@ -98,10 +98,14 @@ The detection flow follows this path:
    - `find_vcs_root` (`src/detection/repository.rs`) finds the nearest VCS
      root (`.git` — file or directory — `.hg`, `.svn`) with no numeric depth
      cap, then `detect_repository` recursively aggregates projects beneath it
-   - Repository traversal is breadth-first and stable by name. It includes the
-     root project, nested projects at any depth, and source-only projects with
-     no marked ancestor; hidden dirs, symlinks and noise dirs are skipped.
-     `DetectionResult.indicator` is `None` and `nested` contains every project.
+   - Repository traversal uses `ignore::WalkBuilder`; detected projects are
+     sorted into breadth-first, name-stable output. It includes the root
+     project, nested projects at any depth, and source-only projects with no
+     marked ancestor; hidden dirs, symlinks, noise dirs, and directories
+     excluded by inherited `.gitignore`/`.ignore`/`.git/info/exclude` rules are
+     skipped, with nested negations honoured. Unsafe special or oversized ignore
+     files restart the same walk with those filters disabled rather than being
+     read. `DetectionResult.indicator` is `None` and `nested` contains every project.
      Simple/full rendering deduplicates rendered indicators; JSON/debug retain
      project paths. Every visited directory and read file becomes cache evidence
    - Outside VCS, the existing nearest-project fallback remains: up to
@@ -402,19 +406,16 @@ For ecosystem-specific dependency matching:
 - Cold detection: < 10ms wall including spawn (~3.8ms median measured;
   in-process detection is ~0.2ms for a small project, per the criterion
   benchmarks, and grows ~2µs per non-matching file in the scan root)
-- Worst case (deep nesting): < 50ms
-- Repository scaling is measured separately. Synthetic fixtures (flat
-  repositories) cost ~3.9ms cold / 0.28ms warm at 100 candidate dirs,
-  ~40ms / 2.5ms at 1,000, and ~540ms / 31ms at 10,000 (20,001 watched
-  paths, 6.6MB entry). A repository whose root is itself a project costs
-  ~6.8ms / 0.28ms at 100, ~72ms / 2.5ms at 1,000, and ~890ms / 31ms at
-  10,000. Cold scans share one directory listing per directory across
-  scanning, root-marker lookup, and child discovery (local ignore files still
-  use the ignore walker); nested project detection reuses the repository scan.
-  Cache validation cost is unchanged by this work. Repository scans have a
-  five-second safety timeout and are never truncated by watch count;
-  incomplete or unreadable results are not cached. No repository cache cap is
-  needed at 1,000 paths because warm validation remains below 10ms.
+- Worst-case repository scans have a five-second safety timeout; partial or
+  unreadable results are not cached.
+- Repository scaling is measured separately. Synthetic flat repositories cost
+  ~8.2ms cold / 0.28ms warm at 100 candidate dirs, ~83ms / 2.5ms at 1,000,
+  and ~1.00s / 29ms at 10,000 (20,001 watched paths, 6.6MB entry). A
+  repository whose root is itself a project costs ~13ms / 0.28ms at 100,
+  ~117ms / 2.5ms at 1,000, and ~1.36s / 30ms at 10,000. Repository traversal
+  uses `WalkBuilder`; raw directory listings preserve ignored exact-name root
+  manifests, and nested project detection reuses each repository scan. Cache
+  validation scales with watched inputs and remains below 10ms at 1,000 paths.
 
 ## Project Structure Notes
 

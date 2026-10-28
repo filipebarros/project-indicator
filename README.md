@@ -98,57 +98,87 @@ project-indicator config edit
 project-indicator config show
 ```
 
+**Cache Management:**
+```bash
+project-indicator cache stats
+project-indicator cache clear
+```
+
 ## Output Examples
 
-`simple` (the default) prints one colored glyph — the framework's if one was
-detected, otherwise the language's — so it fits in a prompt. `full` prints
-`icon|color` pairs separated by `•`, and `debug` dumps the evidence.
+`simple` (the default) prints one colored glyph per detected project — the
+framework's if one was detected, otherwise the language's — so it fits in a
+prompt. `full` prints `icon|color` pairs separated by `•`, and `debug` dumps
+the evidence.
 
 ```bash
 $ project-indicator --format json
 {"indicator":"TypeScript","frameworks":["React"],"icon":"","color":"#61dafb","confidence":0.85,"evidence":["package.json"]}
 ```
 
+## Repository Detection
+
+Inside a VCS repository (`.git` — file or directory — `.hg`, `.svn`), detection
+is repository-wide. The tool finds the nearest VCS root and discovers the root
+project and nested projects beneath it. Running from a subdirectory returns the
+same result as running from the repository root:
+
+```console
+$ cd ~/work/shop              # backend/ (Rust, Axum) and frontend/ (React)
+$ project-indicator --format full
+<rust>|#dea584•<js>|#f7df1e•<react>|#61dafb
+$ project-indicator --format json
+{"indicator":null,…,"projects":[{"name":"backend","indicator":"Rust","frameworks":["Axum"],…},
+                                {"name":"frontend","indicator":"JavaScript","frameworks":["React"],…}]}
+```
+
+Repository traversal uses the `ignore` crate's `WalkBuilder`. It skips hidden
+directories, directory symlinks, noise directories such as `node_modules`, and
+directories excluded by `.gitignore`, `.ignore`, or `.git/info/exclude`, with
+nested rules and negations honoured. Ignore files must be small regular files;
+if an unsafe special or oversized file is found, traversal restarts with ignore
+filters disabled rather than risking a blocking read.
+
+Exact-name root manifests still count when gitignored, preserving detection for
+projects such as an ignored `Cargo.toml` or `go.work`. Source-only projects are
+detected when they have no marked project ancestor. Results are sorted into
+stable breadth-first order. Simple and full output deduplicate rendered
+indicators; JSON and debug output retain individual project paths.
+
+Outside a VCS repository, detection uses the nearest-project fallback, with a
+four-level upward search and bounded nested-project discovery.
+
 ## Performance
 
-Detection results are cached persistently across invocations, so shell
-prompt redraws cost almost nothing:
+Detection results are cached persistently across invocations. A typical project
+costs about 3ms for a cache hit and 4ms for fresh detection, including process
+startup. Repository scans scale with the number of visited directories and
+watched inputs; cold repository scans have a five-second safety timeout.
 
-- Cache hit: about 3ms wall time including process spawn
-- Fresh detection (first visit or after a change): about 4ms on a typical project
-- Worst case (deep nesting, cold): under 50ms
+The cache lives under `$XDG_CACHE_HOME/project-indicator/results/` (default
+`~/.cache/project-indicator/results/`). A VCS repository uses its canonical root
+as the key, so every subdirectory shares one entry; non-VCS detection uses the
+canonical invocation directory. Entries invalidate when manifests, ignore
+files, watched directories, the active config, or the binary change. Timed-out, partial, and
+unreadable scans are never cached.
 
-The cache lives under `$XDG_CACHE_HOME/project-indicator/` (default
-`~/.cache`). A VCS repository uses its canonical root as the key, so every
-subdirectory shares one entry; non-VCS projects keep their project-directory
-key. Entries invalidate when manifests, ignore files, watched directories,
-your config, or the binary change. Cache-hit cost scales with the number of
-watched inputs rather than being constant. Timed-out, partial, and unreadable
-scans are never cached.
+Current median measurements on the development machine:
 
-Repository-wide cold scans use a five-second safety timeout; partial results
-are marked truncated and are not persisted. Cold scanning shares one directory
-listing per directory across scanning, root-marker lookup, and child
-discovery (directories with local ignore files still take the ignore-walker
-path), and nested project detection reuses the repository scan instead of
-rescanning. Synthetic benchmarks with flat repositories show the expected
-scaling: 1,000 candidate directories cost about 40ms cold and 2.5ms warm,
-while 10,000 cost about 540ms cold and 31ms warm with 20,001 watched paths
-and a 6.6MB cache entry. A repository whose root is itself a project — the
-common dotfiles shape — costs about 72ms cold at 1,000 directories and
-890ms at 10,000; its warm validation is unchanged at about 31ms, since cache
-validation cost is unaffected by this work. On a real dotfiles repository of
-about 7,400 directories, a cold scan went from about 3.9s to about 0.5s with
-byte-identical output. Repository entries are not dropped based on watch
-count; larger repositories simply pay higher cold-scan and validation costs.
+| Scenario | Cold detection | Warm cache | Cache entry |
+|----------|---------------:|-----------:|------------:|
+| Flat synthetic repository, 10,000 candidate directories | 1.00s | 28.9ms | 6.6MB |
+| Root-project synthetic repository, 10,000 candidate directories | 1.36s | 29.6ms | 6.6MB |
+| Real dotfiles repository, 89 visited directories | 14.6ms | 3.4ms | 29KB |
+
+These figures are examples, not guarantees; filesystem, repository contents,
+and hardware all affect them. Run `cargo bench` or `hyperfine project-indicator`
+to measure your own setup.
 
 ```bash
 project-indicator cache stats   # entry count and disk usage
 project-indicator cache clear   # start fresh
 project-indicator --no-cache .  # bypass for one invocation
 ```
-
-Run `cargo bench` (or `hyperfine project-indicator`) to measure on your machine.
 
 ## Configuration
 
@@ -195,21 +225,6 @@ priority = 1
 [frameworks.detection]
 dependencies = ["my-framework"]
 ```
-
-### Repositories
-
-Inside a VCS repository (`.git` — file or directory — `.hg`, `.svn`), detection is repository-wide. The tool finds the nearest VCS root and recursively discovers projects beneath it, including the root project and nested projects. The result is the same whether you run it at the root or deep inside a package:
-
-```
-$ cd ~/work/shop              # has .git; contains backend/ (Rust, Axum) and frontend/ (React)
-$ project-indicator --format full
-<rust>|#dea584•<js>|#f7df1e•<react>|#61dafb   # icon|color components, as for a project
-$ project-indicator --format json
-{"indicator":null,…,"projects":[{"name":"backend","indicator":"Rust","frameworks":["Axum"],…},
-                                {"name":"frontend","indicator":"JavaScript","frameworks":["React"],…}]}
-```
-
-Traversal is stable by name. Hidden directories, directory symlinks, and noise directories such as `node_modules` are skipped. Source-only projects are detected when they have no marked project ancestor. Simple and full output show each distinct rendered indicator once; JSON and debug output retain individual project paths. Outside a VCS repository, the existing nearest-project fallback remains, including its four-level upward search and bounded nested-project discovery.
 
 ### Configuration Locations
 
@@ -346,7 +361,8 @@ See [CLAUDE.md](CLAUDE.md) for the detection pipeline, caching design and module
 
 ```
 0  Success (project detected or no project found)
-1  Error (invalid path, config error, other failures)
+1  Runtime error (invalid path, config error, or another failure)
+2  CLI usage error (invalid arguments or options)
 ```
 
 ## Security Considerations
@@ -373,10 +389,15 @@ export EDITOR=vim
 
 ### Path Traversal Protection
 
-The tool includes built-in safeguards against path traversal attacks:
-- Upward traversal is bounded (at most 4 levels above the start directory)
-- Boundary directory checks prevent scanning from system directories (`/`, `/home`, `/root`, `/System`)
-- Directory symlinks are never followed (the walker doesn't follow links, so loops can't occur); symlinked files count as files
+The tool includes built-in safeguards against unsafe traversal:
+- Non-VCS upward discovery is bounded to 4 levels; VCS-root discovery climbs
+  until it finds a repository or reaches a boundary
+- Boundary checks prevent scanning from home and system directories such as
+  `/`, `/home`, `/root`, and `/System`
+- Directory symlinks are never followed, preventing loops; symlinked files
+  count as files
+- Ignore files must be small regular files, preventing FIFOs and similar
+  special files from blocking a scan
 
 ### File System Access
 

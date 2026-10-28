@@ -3,10 +3,14 @@ use crate::detection::directory::DirectoryListing;
 use crate::detection::engine::{merge_child_evidence, DetectionEngine};
 use crate::detection::pattern_processor::normalized_relative;
 use crate::detection::root_indicators::VCS_MARKERS;
+use crate::detection::scanner::traverser::root_ignore_files_are_safe;
 use crate::performance::FileSystemCache;
 use crate::types::{DetectionEvidence, DetectionResult, DirectoryType, NestedProject};
-use std::collections::VecDeque;
+use ignore::WalkBuilder;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Windows system directories, matched case-insensitively with any verbatim
@@ -72,11 +76,121 @@ pub(crate) fn find_vcs_root_with_home(start: &Path, home: Option<&Path>) -> Opti
 
 const REPOSITORY_SCAN_TIMEOUT: Duration = Duration::from_secs(5);
 
+struct RepositoryScan<'a> {
+    engine: &'a DetectionEngine,
+    repository_root: &'a Path,
+    started: Instant,
+    result: DetectionResult,
+    file_cache: FileSystemCache,
+    parsed_cache: ParsedFileCache,
+    files_matched: usize,
+}
+
+impl<'a> RepositoryScan<'a> {
+    fn new(engine: &'a DetectionEngine, repository_root: &'a Path, started: Instant) -> Self {
+        let evidence = DetectionEvidence {
+            repository: true,
+            scan_root: Some(repository_root.to_path_buf()),
+            ..DetectionEvidence::default()
+        };
+        Self {
+            engine,
+            repository_root,
+            started,
+            result: DetectionResult::new_with_evidence(None, Vec::new(), 0.0, evidence),
+            file_cache: FileSystemCache::default(),
+            parsed_cache: ParsedFileCache::new(),
+            files_matched: 0,
+        }
+    }
+
+    fn scan_directory(&mut self, directory: &Path, has_project_ancestor: bool) -> bool {
+        self.result
+            .evidence
+            .watched_dirs
+            .push(directory.to_string_lossy().into_owned());
+        let listing = DirectoryListing::read(directory);
+        let scan = self
+            .engine
+            .scanning_engine
+            .scan_with_listing(directory, &listing);
+        self.files_matched += scan.matches.len();
+        self.result.evidence.scan_truncated |= scan.truncated;
+        self.result.evidence.read_failed |= scan.unreadable;
+        self.result.evidence.watched_dirs.extend(
+            scan.watched_dirs
+                .iter()
+                .map(|watched| directory.join(watched).to_string_lossy().into_owned()),
+        );
+
+        let mut has_project = has_project_ancestor;
+        if !scan.matches.is_empty() {
+            let markers = self.engine.root_indicator_engine.qualifying_markers_in(
+                directory,
+                &listing,
+                &self.file_cache,
+                &self.parsed_cache,
+            );
+            if !has_project || !markers.is_empty() {
+                let found = self.engine.detect_one_with_scan(directory, markers, scan);
+                merge_child_evidence(&mut self.result.evidence, directory, &found.evidence);
+                if let Some(indicator) = found.indicator {
+                    let name = normalized_relative(directory, self.repository_root)
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| ".".to_string());
+                    self.result.nested.push(NestedProject {
+                        name,
+                        indicator,
+                        frameworks: found.frameworks,
+                    });
+                    has_project = true;
+                }
+            }
+        }
+        has_project
+    }
+
+    fn finish(mut self) -> DetectionResult {
+        self.result.evidence.read_failed |=
+            self.parsed_cache.read_failed() || self.file_cache.read_failed();
+        self.result.evidence.watched_dirs.extend(
+            self.file_cache
+                .watched_dirs()
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned()),
+        );
+        self.result.evidence.read_files.extend(
+            self.parsed_cache
+                .read_paths()
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned()),
+        );
+        self.result.evidence.read_files.sort();
+        self.result.evidence.read_files.dedup();
+        self.result.evidence.watched_dirs.sort();
+        self.result.evidence.watched_dirs.dedup();
+        self.result.nested.sort_by(|a, b| {
+            let depth = |name: &str| {
+                if name == "." {
+                    0
+                } else {
+                    name.split('/').count()
+                }
+            };
+            depth(&a.name)
+                .cmp(&depth(&b.name))
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        self.result.evidence.set_scan_metrics(
+            self.files_matched,
+            self.started.elapsed().as_millis() as u64,
+        );
+        self.result
+    }
+}
+
 pub fn detect_repository(engine: &DetectionEngine, repository_root: &Path) -> DetectionResult {
-    let repository_root = repository_root
-        .canonicalize()
-        .unwrap_or_else(|_| repository_root.to_path_buf());
-    detect_repository_with_timeout(engine, &repository_root, REPOSITORY_SCAN_TIMEOUT)
+    detect_repository_with_timeout(engine, repository_root, REPOSITORY_SCAN_TIMEOUT)
 }
 
 pub(crate) fn detect_repository_with_timeout(
@@ -89,116 +203,92 @@ pub(crate) fn detect_repository_with_timeout(
         .unwrap_or_else(|_| repository_root.to_path_buf());
     let started = Instant::now();
     let deadline = started + timeout;
-    let evidence = DetectionEvidence {
-        repository: true,
-        scan_root: Some(repository_root.clone()),
-        ..DetectionEvidence::default()
-    };
-    let mut result = DetectionResult::new_with_evidence(None, Vec::new(), 0.0, evidence);
-    let mut queue = VecDeque::from([(repository_root.clone(), false)]);
-    let file_cache = FileSystemCache::default();
-    let parsed_cache = ParsedFileCache::new();
-
-    let mut files_matched = 0;
-    while let Some((directory, has_project_ancestor)) = queue.pop_front() {
-        if Instant::now() >= deadline {
-            result.evidence.scan_truncated = true;
-            break;
-        }
-        result
-            .evidence
-            .watched_dirs
-            .push(directory.to_string_lossy().into_owned());
-
-        let listing = DirectoryListing::read(&directory);
-        let scan = engine
-            .scanning_engine
-            .scan_with_listing(&directory, &listing);
-        files_matched += scan.matches.len();
-        result.evidence.scan_truncated |= scan.truncated;
-        result.evidence.read_failed |= scan.unreadable;
-        result.evidence.watched_dirs.extend(
-            scan.watched_dirs
-                .iter()
-                .map(|watched| directory.join(watched).to_string_lossy().into_owned()),
-        );
-
-        let mut has_project = has_project_ancestor;
-        if !scan.matches.is_empty() {
-            let markers = engine.root_indicator_engine.qualifying_markers_in(
-                &directory,
-                &listing,
-                &file_cache,
-                &parsed_cache,
-            );
-            if !has_project || !markers.is_empty() {
-                let found = engine.detect_one_with_scan(&directory, markers, scan);
-                merge_child_evidence(&mut result.evidence, &directory, &found.evidence);
-                if let Some(indicator) = found.indicator {
-                    let name = normalized_relative(&directory, &repository_root)
-                        .filter(|name| !name.is_empty())
-                        .unwrap_or_else(|| ".".to_string());
-                    result.nested.push(NestedProject {
-                        name,
-                        indicator,
-                        frameworks: found.frameworks,
-                    });
-                    has_project = true;
-                }
-            }
-        }
-
-        let (children, unreadable) = repository_candidate_dirs(&listing);
-        result.evidence.read_failed |= unreadable;
-        for child in children {
-            queue.push_back((child, has_project));
+    if root_ignore_files_are_safe(&repository_root) {
+        if let Some(result) =
+            detect_repository_walk(engine, &repository_root, started, deadline, true)
+        {
+            return result;
         }
     }
-
-    result.evidence.read_failed |= parsed_cache.read_failed() || file_cache.read_failed();
-    result.evidence.watched_dirs.extend(
-        file_cache
-            .watched_dirs()
-            .iter()
-            .map(|path| path.to_string_lossy().into_owned()),
-    );
-    result.evidence.read_files.extend(
-        parsed_cache
-            .read_paths()
-            .iter()
-            .map(|path| path.to_string_lossy().into_owned()),
-    );
-    result.evidence.read_files.sort();
-    result.evidence.read_files.dedup();
-    result.evidence.watched_dirs.sort();
-    result.evidence.watched_dirs.dedup();
-    result
-        .evidence
-        .set_scan_metrics(files_matched, started.elapsed().as_millis() as u64);
-    result
+    match detect_repository_walk(engine, &repository_root, started, deadline, false) {
+        Some(result) => result,
+        None => unreachable!("an unfiltered walk cannot encounter unsafe ignore files"),
+    }
 }
 
-fn repository_candidate_dirs(listing: &DirectoryListing) -> (Vec<PathBuf>, bool) {
-    let mut directories = Vec::new();
-    let mut unreadable = false;
-    for entry in listing.entries() {
-        match entry.file_type() {
-            Ok(file_type) if file_type.is_dir() => {}
-            Ok(_) => continue,
-            Err(_) => {
-                unreadable = true;
-                continue;
+fn detect_repository_walk(
+    engine: &DetectionEngine,
+    repository_root: &Path,
+    started: Instant,
+    deadline: Instant,
+    respect_ignores: bool,
+) -> Option<DetectionResult> {
+    let unsafe_ignore = Arc::new(AtomicBool::new(false));
+    let unsafe_in_filter = unsafe_ignore.clone();
+    let mut builder = WalkBuilder::new(repository_root);
+    builder
+        .standard_filters(true)
+        .git_ignore(respect_ignores)
+        .ignore(respect_ignores)
+        .git_exclude(respect_ignores)
+        .parents(false)
+        .git_global(false)
+        .require_git(false)
+        .hidden(false)
+        .sort_by_file_name(|a, b| a.cmp(b))
+        .filter_entry(move |entry| {
+            if entry.depth() == 0 {
+                return true;
+            }
+            if !entry.file_type().is_some_and(|kind| kind.is_dir()) {
+                return false;
+            }
+            let Some(name) = entry.file_name().to_str() else {
+                return false;
+            };
+            if name.starts_with('.') || DirectoryType::classify(name) == DirectoryType::Noise {
+                return false;
+            }
+            if respect_ignores && !root_ignore_files_are_safe(entry.path()) {
+                unsafe_in_filter.store(true, Ordering::Relaxed);
+                return false;
+            }
+            true
+        });
+
+    let mut scan = RepositoryScan::new(engine, repository_root, started);
+    let mut project_roots = HashSet::new();
+    for entry in builder.build() {
+        if unsafe_ignore.load(Ordering::Relaxed) {
+            return None;
+        }
+        if Instant::now() >= deadline {
+            scan.result.evidence.scan_truncated = true;
+            break;
+        }
+        match entry {
+            Ok(entry) => {
+                let directory = entry.into_path();
+                let has_project_ancestor = directory
+                    .ancestors()
+                    .skip(1)
+                    .take_while(|ancestor| ancestor.starts_with(repository_root))
+                    .any(|ancestor| project_roots.contains(ancestor));
+                let has_project = scan.scan_directory(&directory, has_project_ancestor);
+                if has_project && !has_project_ancestor {
+                    project_roots.insert(directory);
+                }
+            }
+            Err(error) => {
+                log::debug!("Repository walk skipped an unreadable entry: {error}");
+                scan.result.evidence.read_failed = true;
             }
         }
-        let Ok(name) = entry.file_name().into_string() else {
-            continue;
-        };
-        if !name.starts_with('.') && DirectoryType::classify(&name) != DirectoryType::Noise {
-            directories.push(entry.path());
-        }
     }
-    directories.sort();
-    (directories, unreadable)
+    if unsafe_ignore.load(Ordering::Relaxed) {
+        return None;
+    }
+    Some(scan.finish())
 }
 
 #[cfg(test)]
@@ -434,6 +524,90 @@ mod tests {
             assert_eq!(result.nested.len(), 1);
             assert_eq!(result.nested[0].name, ".");
             assert_eq!(result.nested[0].indicator.name, "Java");
+            Ok(())
+        }
+
+        #[test]
+        fn test_repository_prunes_ignored_directories_and_honours_negations() -> TestResult {
+            let dir = TempDir::new()?;
+            write(
+                dir.path(),
+                &[
+                    (".git/HEAD", ""),
+                    (".git/info/exclude", "excluded/\n"),
+                    (".gitignore", "ignored/\n"),
+                    (".ignore", "also-ignored/\n"),
+                    ("actual/package.json", "{}"),
+                    ("ignored/package.json", "{}"),
+                    ("also-ignored/package.json", "{}"),
+                    ("excluded/package.json", "{}"),
+                    ("config/.gitignore", "generated/*\n!generated/keep/\n"),
+                    ("config/generated/drop/package.json", "{}"),
+                    ("config/generated/keep/package.json", "{}"),
+                ],
+            )?;
+
+            let result = detect_repository(&engine(), dir.path());
+
+            let names: Vec<&str> = result
+                .nested
+                .iter()
+                .map(|project| project.name.as_str())
+                .collect();
+            assert_eq!(names, ["actual", "config/generated/keep"]);
+            assert!(result
+                .evidence
+                .watched_dirs
+                .iter()
+                .all(|path| !path.contains("generated/drop")));
+            assert!(!result.evidence.read_failed);
+            Ok(())
+        }
+
+        #[test]
+        fn test_oversized_ignore_files_fail_open_without_being_read() -> TestResult {
+            for (ignore_file, project_file, expected) in [
+                (".gitignore", "ignored/package.json", "ignored"),
+                (
+                    "config/.gitignore",
+                    "config/ignored/package.json",
+                    "config/ignored",
+                ),
+            ] {
+                let dir = TempDir::new()?;
+                write(
+                    dir.path(),
+                    &[
+                        (".git/HEAD", ""),
+                        (ignore_file, &format!("ignored/\n{}", " ".repeat(1_048_576))),
+                        (project_file, "{}"),
+                    ],
+                )?;
+
+                let result = detect_repository(&engine(), dir.path());
+
+                assert_eq!(result.nested[0].name, expected);
+                assert!(!result.evidence.read_failed);
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn test_ignore_type_precedence_uses_walker_semantics() -> TestResult {
+            let dir = TempDir::new()?;
+            write(
+                dir.path(),
+                &[
+                    (".git/HEAD", ""),
+                    (".ignore", "generated/\n"),
+                    ("config/.gitignore", "!generated/\n"),
+                    ("config/generated/package.json", "{}"),
+                ],
+            )?;
+
+            let result = detect_repository(&engine(), dir.path());
+
+            assert!(result.nested.is_empty());
             Ok(())
         }
 

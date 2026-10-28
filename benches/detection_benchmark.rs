@@ -625,6 +625,7 @@ fn setup_root_project_repository(
     let root = temp_dir.path();
     fs::create_dir_all(root.join(".git"))?;
     fs::write(root.join("Cargo.toml"), "[package]\nname = \"root\"\n")?;
+    fs::write(root.join(".gitignore"), "generated/\n")?;
     for index in 0..candidate_dirs {
         let component = root.join(format!("component_{index:05}"));
         fs::create_dir_all(component.join("src"))?;
@@ -635,6 +636,9 @@ fn setup_root_project_repository(
                 r#"{"devDependencies":{"typescript":"5"}}"#,
             )?;
         }
+        let generated = root.join(format!("generated/package_{index:05}"));
+        fs::create_dir_all(&generated)?;
+        fs::write(generated.join("package.json"), "{}")?;
     }
     Ok(root.to_path_buf())
 }
@@ -662,6 +666,10 @@ fn benchmark_root_project_repository_scaling(
             !result.evidence.scan_truncated,
             "{candidate_dirs} directories truncated the root-project repository scan"
         );
+        assert!(result
+            .nested
+            .iter()
+            .all(|project| !project.name.starts_with("generated/")));
         println!(
             "root-project repository dirs={candidate_dirs} watched={} read_files={} projects={}",
             result.evidence.watched_dirs.len(),
