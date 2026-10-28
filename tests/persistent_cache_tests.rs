@@ -175,6 +175,24 @@ fn test_probed_directory_created_later_invalidates_entry() -> Result<(), Box<dyn
     Ok(())
 }
 
+#[test]
+fn test_ignore_edit_that_reincludes_a_project_invalidates_entry(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let t = stored(&[
+        (".git/HEAD", ""),
+        (".gitignore", "ignored/\n"),
+        ("ignored/package.json", "{}"),
+    ])?;
+
+    fs::write(t.project.join(".gitignore"), "!ignored/\n")?;
+
+    assert!(t.cache.load(&t.project, None).is_none());
+    let (engine, _) = test_engine();
+    let fresh = engine.detect(&t.project)?;
+    assert_eq!(fresh.nested[0].name, "ignored");
+    Ok(())
+}
+
 /// A tracked file modified after detection began may belong to a result that
 /// was computed from its previous content: such a result must not be stored.
 #[test]

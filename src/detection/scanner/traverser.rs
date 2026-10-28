@@ -11,18 +11,20 @@ use std::path::Path;
 /// Ignore files larger than this are not trusted to the walker
 const MAX_IGNORE_FILE_BYTES: u64 = 1_048_576;
 
-/// The root's ignore files are safe to hand to the walker: absent, or small
-/// regular files. A repository can plant a FIFO (reading blocks forever) or a
-/// symlink to /dev/zero (reading never ends) under these names. The walk
-/// never descends below the root, so these are the only ignore files ever
-/// read.
-pub(super) fn root_ignore_files_are_safe(root: &Path) -> bool {
+/// An ignore file is safe to read when absent or a small regular file. A
+/// repository can plant a FIFO (reading blocks forever) or a symlink to
+/// /dev/zero (reading never ends) under one of these names.
+fn ignore_file_is_safe(path: &Path) -> bool {
+    match fs::metadata(path) {
+        Ok(meta) => meta.is_file() && meta.len() <= MAX_IGNORE_FILE_BYTES,
+        Err(_) => true,
+    }
+}
+
+pub(crate) fn root_ignore_files_are_safe(root: &Path) -> bool {
     [".gitignore", ".ignore", ".git/info/exclude"]
         .iter()
-        .all(|name| match fs::metadata(root.join(name)) {
-            Ok(meta) => meta.is_file() && meta.len() <= MAX_IGNORE_FILE_BYTES,
-            Err(_) => true,
-        })
+        .all(|name| ignore_file_is_safe(&root.join(name)))
 }
 
 /// A name-sorted walker over `path`'s immediate entries (the walk never
