@@ -132,7 +132,7 @@ pub(crate) fn detect_repository_with_timeout(
                 &parsed_cache,
             );
             if !has_project || !markers.is_empty() {
-                let found = engine.detect_one(&directory, 0, true);
+                let found = engine.detect_one_with_scan(&directory, markers, scan);
                 merge_child_evidence(&mut result.evidence, &directory, &found.evidence);
                 if let Some(indicator) = found.indicator {
                     let name = normalized_relative(&directory, &repository_root)
