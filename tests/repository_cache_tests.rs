@@ -149,3 +149,69 @@ fn test_repository_entry_is_not_served_after_vcs_marker_is_removed() -> TestResu
     assert!(json.get("projects").is_none());
     Ok(())
 }
+
+#[test]
+fn test_nested_path_marker_creation_invalidates_cache() -> TestResult {
+    let repo = TempDir::new()?;
+    let home = TempDir::new()?;
+    common::write_files(
+        repo.path(),
+        &[
+            (".git/HEAD", ""),
+            ("Cargo.toml", "[package]\nname = \"root\"\n"),
+        ],
+    )?;
+    fs::create_dir_all(repo.path().join("child/src/main"))?;
+    std::thread::sleep(Duration::from_millis(60));
+    let initial = run(home.path(), repo.path(), &[])?;
+    success(&initial);
+    assert_eq!(entry_count(home.path()), 1);
+
+    common::write_files(
+        repo.path(),
+        &[("child/src/main/java/Main.java", "class Main {}")],
+    )?;
+    let fresh = run(home.path(), repo.path(), &["--no-cache"])?;
+    let cached = run(home.path(), repo.path(), &[])?;
+    success(&fresh);
+    success(&cached);
+
+    assert_eq!(cached.stdout, fresh.stdout);
+    assert!(String::from_utf8_lossy(&cached.stdout).contains("Java"));
+    let stderr = String::from_utf8_lossy(&cached.stderr);
+    assert!(!stderr.contains("persistent cache hit"), "{stderr}");
+    Ok(())
+}
+
+#[test]
+fn test_nested_exact_marker_creation_invalidates_cache() -> TestResult {
+    let repo = TempDir::new()?;
+    let home = TempDir::new()?;
+    common::write_files(
+        repo.path(),
+        &[
+            (".git/HEAD", ""),
+            ("Cargo.toml", "[package]\nname = \"root\"\n"),
+        ],
+    )?;
+    fs::create_dir(repo.path().join("child"))?;
+    std::thread::sleep(Duration::from_millis(60));
+    let initial = run(home.path(), repo.path(), &[])?;
+    success(&initial);
+    assert_eq!(entry_count(home.path()), 1);
+
+    common::write_files(
+        repo.path(),
+        &[("child/package.json", r#"{"dependencies":{"react":"18"}}"#)],
+    )?;
+    let fresh = run(home.path(), repo.path(), &["--no-cache"])?;
+    let cached = run(home.path(), repo.path(), &[])?;
+    success(&fresh);
+    success(&cached);
+
+    assert_eq!(cached.stdout, fresh.stdout);
+    assert!(String::from_utf8_lossy(&cached.stdout).contains("JavaScript"));
+    let stderr = String::from_utf8_lossy(&cached.stderr);
+    assert!(!stderr.contains("persistent cache hit"), "{stderr}");
+    Ok(())
+}

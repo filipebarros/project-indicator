@@ -1,4 +1,5 @@
 use crate::detection::caches::ParsedFileCache;
+use crate::detection::directory::DirectoryListing;
 use crate::detection::engine::{merge_child_evidence, DetectionEngine};
 use crate::detection::pattern_processor::normalized_relative;
 use crate::detection::root_indicators::VCS_MARKERS;
@@ -109,7 +110,10 @@ pub(crate) fn detect_repository_with_timeout(
             .watched_dirs
             .push(directory.to_string_lossy().into_owned());
 
-        let scan = engine.scanning_engine.scan_with_status(&directory);
+        let listing = DirectoryListing::read(&directory);
+        let scan = engine
+            .scanning_engine
+            .scan_with_listing(&directory, &listing);
         files_matched += scan.matches.len();
         result.evidence.scan_truncated |= scan.truncated;
         result.evidence.read_failed |= scan.unreadable;
@@ -121,12 +125,13 @@ pub(crate) fn detect_repository_with_timeout(
 
         let mut has_project = has_project_ancestor;
         if !scan.matches.is_empty() {
-            let has_markers = has_project
-                && !engine
-                    .root_indicator_engine
-                    .qualifying_markers_at(&directory, &file_cache, &parsed_cache)
-                    .is_empty();
-            if !has_project || has_markers {
+            let markers = engine.root_indicator_engine.qualifying_markers_in(
+                &directory,
+                &listing,
+                &file_cache,
+                &parsed_cache,
+            );
+            if !has_project || !markers.is_empty() {
                 let found = engine.detect_one(&directory, 0, true);
                 merge_child_evidence(&mut result.evidence, &directory, &found.evidence);
                 if let Some(indicator) = found.indicator {
@@ -143,17 +148,20 @@ pub(crate) fn detect_repository_with_timeout(
             }
         }
 
-        match repository_candidate_dirs(&directory) {
-            Ok(children) => {
-                for child in children {
-                    queue.push_back((child, has_project));
-                }
-            }
-            Err(_) => result.evidence.read_failed = true,
+        let (children, unreadable) = repository_candidate_dirs(&listing);
+        result.evidence.read_failed |= unreadable;
+        for child in children {
+            queue.push_back((child, has_project));
         }
     }
 
     result.evidence.read_failed |= parsed_cache.read_failed() || file_cache.read_failed();
+    result.evidence.watched_dirs.extend(
+        file_cache
+            .watched_dirs()
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned()),
+    );
     result.evidence.read_files.extend(
         parsed_cache
             .read_paths()
@@ -170,12 +178,17 @@ pub(crate) fn detect_repository_with_timeout(
     result
 }
 
-fn repository_candidate_dirs(path: &Path) -> std::io::Result<Vec<PathBuf>> {
+fn repository_candidate_dirs(listing: &DirectoryListing) -> (Vec<PathBuf>, bool) {
     let mut directories = Vec::new();
-    for entry in std::fs::read_dir(path)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_dir() {
-            continue;
+    let mut unreadable = false;
+    for entry in listing.entries() {
+        match entry.file_type() {
+            Ok(file_type) if file_type.is_dir() => {}
+            Ok(_) => continue,
+            Err(_) => {
+                unreadable = true;
+                continue;
+            }
         }
         let Ok(name) = entry.file_name().into_string() else {
             continue;
@@ -185,7 +198,7 @@ fn repository_candidate_dirs(path: &Path) -> std::io::Result<Vec<PathBuf>> {
         }
     }
     directories.sort();
-    Ok(directories)
+    (directories, unreadable)
 }
 
 #[cfg(test)]

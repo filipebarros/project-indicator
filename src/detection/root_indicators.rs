@@ -1,5 +1,6 @@
 use crate::constants::*;
 use crate::detection::caches::ParsedFileCache;
+use crate::detection::directory::DirectoryListing;
 use crate::detection::scanner::scanning_engine::probe_shape_matches;
 use crate::patterns::matches_pattern;
 use crate::performance::FileSystemCache;
@@ -18,11 +19,11 @@ struct RootDirectoryListing {
     wildcard_matches: std::collections::HashMap<String, String>,
 }
 
-fn list_root_markers(
-    path: &Path,
+fn root_markers_from_entries<'a>(
+    entries: impl Iterator<Item = &'a std::fs::DirEntry>,
     indicators: &[Arc<Indicator>],
     file_cache: &FileSystemCache,
-) -> Option<RootDirectoryListing> {
+) -> RootDirectoryListing {
     let roots = || {
         indicators
             .iter()
@@ -37,26 +38,23 @@ fn list_root_markers(
         .filter(|pattern| pattern.contains('*'))
         .collect();
     let mut listing = RootDirectoryListing::default();
-    let Ok(entries) = std::fs::read_dir(path) else {
-        file_cache.mark_read_failed();
-        return None;
-    };
     for entry in entries {
-        let Ok(entry) = entry else {
-            file_cache.mark_read_failed();
-            continue;
-        };
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
-        if literal_patterns.contains(name.as_str()) {
+        let is_file = entry.file_type().is_ok_and(|file_type| {
+            file_type.is_file()
+                || (file_type.is_symlink()
+                    && file_cache.exists(&entry.path())
+                    && entry.path().is_file())
+        });
+        if is_file && literal_patterns.contains(name.as_str()) {
             listing.literal_names.insert(name.clone());
         }
-        if wildcard_patterns
-            .iter()
-            .any(|pattern| matches_pattern(&name, pattern))
-            && file_cache.exists(&entry.path())
-            && entry.path().is_file()
+        if is_file
+            && wildcard_patterns
+                .iter()
+                .any(|pattern| matches_pattern(&name, pattern))
         {
             for pattern in wildcard_patterns
                 .iter()
@@ -74,7 +72,30 @@ fn list_root_markers(
             }
         }
     }
-    Some(listing)
+    listing
+}
+
+fn list_root_markers(
+    path: &Path,
+    indicators: &[Arc<Indicator>],
+    file_cache: &FileSystemCache,
+) -> Option<RootDirectoryListing> {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        file_cache.mark_read_failed();
+        return None;
+    };
+    let mut valid_entries = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) => valid_entries.push(entry),
+            Err(_) => file_cache.mark_read_failed(),
+        }
+    }
+    Some(root_markers_from_entries(
+        valid_entries.iter(),
+        indicators,
+        file_cache,
+    ))
 }
 
 #[derive(Debug, Clone)]
@@ -258,15 +279,37 @@ impl RootIndicatorEngine {
         file_cache: &FileSystemCache,
         parsed_cache: &ParsedFileCache,
     ) -> Vec<FoundRootIndicator> {
+        self.qualifying_markers(path, file_cache, parsed_cache, None, false)
+    }
+
+    pub(crate) fn qualifying_markers_in(
+        &self,
+        path: &Path,
+        supplied_listing: &DirectoryListing,
+        file_cache: &FileSystemCache,
+        parsed_cache: &ParsedFileCache,
+    ) -> Vec<FoundRootIndicator> {
+        if supplied_listing.unreadable() {
+            file_cache.mark_read_failed();
+        }
+        let listing =
+            root_markers_from_entries(supplied_listing.entries(), &self.indicators, file_cache);
+        self.qualifying_markers(path, file_cache, parsed_cache, Some(Some(listing)), true)
+    }
+
+    fn qualifying_markers(
+        &self,
+        path: &Path,
+        file_cache: &FileSystemCache,
+        parsed_cache: &ParsedFileCache,
+        mut listing: Option<Option<RootDirectoryListing>>,
+        supplied: bool,
+    ) -> Vec<FoundRootIndicator> {
         let mut found_indicators = Vec::new();
 
         // package.json is read and parsed at most once per directory, however
         // many indicators (TypeScript, JavaScript) ask about it
         let ts_deps = OnceCell::new();
-
-        // Wildcard patterns (*.csproj, *.kt) can't be checked with a literal
-        // stat; they need the directory listing, built at most once per level
-        let mut listing: Option<Option<RootDirectoryListing>> = None;
 
         for indicator in &self.indicators {
             for root_indicator in &indicator.root_indicators {
@@ -286,11 +329,9 @@ impl RootIndicatorEngine {
                         })
                 } else {
                     let pattern = &root_indicator.pattern;
-                    // A stat is enough to rule a marker out. A hit is
-                    // confirmed against the real directory entry names:
-                    // case-insensitive filesystems also "find" `cargo.toml`
-                    // for `Cargo.toml`, which the scanner then never matches.
-                    // Patterns with a path separator stay stat-only.
+                    // A stat is enough to rule a marker out during lazy upward
+                    // discovery. A hit is confirmed against the real directory
+                    // entry names, which also keeps case-sensitive matching.
                     let candidate = path.join(pattern);
                     let present = if pattern.contains('/') {
                         // creating a missing path marker must be noticed. The
@@ -305,6 +346,8 @@ impl RootIndicatorEngine {
                                     false
                                 }
                             }
+                    } else if supplied {
+                        true
                     } else {
                         // A directory named like a manifest (a folder called
                         // "Cargo.toml") is no marker; only path probes
@@ -468,6 +511,29 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::detection::matchers::test_helpers::helpers::create_test_indicator_with_indicators;
+
+    #[test]
+    fn test_qualifying_markers_in_uses_the_supplied_listing(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let engine = rust_engine(DetectionConfig::default());
+        let dir = TempDir::new()?;
+        let marker = dir.path().join("Cargo.toml");
+        fs::write(&marker, "[package]\nname = \"test\"")?;
+        let listing = crate::detection::directory::DirectoryListing::read(dir.path());
+        fs::remove_file(marker)?;
+
+        let markers = engine.qualifying_markers_in(
+            dir.path(),
+            &listing,
+            &FileSystemCache::default(),
+            &ParsedFileCache::new(),
+        );
+
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].pattern, "Cargo.toml");
+        assert_eq!(markers[0].indicator.name, "Rust");
+        Ok(())
+    }
 
     #[test]
     fn test_find_project_root_success() -> Result<(), Box<dyn std::error::Error>> {
