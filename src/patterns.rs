@@ -16,8 +16,8 @@ pub fn matches_pattern(text: &str, pattern: &str) -> bool {
             && text.ends_with(rest);
     }
 
-    let parts: Vec<&str> = pattern.split('*').collect();
-    let first_part = parts[0];
+    let mut parts = pattern.split('*').peekable();
+    let first_part = parts.next().unwrap_or("");
     let mut search_start = 0;
     if !first_part.is_empty() {
         if !text.starts_with(first_part) {
@@ -26,15 +26,14 @@ pub fn matches_pattern(text: &str, pattern: &str) -> bool {
         search_start = first_part.len();
     }
 
-    let last_idx = parts.len() - 1;
-    for (i, part) in parts.iter().enumerate().skip(1) {
+    while let Some(part) = parts.next() {
         if part.is_empty() {
             continue;
         }
 
         // A non-empty final part means the pattern doesn't end with '*':
         // glob semantics require the text to END with it
-        if i == last_idx {
+        if parts.peek().is_none() {
             return text[search_start..].ends_with(part);
         }
 

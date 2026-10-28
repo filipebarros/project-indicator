@@ -9,8 +9,8 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
     let path = resolve_and_validate_path(cli.path.as_ref())?;
 
     let format = cli.format;
-    let cache_path = project_indicator::detection::repository::find_vcs_root(&path)
-        .unwrap_or_else(|| path.clone());
+    let repository_root = project_indicator::detection::repository::find_vcs_root(&path);
+    let cache_path = repository_root.clone().unwrap_or_else(|| path.clone());
 
     let cache_eligible = !cli.no_cache;
     let config_path = parser::active_config_path();
@@ -36,7 +36,7 @@ pub fn handle_detect_command(cli: &Cli) -> Result<()> {
         config.detection.clone(),
     );
 
-    let result = engine.detect(&path)?;
+    let result = engine.detect_with_vcs_root(&path, repository_root.as_deref())?;
 
     if let Some(cache) = &cache {
         cache.store(

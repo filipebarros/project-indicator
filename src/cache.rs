@@ -53,7 +53,7 @@ const TMP_MAX_AGE_SECS: u64 = 10 * 60;
 const GC_MAX_AGE_SECS: u64 = 30 * 24 * 60 * 60;
 
 #[derive(Serialize, Deserialize)]
-struct CacheEntry {
+struct CacheEntry<T> {
     dir: PathBuf,
     binary_version: String,
     /// The user's home directory (root discovery's boundary) when this was
@@ -66,7 +66,7 @@ struct CacheEntry {
     /// new manifest in any of them can change the result
     ancestors: Vec<(PathBuf, Stamp)>,
     evidence: Vec<(PathBuf, Stamp)>,
-    result: DetectionResult,
+    result: T,
     display: DisplayConfig,
 }
 
@@ -98,7 +98,7 @@ impl PersistentCache {
     ) -> Option<(DetectionResult, DisplayConfig)> {
         let dir = canonical(dir);
         let content = fs::read_to_string(self.entry_path(&dir)).ok()?;
-        let entry: CacheEntry = serde_json::from_str(&content).ok()?;
+        let entry: CacheEntry<DetectionResult> = serde_json::from_str(&content).ok()?;
 
         if entry.dir != dir || entry.binary_version != build_id() || entry.home != current_home() {
             return None;
@@ -148,10 +148,11 @@ impl PersistentCache {
         detection: &DetectionConfig,
         started: SystemTime,
     ) {
-        if let Err(e) = self.try_store(dir, config_path, result, display, detection, started) {
-            log::debug!("persistent cache write skipped: {}", e);
+        match self.try_store(dir, config_path, result, display, detection, started) {
+            Ok(true) => self.gc(),
+            Ok(false) => {}
+            Err(e) => log::debug!("persistent cache write skipped: {}", e),
         }
-        self.gc();
     }
 
     fn try_store(
@@ -162,7 +163,7 @@ impl PersistentCache {
         display: &DisplayConfig,
         detection: &DetectionConfig,
         started: SystemTime,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<bool> {
         let dir = canonical(dir);
 
         // A timed-out scan or an unreadable file or directory depends on more
@@ -173,19 +174,21 @@ impl PersistentCache {
                 && (result.evidence.watched_dirs.len() > DetectionEvidence::MAX_WATCHED_DIRS
                     || result.evidence.read_files.len() > DetectionEvidence::MAX_READ_FILES))
         {
-            return Ok(());
+            return Ok(false);
         }
 
         // A config the caller names but we cannot stat: don't cache
         let config = match config_path {
             Some(p) => {
-                let Some(t) = stamp(p) else { return Ok(()) };
+                let Some(t) = stamp(p) else {
+                    return Ok(false);
+                };
                 Some((p.to_path_buf(), t))
             }
             None => None,
         };
         let Some(dir_stamp) = stamp(&dir) else {
-            return Ok(());
+            return Ok(false);
         };
 
         let entry = CacheEntry {
@@ -201,7 +204,7 @@ impl PersistentCache {
                 detection.require_vcs_root,
             )),
             evidence: stamped(collect_evidence(&dir, result)),
-            result: result.clone(),
+            result,
             display: display.clone(),
         };
 
@@ -213,7 +216,7 @@ impl PersistentCache {
             .chain(entry.evidence.iter().map(|(_, t)| t))
             .chain(std::iter::once(&entry.dir_stamp));
         if stamps.into_iter().any(|t| t.is_unsettled(started)) {
-            return Ok(());
+            return Ok(false);
         }
 
         fs::create_dir_all(&self.base)?;
@@ -231,7 +234,8 @@ impl PersistentCache {
         if write.is_err() {
             let _ = fs::remove_file(&tmp_path);
         }
-        Ok(write?)
+        write?;
+        Ok(true)
     }
 
     pub fn clear(&self) -> crate::Result<()> {

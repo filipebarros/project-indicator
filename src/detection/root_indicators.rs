@@ -239,6 +239,10 @@ impl RootIndicatorEngine {
             .any(|marker| file_cache.exists(&path.join(marker)))
     }
 
+    pub(crate) fn requires_vcs_root(&self) -> bool {
+        self.config.require_vcs_root
+    }
+
     pub fn vcs_requirement_met(
         &self,
         start_path: &Path,

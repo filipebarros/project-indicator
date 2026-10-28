@@ -159,16 +159,16 @@ The cache lives under `$XDG_CACHE_HOME/project-indicator/results/` (default
 `~/.cache/project-indicator/results/`). A VCS repository uses its canonical root
 as the key, so every subdirectory shares one entry; non-VCS detection uses the
 canonical invocation directory. Entries invalidate when manifests, ignore
-files, watched directories, the active config, or the binary change. Timed-out, partial, and
-unreadable scans are never cached.
+files, watched directories, the active config, or the binary change. Timed-out,
+partial, and unreadable scans are never cached.
 
 Current median measurements on the development machine:
 
 | Scenario | Cold detection | Warm cache | Cache entry |
 |----------|---------------:|-----------:|------------:|
-| Flat synthetic repository, 10,000 candidate directories | 1.00s | 28.9ms | 6.6MB |
-| Root-project synthetic repository, 10,000 candidate directories | 1.36s | 29.6ms | 6.6MB |
-| Real dotfiles repository, 89 visited directories | 14.6ms | 3.4ms | 29KB |
+| Flat synthetic repository, 10,000 candidate directories | 1.03s | 32.5ms | 6.6MB |
+| Root-project synthetic repository, 10,000 candidate directories | 1.35s | 30.8ms | 6.6MB |
+| Real dotfiles repository, 89 visited directories | 14.7ms | 3.5ms | 29KB |
 
 These figures are examples, not guarantees; filesystem, repository contents,
 and hardware all affect them. Run `cargo bench` or `hyperfine project-indicator`

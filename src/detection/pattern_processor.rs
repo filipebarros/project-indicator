@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct PatternProcessor {
-    unique_patterns: Arc<[String]>,
     /// `*.ext` patterns (ext without dots or wildcards), by extension
     extension_patterns: Arc<HashSet<String>>,
     exact_patterns: Arc<HashSet<String>>,
@@ -16,6 +15,7 @@ pub struct PatternProcessor {
 }
 
 impl PatternProcessor {
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(patterns: Arc<[String]>) -> Self {
         let mut extension_patterns = HashSet::new();
         let mut exact_patterns = HashSet::new();
@@ -35,7 +35,6 @@ impl PatternProcessor {
         }
 
         Self {
-            unique_patterns: patterns,
             extension_patterns: Arc::new(extension_patterns),
             exact_patterns: Arc::new(exact_patterns),
             glob_patterns: glob_patterns.into(),
@@ -67,9 +66,7 @@ impl PatternProcessor {
         let filename = relative_path.file_name().and_then(|n| n.to_str())?;
         let relative_str = join_components(relative_path)?;
 
-        self.unique_patterns
-            .iter()
-            .any(|pattern| matches_pattern(filename, pattern))
+        self.should_scan_file(filename)
             .then(|| MatchedFile::new(filename.to_string(), relative_str))
     }
 

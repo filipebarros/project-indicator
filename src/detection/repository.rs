@@ -60,8 +60,7 @@ pub(crate) fn is_boundary_directory(path: &Path, home: Option<&Path>) -> bool {
 }
 
 pub fn find_vcs_root(start: &Path) -> Option<PathBuf> {
-    let home = std::env::home_dir().map(|home| home.canonicalize().unwrap_or(home));
-    find_vcs_root_with_home(start, home.as_deref())
+    find_vcs_root_with_home(start, std::env::home_dir().as_deref())
 }
 
 pub(crate) fn find_vcs_root_with_home(start: &Path, home: Option<&Path>) -> Option<PathBuf> {

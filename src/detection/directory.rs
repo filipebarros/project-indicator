@@ -23,6 +23,7 @@ impl DirectoryListing {
             }
             Err(_) => listing.unreadable = true,
         }
+        listing.entries.sort_by_key(|entry| entry.file_name());
         listing
     }
 
