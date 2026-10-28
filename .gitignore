@@ -1,6 +1,7 @@
 /target
 /coverage/
 /.claude/
+/.worktrees/
 
 # Test output files
 /test_output/
