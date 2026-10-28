@@ -16,7 +16,7 @@ const MAX_IGNORE_FILE_BYTES: u64 = 1_048_576;
 /// symlink to /dev/zero (reading never ends) under these names. The walk
 /// never descends below the root, so these are the only ignore files ever
 /// read.
-fn root_ignore_files_are_safe(root: &Path) -> bool {
+pub(super) fn root_ignore_files_are_safe(root: &Path) -> bool {
     [".gitignore", ".ignore", ".git/info/exclude"]
         .iter()
         .all(|name| match fs::metadata(root.join(name)) {
