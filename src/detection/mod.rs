@@ -1,5 +1,6 @@
 pub mod caches;
 pub mod confidence_scorer;
+mod directory;
 pub mod engine;
 pub mod framework_detector;
 pub mod indicator_resolver;

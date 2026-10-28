@@ -1,4 +1,5 @@
 use super::traverser::build_walker;
+use crate::detection::directory::DirectoryListing;
 use crate::detection::pattern_processor::PatternProcessor;
 use crate::performance::smallest;
 use crate::types::MatchedFile;
@@ -82,18 +83,13 @@ impl ScanningEngine {
         Self { pattern_processor }
     }
 
-    /// One `read_dir` of the scan root: the total entry count (for the size
-    /// guard and timeout) and the sorted names of the files in it (symlinks
-    /// to files included) that a pattern could match. Every exact-name
-    /// manifest is kept; of the rest only the `MAX_ROOT_NAMES` smallest.
-    fn list_root(&self, path: &Path) -> (usize, Vec<String>, bool) {
-        let Ok(entries) = std::fs::read_dir(path) else {
-            return (0, Vec::new(), false);
-        };
+    /// The total entry count (for the size guard and timeout) and the sorted
+    /// names of files that a pattern could match. Every exact-name manifest
+    /// is kept; of the rest only the `MAX_ROOT_NAMES` smallest.
+    fn list_root(&self, listing: &DirectoryListing) -> (usize, Vec<String>, bool) {
         let exact = self.pattern_processor.get_exact_patterns();
-        let (mut count, mut manifests) = (0, Vec::new());
-        let others = entries.filter_map(|e| e.ok()).filter_map(|entry| {
-            count += 1;
+        let mut manifests = Vec::new();
+        let others = listing.entries().filter_map(|entry| {
             let name = entry.file_name().into_string().ok()?;
             if !counts_as_file(entry.file_type().ok(), &entry.path()) {
                 return None;
@@ -109,7 +105,7 @@ impl ScanningEngine {
         let mut names = smallest(others, MAX_ROOT_NAMES);
         names.append(&mut manifests);
         names.sort();
-        (count, names, true)
+        (listing.len(), names, !listing.unreadable())
     }
 
     /// Exact-name pattern files present in the root, in sorted order
@@ -194,8 +190,12 @@ impl ScanningEngine {
     /// timeout cut the walk short (the matches are then a partial sample)
     /// and the directories it depended on.
     pub fn scan_with_status(&self, path: &Path) -> ScanOutcome {
+        self.scan_with_listing(path, &DirectoryListing::read(path))
+    }
+
+    pub(crate) fn scan_with_listing(&self, path: &Path, listing: &DirectoryListing) -> ScanOutcome {
         log::trace!("Starting scan for path: {}", path.display());
-        let (entry_count, root_names, listed) = self.list_root(path);
+        let (entry_count, root_names, listed) = self.list_root(listing);
 
         if entry_count > EXTREME_SIZE_THRESHOLD {
             log::debug!(
@@ -221,7 +221,18 @@ impl ScanningEngine {
         let (probed, probe_dirs, probe_unreadable) = self.probe_paths(path);
         let mut seeded = self.root_manifest_matches(&root_names);
         seeded.extend(probed);
-        let mut outcome = self.scan_sequential(path, scan_timeout(entry_count), seeded);
+        let has_ignore_files = listing.entries().any(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| matches!(name, ".gitignore" | ".ignore"))
+        }) || std::fs::symlink_metadata(path.join(".git/info/exclude"))
+            .is_ok();
+        let mut outcome = if has_ignore_files {
+            self.scan_sequential(path, scan_timeout(entry_count), seeded)
+        } else {
+            self.scan_listing(path, listing, scan_timeout(entry_count), seeded)
+        };
         outcome.unreadable |= !listed || probe_unreadable;
         outcome.watched_dirs.extend(probe_dirs);
         outcome.watched_dirs.sort();
@@ -229,15 +240,20 @@ impl ScanningEngine {
         outcome
     }
 
-    fn prefilter_entry(pattern_processor: &PatternProcessor, entry: &ignore::DirEntry) -> bool {
+    fn prefilter_entry(
+        pattern_processor: &PatternProcessor,
+        file_type: Option<std::fs::FileType>,
+        path: &Path,
+        file_name: &std::ffi::OsStr,
+    ) -> bool {
         // Symlinks are resolved to their targets so a symlinked manifest counts as a file
         // (matching the extreme-size root check, which stats through
         // symlinks); broken links resolve to nothing and are skipped.
-        if !counts_as_file(entry.file_type(), entry.path()) {
+        if !counts_as_file(file_type, path) {
             return false;
         }
 
-        let Some(filename) = entry.file_name().to_str() else {
+        let Some(filename) = file_name.to_str() else {
             return false;
         };
 
@@ -246,30 +262,30 @@ impl ScanningEngine {
 
     fn collect_match(
         &self,
-        entry: &ignore::DirEntry,
+        file_type: Option<std::fs::FileType>,
+        path: &Path,
+        file_name: &std::ffi::OsStr,
         base: &Path,
         matched: &mut Vec<MatchedFile>,
         unreadable: &mut bool,
     ) {
         // A broken link named like a manifest is a manifest we cannot see;
         // creating its target moves no mtime we watch
-        let dangling =
-            entry.file_type().is_some_and(|ft| ft.is_symlink()) && !entry.path().exists();
+        let dangling = file_type.is_some_and(|ft| ft.is_symlink()) && !path.exists();
         if dangling
-            && entry
-                .file_name()
+            && file_name
                 .to_str()
                 .is_some_and(|name| self.pattern_processor.should_scan_file(name))
         {
             *unreadable = true;
             return;
         }
-        if !Self::prefilter_entry(&self.pattern_processor, entry) {
+        if !Self::prefilter_entry(&self.pattern_processor, file_type, path, file_name) {
             return;
         }
         if let Some(file_match) = self
             .pattern_processor
-            .match_file_against_patterns(entry.path(), base)
+            .match_file_against_patterns(path, base)
         {
             if !matched
                 .iter()
@@ -316,7 +332,14 @@ impl ScanningEngine {
                     continue;
                 }
             };
-            self.collect_match(&entry, path, &mut matched_files, &mut unreadable);
+            self.collect_match(
+                entry.file_type(),
+                entry.path(),
+                entry.file_name(),
+                path,
+                &mut matched_files,
+                &mut unreadable,
+            );
         }
 
         // The walk is name-sorted, so earlier-sorted files can use up the cap
@@ -328,7 +351,86 @@ impl ScanningEngine {
                 if matched_files.len() - before >= MAX_MATCHES {
                     break;
                 }
-                self.collect_match(&entry, path, &mut matched_files, &mut unreadable);
+                self.collect_match(
+                    entry.file_type(),
+                    entry.path(),
+                    entry.file_name(),
+                    path,
+                    &mut matched_files,
+                    &mut unreadable,
+                );
+            }
+        }
+
+        let elapsed = scan_start.elapsed().as_millis();
+        log::debug!(
+            "Scan complete: {} matches in {}ms",
+            matched_files.len(),
+            elapsed
+        );
+
+        ScanOutcome {
+            matches: matched_files,
+            truncated: timed_out,
+            watched_dirs: Vec::new(),
+            unreadable,
+        }
+    }
+
+    fn scan_listing(
+        &self,
+        path: &Path,
+        listing: &DirectoryListing,
+        timeout: Duration,
+        root_manifests: Vec<MatchedFile>,
+    ) -> ScanOutcome {
+        let scan_start = Instant::now();
+        let deadline = scan_start + timeout;
+        let mut timed_out = false;
+        let mut unreadable = false;
+        let mut matched_files = root_manifests;
+        let root_count = matched_files.len();
+        let mut capped = false;
+        let mut entries: Vec<_> = listing
+            .entries()
+            .filter(|entry| entry.file_name() != ".git")
+            .collect();
+        entries.sort_by_key(|entry| entry.file_name());
+
+        for entry in &entries {
+            if matched_files.len() - root_count >= MAX_MATCHES {
+                log::debug!("Sequential scan: max matches ({}) reached", MAX_MATCHES);
+                capped = true;
+                break;
+            }
+            if Instant::now() >= deadline {
+                timed_out = true;
+                break;
+            }
+            self.collect_match(
+                entry.file_type().ok(),
+                &entry.path(),
+                &entry.file_name(),
+                path,
+                &mut matched_files,
+                &mut unreadable,
+            );
+        }
+
+        if capped {
+            let before = matched_files.len();
+            for entry in &entries {
+                if matched_files.len() - before >= MAX_MATCHES {
+                    break;
+                }
+                self.collect_match(
+                    entry.file_type().ok(),
+                    &entry.path(),
+                    &entry.file_name(),
+                    path,
+                    &mut matched_files,
+                    &mut unreadable,
+                );
             }
         }
 
@@ -370,6 +472,129 @@ mod tests {
         let pattern_processor = PatternProcessor::new(patterns);
 
         ScanningEngine::new(pattern_processor)
+    }
+
+    fn assert_same_scan(walker: &ScanOutcome, listing: &ScanOutcome) {
+        assert_eq!(walker.matches, listing.matches);
+        assert_eq!(walker.truncated, listing.truncated);
+        assert_eq!(walker.watched_dirs, listing.watched_dirs);
+        assert_eq!(walker.unreadable, listing.unreadable);
+    }
+
+    #[test]
+    fn test_listing_scan_matches_walker_without_ignore_files() -> Result<()> {
+        use crate::detection::directory::DirectoryListing;
+
+        let patterns = Arc::from(vec![
+            "Cargo.toml".to_string(),
+            "*.csproj".to_string(),
+            "*.rs".to_string(),
+            "src/main/java".to_string(),
+        ]);
+        let engine = ScanningEngine::new(PatternProcessor::new(patterns));
+        let temp_dir = TempDir::new()?;
+        let root = temp_dir.path();
+        fs::write(root.join("Cargo.toml"), "[package]")?;
+        fs::write(root.join("MyApp.csproj"), "<Project/>")?;
+        fs::write(root.join("main.rs"), "")?;
+        fs::create_dir_all(root.join("src/main/java"))?;
+        fs::write(root.join("src/main/java/Main.java"), "")?;
+        fs::create_dir(root.join("nested"))?;
+        fs::write(root.join("nested/ignored.rs"), "")?;
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("main.rs"), root.join("linked.rs"))?;
+            std::os::unix::fs::symlink(root.join("nested"), root.join("linked_dir"))?;
+        }
+
+        let listing = DirectoryListing::read(root);
+        let from_listing = engine.scan_with_listing(root, &listing);
+        let from_walker = engine.scan_with_status(root);
+
+        assert_same_scan(&from_walker, &from_listing);
+        Ok(())
+    }
+
+    #[test]
+    fn test_listing_scan_preserves_match_cap_and_wildcard_top_up() -> Result<()> {
+        use crate::detection::directory::DirectoryListing;
+
+        let processor =
+            PatternProcessor::new(Arc::from(vec!["*.cs".to_string(), "*.csproj".to_string()]));
+        let engine = ScanningEngine::new(processor);
+        let temp_dir = TempDir::new()?;
+        let root = temp_dir.path();
+        for i in 0..(MAX_MATCHES + 5) {
+            fs::write(root.join(format!("C{i:02}.cs")), "")?;
+        }
+        fs::write(root.join("MyApp.csproj"), "")?;
+
+        let listing = DirectoryListing::read(root);
+        let from_listing = engine.scan_with_listing(root, &listing);
+        let from_walker = engine.scan_with_status(root);
+        let listing_paths: Vec<&str> = from_listing
+            .matches
+            .iter()
+            .map(|m| m.relative_path.as_str())
+            .collect();
+        let walker_paths: Vec<&str> = from_walker
+            .matches
+            .iter()
+            .map(|m| m.relative_path.as_str())
+            .collect();
+
+        assert_eq!(listing_paths, walker_paths);
+        assert_eq!(from_listing.matches.len(), from_walker.matches.len());
+        assert!(listing_paths.contains(&"MyApp.csproj"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_local_ignore_files_use_walker_semantics() -> Result<()> {
+        use crate::detection::directory::DirectoryListing;
+
+        let engine = ScanningEngine::new(PatternProcessor::new(Arc::from(vec![
+            "*.go".to_string(),
+            "go.mod".to_string(),
+        ])));
+        let temp_dir = TempDir::new()?;
+        let root = temp_dir.path();
+        fs::write(root.join(".gitignore"), "*.go\ngo.mod\n")?;
+        fs::write(root.join("main.go"), "")?;
+        fs::write(root.join("go.mod"), "module example")?;
+
+        let listing = DirectoryListing::read(root);
+        let from_listing = engine.scan_with_listing(root, &listing);
+        let from_walker = engine.scan_with_status(root);
+
+        assert_same_scan(&from_walker, &from_listing);
+        assert!(!from_listing
+            .matches
+            .iter()
+            .any(|m| m.relative_path == "main.go"));
+        assert!(from_listing
+            .matches
+            .iter()
+            .any(|m| m.relative_path == "go.mod"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_listing_scan_has_no_second_listing() -> Result<()> {
+        use crate::detection::directory::DirectoryListing;
+
+        let engine = create_test_engine();
+        let temp_dir = TempDir::new()?;
+        let root = temp_dir.path();
+        let source = root.join("main.rs");
+        fs::write(&source, "")?;
+        let listing = DirectoryListing::read(root);
+        fs::remove_file(source)?;
+
+        let outcome = engine.scan_with_listing(root, &listing);
+
+        assert!(outcome.matches.iter().any(|m| m.relative_path == "main.rs"));
+        Ok(())
     }
 
     #[test]
@@ -556,14 +781,20 @@ mod tests {
         fs::write(root.join("a.txt"), "x")?;
 
         let engine = txt_engine();
-        let (count, names, listed) = engine.list_root(root);
+        let (count, names, listed) = engine.list_root(&DirectoryListing::read(root));
         assert_eq!(count, 3, "directories count towards the size guard");
         assert_eq!(names, vec!["a.txt".to_string(), "b.txt".to_string()]);
         assert!(listed);
 
         // a directory that cannot be listed says so; an empty one does not
-        assert_eq!(engine.list_root(&root.join("missing")), (0, vec![], false));
-        assert_eq!(engine.list_root(TempDir::new()?.path()), (0, vec![], true));
+        assert_eq!(
+            engine.list_root(&DirectoryListing::read(&root.join("missing"))),
+            (0, vec![], false)
+        );
+        assert_eq!(
+            engine.list_root(&DirectoryListing::read(TempDir::new()?.path())),
+            (0, vec![], true)
+        );
         Ok(())
     }
 
@@ -577,7 +808,7 @@ mod tests {
         fs::write(root.join("package.json"), "{}")?;
         fs::write(root.join("notes.txt"), "")?;
 
-        let (count, names, _) = js_engine().list_root(root);
+        let (count, names, _) = js_engine().list_root(&DirectoryListing::read(root));
 
         assert_eq!(
             count,
