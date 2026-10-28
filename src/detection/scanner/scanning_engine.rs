@@ -509,7 +509,15 @@ mod tests {
 
         let listing = DirectoryListing::read(root);
         let from_listing = engine.scan_with_listing(root, &listing);
-        let from_walker = engine.scan_with_status(root);
+        let (entry_count, root_names, listed) = engine.list_root(&listing);
+        let (probed, probe_dirs, probe_unreadable) = engine.probe_paths(root);
+        let mut seeded = engine.root_manifest_matches(&root_names);
+        seeded.extend(probed);
+        let mut from_walker = engine.scan_sequential(root, scan_timeout(entry_count), seeded);
+        from_walker.unreadable |= !listed || probe_unreadable;
+        from_walker.watched_dirs.extend(probe_dirs);
+        from_walker.watched_dirs.sort();
+        from_walker.watched_dirs.dedup();
 
         assert_same_scan(&from_walker, &from_listing);
         Ok(())
@@ -531,7 +539,7 @@ mod tests {
 
         let listing = DirectoryListing::read(root);
         let from_listing = engine.scan_with_listing(root, &listing);
-        let from_walker = engine.scan_with_status(root);
+        let from_walker = engine.scan_sequential(root, scan_timeout(listing.len()), Vec::new());
         let listing_paths: Vec<&str> = from_listing
             .matches
             .iter()
