@@ -59,7 +59,7 @@ pub fn resolve_indicator(
     indicators: &[Arc<Indicator>],
     matched_files: &[MatchedFile],
     evidence: &mut DetectionEvidence,
-) -> Option<Arc<Indicator>> {
+) -> Option<(Arc<Indicator>, f32)> {
     let mut candidates: Vec<(usize, f32, usize)> = Vec::with_capacity(indicators.len());
 
     for (idx, indicator) in indicators.iter().enumerate() {
@@ -85,7 +85,7 @@ pub fn resolve_indicator(
         return None;
     }
 
-    let best_idx = resolve_indicator_conflicts(candidates);
+    let (best_idx, confidence) = resolve_indicator_conflicts(candidates);
 
     let selected = &indicators[best_idx];
     for file in matched_files {
@@ -114,13 +114,13 @@ pub fn resolve_indicator(
         ),
     ));
 
-    Some(indicators[best_idx].clone())
+    Some((indicators[best_idx].clone(), confidence))
 }
 
 /// Markerless conflicts are rare (two languages' sources in one folder with
 /// no manifest): the most root source files win (five .py beside one stray
 /// .js is Python), then the higher ratio, then config order.
-fn resolve_indicator_conflicts(candidates: Vec<(usize, f32, usize)>) -> usize {
+fn resolve_indicator_conflicts(candidates: Vec<(usize, f32, usize)>) -> (usize, f32) {
     candidates
         .into_iter()
         .max_by(|a, b| {
@@ -130,7 +130,7 @@ fn resolve_indicator_conflicts(candidates: Vec<(usize, f32, usize)>) -> usize {
                 // first indicator in config order
                 .then(b.0.cmp(&a.0))
         })
-        .map_or(0, |(idx, _, _)| idx)
+        .map_or((0, 0.0), |(idx, score, _)| (idx, score))
 }
 
 #[cfg(test)]
@@ -187,7 +187,7 @@ mod tests {
 
         assert!(result.is_some(), "Should detect an indicator");
         assert_eq!(
-            result.ok_or("Failed to get indicator result")?.name,
+            result.ok_or("Failed to get indicator result")?.0.name,
             "Rust",
             "Should detect Rust"
         );
@@ -203,7 +203,7 @@ mod tests {
         let candidates = vec![(0, 0.8, 0)];
 
         let result = resolve_indicator_conflicts(candidates);
-        assert_eq!(result, 0, "Should return the single candidate");
+        assert_eq!(result, (0, 0.8), "Should return the single candidate");
     }
 
     #[test]
@@ -211,7 +211,7 @@ mod tests {
         let candidates = vec![(0, 0.9, 0), (1, 0.5, 0)];
 
         let result = resolve_indicator_conflicts(candidates);
-        assert_eq!(result, 0, "Should select clear winner (Rust)");
+        assert_eq!(result.0, 0, "Should select clear winner (Rust)");
     }
 
     /// Index chosen among candidates with the given `(config index, score)`
@@ -220,7 +220,7 @@ mod tests {
             .into_iter()
             .map(|(idx, score)| (idx, score, 0))
             .collect();
-        resolve_indicator_conflicts(candidates)
+        resolve_indicator_conflicts(candidates).0
     }
 
     #[test]
@@ -243,7 +243,7 @@ mod tests {
 
         let winner = resolve_indicator(&indicators, &files, &mut evidence);
 
-        assert_eq!(winner.map(|i| i.name.clone()).as_deref(), Some("Py"));
+        assert_eq!(winner.map(|i| i.0.name.clone()).as_deref(), Some("Py"));
     }
 
     #[test]
@@ -301,7 +301,7 @@ mod tests {
 
         let winner = resolve_indicator(&indicators, &files, &mut evidence);
 
-        assert_eq!(winner.map(|i| i.name.clone()), Some("Rust".to_string()));
+        assert_eq!(winner.map(|i| i.0.name.clone()), Some("Rust".to_string()));
         let recorded: Vec<&str> = evidence
             .indicator_evidence
             .iter()

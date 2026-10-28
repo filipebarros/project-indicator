@@ -139,9 +139,9 @@ The detection flow follows this path:
      directory on its own (a sources-only checkout) also makes its language
      a candidate
    - Root exact-name manifests are seeded first and don't count against the
-     15-match cap; if the cap is hit, a second pass tops up matches sorted
-     past the cap (`App.csproj` after many earlier-sorted files). Only the
-     scan root's own ignore files apply
+     15-match cap; the same walk then tops up matches sorted past the cap
+     (`App.csproj` after many earlier-sorted files). Only the scan root's own
+     ignore files apply
    - Exact-name root manifests (and the oversized-root check) are literal
      lookups that deliberately ignore .gitignore, so an ignored `go.work`
      or `Cargo.toml` still counts; the walk and the top-up honour it
@@ -409,10 +409,10 @@ For ecosystem-specific dependency matching:
 - Worst-case repository scans have a five-second safety timeout; partial or
   unreadable results are not cached.
 - Repository scaling is measured separately. Synthetic flat repositories cost
-  ~8.2ms cold / 0.28ms warm at 100 candidate dirs, ~83ms / 2.5ms at 1,000,
-  and ~1.00s / 29ms at 10,000 (20,001 watched paths, 6.6MB entry). A
+  ~8.3ms cold / 0.28ms warm at 100 candidate dirs, ~87ms / 2.7ms at 1,000,
+  and ~1.03s / 33ms at 10,000 (20,001 watched paths, 6.6MB entry). A
   repository whose root is itself a project costs ~13ms / 0.28ms at 100,
-  ~117ms / 2.5ms at 1,000, and ~1.36s / 30ms at 10,000. Repository traversal
+  ~117ms / 2.5ms at 1,000, and ~1.35s / 31ms at 10,000. Repository traversal
   uses `WalkBuilder`; raw directory listings preserve ignored exact-name root
   manifests, and nested project detection reuses each repository scan. Cache
   validation scales with watched inputs and remains below 10ms at 1,000 paths.

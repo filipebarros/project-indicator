@@ -36,6 +36,10 @@ const MAX_RUN_BYTES: u64 = 64 * 1024 * 1024;
 /// `>` writes it — and anything else is read lossily, so one stray Latin-1
 /// byte can't blank a whole manifest.
 pub(crate) fn read_text(path: &Path, limit: u64) -> std::io::Result<String> {
+    read_text_with_size(path, limit).map(|(text, _)| text)
+}
+
+fn read_text_with_size(path: &Path, limit: u64) -> std::io::Result<(String, u64)> {
     use std::io::{Error, ErrorKind, Read};
 
     // Regular files only: a repository can plant a FIFO (opening it blocks
@@ -83,7 +87,7 @@ pub(crate) fn read_text(path: &Path, limit: u64) -> std::io::Result<String> {
             .map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER))
             .collect()
     };
-    Ok(match bytes.as_slice() {
+    let text = match bytes.as_slice() {
         [0xFF, 0xFE, rest @ ..] => utf16(rest, u16::from_le_bytes),
         [0xFE, 0xFF, rest @ ..] => utf16(rest, u16::from_be_bytes),
         _ => {
@@ -95,7 +99,8 @@ pub(crate) fn read_text(path: &Path, limit: u64) -> std::io::Result<String> {
                 None => text,
             }
         }
-    })
+    };
+    Ok((text, meta.len()))
 }
 
 /// Remove `//` and `/* */` comments, leaving single- and double-quoted string
@@ -244,28 +249,31 @@ impl ParsedFileCache {
                 .insert(file_path.to_path_buf(), (denied_at, reason.clone()));
             anyhow::bail!("{reason}")
         };
-        let size = fs::metadata(file_path).map_or(0, |meta| meta.len());
-        if size > limit {
-            return refuse(
-                limit,
-                format!(
-                    "{} is {size} bytes, over the {limit} byte limit",
-                    file_path.display()
-                ),
-            );
-        }
-        if self.bytes_read.get() + size > MAX_RUN_BYTES {
-            return refuse(
-                u64::MAX,
-                format!(
-                    "{} would exceed the {MAX_RUN_BYTES} byte read budget of one run",
-                    file_path.display()
-                ),
-            );
-        }
-
-        let content = match read_text(file_path, limit) {
-            Ok(content) => Arc::new(content),
+        let read_limit = limit.min(MAX_RUN_BYTES.saturating_sub(self.bytes_read.get()));
+        let (content, size) = match read_text_with_size(file_path, read_limit) {
+            Ok((content, size)) => (Arc::new(content), size),
+            Err(e)
+                if e.kind() == ErrorKind::InvalidData
+                    && e.to_string() == "file too large to read" =>
+            {
+                let size = fs::metadata(file_path).map_or(0, |meta| meta.len());
+                if size > limit {
+                    return refuse(
+                        limit,
+                        format!(
+                            "{} is {size} bytes, over the {limit} byte limit",
+                            file_path.display()
+                        ),
+                    );
+                }
+                return refuse(
+                    u64::MAX,
+                    format!(
+                        "{} would exceed the {MAX_RUN_BYTES} byte read budget of one run",
+                        file_path.display()
+                    ),
+                );
+            }
             Err(e) if e.kind() == ErrorKind::NotFound => {
                 // A dangling symlink is not "absent": its target appearing
                 // later moves no watched timestamp, so the result must stay

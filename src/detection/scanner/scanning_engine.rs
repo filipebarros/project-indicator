@@ -1,7 +1,6 @@
 use super::traverser::build_walker;
 use crate::detection::directory::DirectoryListing;
 use crate::detection::pattern_processor::PatternProcessor;
-use crate::performance::smallest;
 use crate::types::MatchedFile;
 use std::collections::HashMap;
 use std::path::Path;
@@ -24,10 +23,9 @@ pub struct ScanOutcome {
     pub unreadable: bool,
 }
 
-/// Maximum matches the walk collects before it stops. Exact-name root
-/// manifests are seeded on top of this, and when the cap is hit a root-only
-/// pass may add up to this many more root-level files, so a result holds at
-/// most `2 * MAX_MATCHES` plus the exact manifests.
+/// Maximum matches in the initial set and in the root-level top-up. Exact-name
+/// manifests are seeded separately, so one walk holds at most
+/// `2 * MAX_MATCHES` additional files plus the exact manifests.
 ///
 /// 15 leaves a wide margin over the <10 matches typical projects need, and
 /// bounds memory and scan time in large monorepos.
@@ -61,6 +59,7 @@ pub(crate) const EXTREME_SIZE_THRESHOLD: usize = 500;
 
 pub struct ScanningEngine {
     pattern_processor: PatternProcessor,
+    probe_patterns: Vec<String>,
 }
 
 /// A probe only matches the shape its pattern promises: a dotted last
@@ -80,7 +79,17 @@ pub(crate) fn probe_shape_matches(candidate: &Path, pattern: &str) -> std::io::R
 
 impl ScanningEngine {
     pub fn new(pattern_processor: PatternProcessor) -> Self {
-        Self { pattern_processor }
+        let mut probe_patterns: Vec<String> = pattern_processor
+            .get_exact_patterns()
+            .iter()
+            .filter(|pattern| pattern.contains('/'))
+            .cloned()
+            .collect();
+        probe_patterns.sort();
+        Self {
+            pattern_processor,
+            probe_patterns,
+        }
     }
 
     /// The total entry count (for the size guard and timeout) and the sorted
@@ -89,20 +98,21 @@ impl ScanningEngine {
     fn list_root(&self, listing: &DirectoryListing) -> (usize, Vec<String>, bool) {
         let exact = self.pattern_processor.get_exact_patterns();
         let mut manifests = Vec::new();
-        let others = listing.entries().filter_map(|entry| {
-            let name = entry.file_name().into_string().ok()?;
+        let mut names = Vec::new();
+        for entry in listing.entries() {
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
             if !counts_as_file(entry.file_type().ok(), &entry.path()) {
-                return None;
+                continue;
             }
             if exact.contains(&name) {
                 manifests.push(name);
-                return None;
+            } else if names.len() < MAX_ROOT_NAMES && self.pattern_processor.should_scan_file(&name)
+            {
+                names.push(name);
             }
-            self.pattern_processor
-                .should_scan_file(&name)
-                .then_some(name)
-        });
-        let mut names = smallest(others, MAX_ROOT_NAMES);
+        }
         names.append(&mut manifests);
         names.sort();
         (listing.len(), names, !listing.unreadable())
@@ -124,18 +134,10 @@ impl ScanningEngine {
     /// prefix by prefix and shared across probes, so a project without `src/`
     /// pays a single `stat`. Sorted for a stable result.
     fn probe_paths(&self, root: &Path) -> (Vec<MatchedFile>, Vec<String>, bool) {
-        let mut patterns: Vec<&String> = self
-            .pattern_processor
-            .get_exact_patterns()
-            .iter()
-            .filter(|pattern| pattern.contains('/'))
-            .collect();
-        patterns.sort();
-
         let mut exists: HashMap<&str, bool> = HashMap::new();
         let (mut matches, mut watched) = (Vec::new(), Vec::new());
         let mut unreadable = false;
-        for pattern in patterns {
+        for pattern in &self.probe_patterns {
             let mut parent: Option<&str> = None;
             let prefixes = pattern
                 .match_indices('/')
@@ -307,15 +309,14 @@ impl ScanningEngine {
         let deadline = scan_start + timeout;
         let mut timed_out = false;
         let mut unreadable = false;
-        // Seeded exact-name manifests don't count against the cap on the walk
+        // Seeded exact-name manifests don't count against the cap. One walk
+        // collects the initial matches and the root-level top-up.
         let mut matched_files = root_manifests;
         let root_count = matched_files.len();
-        let mut capped = false;
 
         for result in build_walker(path).build() {
-            if matched_files.len() - root_count >= MAX_MATCHES {
-                log::debug!("Sequential scan: max matches ({}) reached", MAX_MATCHES);
-                capped = true;
+            if matched_files.len() - root_count >= 2 * MAX_MATCHES {
+                log::debug!("Sequential scan: match cap reached");
                 break;
             }
 
@@ -340,26 +341,6 @@ impl ScanningEngine {
                 &mut matched_files,
                 &mut unreadable,
             );
-        }
-
-        // The walk is name-sorted, so earlier-sorted files can use up the cap
-        // before a root marker (`App.csproj` after many `C*.cs`) is reached.
-        // Top up from a second pass, which still honours .gitignore.
-        if capped {
-            let before = matched_files.len();
-            for entry in build_walker(path).build().flatten() {
-                if matched_files.len() - before >= MAX_MATCHES {
-                    break;
-                }
-                self.collect_match(
-                    entry.file_type(),
-                    entry.path(),
-                    entry.file_name(),
-                    path,
-                    &mut matched_files,
-                    &mut unreadable,
-                );
-            }
         }
 
         let elapsed = scan_start.elapsed().as_millis();
@@ -390,17 +371,13 @@ impl ScanningEngine {
         let mut unreadable = false;
         let mut matched_files = root_manifests;
         let root_count = matched_files.len();
-        let mut capped = false;
-        let mut entries: Vec<_> = listing
+
+        for entry in listing
             .entries()
             .filter(|entry| entry.file_name() != ".git")
-            .collect();
-        entries.sort_by_key(|entry| entry.file_name());
-
-        for entry in &entries {
-            if matched_files.len() - root_count >= MAX_MATCHES {
-                log::debug!("Sequential scan: max matches ({}) reached", MAX_MATCHES);
-                capped = true;
+        {
+            if matched_files.len() - root_count >= 2 * MAX_MATCHES {
+                log::debug!("Sequential scan: match cap reached");
                 break;
             }
             if Instant::now() >= deadline {
@@ -415,23 +392,6 @@ impl ScanningEngine {
                 &mut matched_files,
                 &mut unreadable,
             );
-        }
-
-        if capped {
-            let before = matched_files.len();
-            for entry in &entries {
-                if matched_files.len() - before >= MAX_MATCHES {
-                    break;
-                }
-                self.collect_match(
-                    entry.file_type().ok(),
-                    &entry.path(),
-                    &entry.file_name(),
-                    path,
-                    &mut matched_files,
-                    &mut unreadable,
-                );
-            }
         }
 
         let elapsed = scan_start.elapsed().as_millis();

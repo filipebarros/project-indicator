@@ -105,10 +105,19 @@ impl DetectionEngine {
     }
 
     pub fn detect(&self, path: &Path) -> Result<DetectionResult> {
-        if let Some(repository_root) = crate::detection::repository::find_vcs_root(path) {
+        let repository_root = crate::detection::repository::find_vcs_root(path);
+        self.detect_with_vcs_root(path, repository_root.as_deref())
+    }
+
+    pub fn detect_with_vcs_root(
+        &self,
+        path: &Path,
+        repository_root: Option<&Path>,
+    ) -> Result<DetectionResult> {
+        if let Some(repository_root) = repository_root {
             return Ok(crate::detection::repository::detect_repository(
                 self,
-                &repository_root,
+                repository_root,
             ));
         }
         Ok(self.detect_project(path))
@@ -365,12 +374,14 @@ impl DetectionEngine {
             (markers, root_path)
         } else {
             log::debug!("No project root found via upward traversal, scanning from current path");
-            // Upward discovery found no root — including when require_vcs_root
-            // rejected one. The folder's own markers still identify it, so
-            // probe the start path itself before falling back to source files.
-            let own_markers =
+            // A rejected VCS root still leaves the folder's own markers in
+            // play. Otherwise the failed search already ruled them out.
+            let own_markers = if self.root_indicator_engine.requires_vcs_root() {
                 self.root_indicator_engine
-                    .qualifying_markers_at(path, &file_cache, &parsed_cache);
+                    .qualifying_markers_at(path, &file_cache, &parsed_cache)
+            } else {
+                Vec::new()
+            };
             (own_markers, path.to_path_buf())
         };
         if !root_markers.is_empty() {
@@ -485,34 +496,21 @@ impl DetectionEngine {
             return no_match(evidence);
         }
 
-        // Which indicators have real source evidence at the scan root: a
-        // second language's sources contest a marker just like a second
-        // marker does (a Groovy build.gradle beside Main.kt is not a Java
-        // project yet).
-        let source_indicators: Vec<Arc<Indicator>> = self
-            .indicators
-            .iter()
-            .filter(|candidate| {
-                indicator_resolver::root_source_evidence(
-                    candidate,
-                    &detailed_files,
-                    &self.indicators,
-                )
-            })
-            .cloned()
-            .collect();
-
-        // An uncontested root marker decides by itself: scoring exists to
-        // arbitrate contested directories, and a lone manifest IS the answer.
-        // Confidence is the marker's certainty (weight × context), so a
-        // manifest reads higher than a lockfile alone.
+        // An uncontested root marker decides by itself. Only another
+        // language's root sources contest it, so avoid collecting source
+        // evidence for the common single-manifest case.
         let uncontested = (!root_markers.is_empty()
             && root_markers
                 .iter()
                 .all(|m| m.indicator.name == root_markers[0].indicator.name)
-            && source_indicators
-                .iter()
-                .all(|src| src.name == root_markers[0].indicator.name))
+            && !self.indicators.iter().any(|candidate| {
+                candidate.name != root_markers[0].indicator.name
+                    && indicator_resolver::root_source_evidence(
+                        candidate,
+                        &detailed_files,
+                        &self.indicators,
+                    )
+            }))
         .then(|| RootIndicatorEngine::best_marker(&root_markers).clone());
         let (indicator, confidence) = if let Some(root_match) = uncontested {
             evidence.add_confidence_factor(crate::types::ConfidenceFactor::new(
@@ -525,6 +523,18 @@ impl DetectionEngine {
             ));
             (root_match.indicator, root_match.certainty)
         } else if !root_markers.is_empty() {
+            let source_indicators: Vec<Arc<Indicator>> = self
+                .indicators
+                .iter()
+                .filter(|candidate| {
+                    indicator_resolver::root_source_evidence(
+                        candidate,
+                        &detailed_files,
+                        &self.indicators,
+                    )
+                })
+                .cloned()
+                .collect();
             match self.arbitrate_contested(
                 &scan_path,
                 &root_markers,
@@ -551,13 +561,11 @@ impl DetectionEngine {
                 &mut evidence,
             );
 
-            let Some(indicator) = detected_indicator else {
+            let Some((indicator, confidence)) = detected_indicator else {
                 finish_evidence(&mut evidence, &parsed_cache, &file_cache, &scan_path);
                 return no_match(evidence);
             };
 
-            let confidence =
-                calculate_indicator_score(&indicator, &detailed_files, &self.indicators);
             evidence.add_confidence_factor(crate::types::ConfidenceFactor::new(
                 "ratio_score".to_string(),
                 confidence,
