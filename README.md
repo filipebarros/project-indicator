@@ -127,12 +127,20 @@ watched inputs rather than being constant. Timed-out, partial, and unreadable
 scans are never cached.
 
 Repository-wide cold scans use a five-second safety timeout; partial results
-are marked truncated and are not persisted. Synthetic benchmarks show the
-expected scaling: 1,000 candidate directories cost about 238ms cold and 2.52ms
-warm, while 10,000 cost about 2.61s cold and 31.6ms warm with 20,001 watched
-paths and a 6.52MB cache entry. Repository entries are not dropped based on
-watch count; larger repositories simply pay higher cold-scan and validation
-costs.
+are marked truncated and are not persisted. Cold scanning shares one directory
+listing per directory across scanning, root-marker lookup, and child
+discovery (directories with local ignore files still take the ignore-walker
+path), and nested project detection reuses the repository scan instead of
+rescanning. Synthetic benchmarks with flat repositories show the expected
+scaling: 1,000 candidate directories cost about 40ms cold and 2.5ms warm,
+while 10,000 cost about 540ms cold and 31ms warm with 20,001 watched paths
+and a 6.6MB cache entry. A repository whose root is itself a project — the
+common dotfiles shape — costs about 72ms cold at 1,000 directories and
+890ms at 10,000; its warm validation is unchanged at about 31ms, since cache
+validation cost is unaffected by this work. On a real dotfiles repository of
+about 7,400 directories, a cold scan went from about 3.9s to about 0.5s with
+byte-identical output. Repository entries are not dropped based on watch
+count; larger repositories simply pay higher cold-scan and validation costs.
 
 ```bash
 project-indicator cache stats   # entry count and disk usage
