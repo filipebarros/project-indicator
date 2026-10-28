@@ -4,13 +4,13 @@ use crate::detection::framework_detector;
 use crate::detection::indicator_resolver;
 use crate::detection::pattern_processor::{normalized_relative, PatternProcessor};
 use crate::detection::root_indicators::{FoundRootIndicator, RootIndicatorEngine};
-use crate::detection::scanner::ScanningEngine;
+use crate::detection::scanner::{ScanOutcome, ScanningEngine};
 use crate::performance::FileSystemCache;
 use crate::types::{
     DetectionConfig, DetectionEvidence, DetectionResult, Framework, Indicator, NestedProject,
 };
 use crate::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// A confirmed framework dependency floors confidence here: the dependency
@@ -383,17 +383,98 @@ impl DetectionEngine {
         }
 
         let scan_start = std::time::Instant::now();
-
         let outcome = self.scanning_engine.scan_with_status(&scan_path);
+        let scan_duration_ms = scan_start.elapsed().as_millis() as u64;
+
+        self.detect_from_scan(
+            scan_path,
+            root_markers,
+            outcome,
+            scan_duration_ms,
+            evidence,
+            file_cache,
+            parsed_cache,
+        )
+    }
+
+    /// Project detection for a directory whose qualifying markers and scan
+    /// repository aggregation already produced: no upward discovery, no
+    /// second listing, no second scan. The directory is its own root
+    /// (`max_levels_above = 0` with the VCS root known), as in repository
+    /// aggregation, so the supplied markers play both branches of root
+    /// discovery.
+    pub(crate) fn detect_one_with_scan(
+        &self,
+        path: &Path,
+        root_markers: Vec<FoundRootIndicator>,
+        scan: ScanOutcome,
+    ) -> DetectionResult {
+        let mut evidence = DetectionEvidence::default();
+        let file_cache = FileSystemCache::default();
+        let parsed_cache = ParsedFileCache::new();
+
+        if self.root_indicator_engine.is_boundary_directory(path) {
+            log::debug!(
+                "Refusing to scan from boundary directory: {}",
+                path.display()
+            );
+            return no_match(evidence);
+        }
+
+        if !root_markers.is_empty() {
+            // Mirror find_root_markers_within: the root is recorded only
+            // when the configured VCS requirement accepts the directory
+            // itself; otherwise detection still uses the supplied markers,
+            // exactly like the own-markers fallback.
+            if self
+                .root_indicator_engine
+                .root_vcs_validated(path, &file_cache)
+            {
+                evidence.scan_root = Some(path.to_path_buf());
+            }
+            let best = RootIndicatorEngine::best_marker(&root_markers);
+            evidence.add_root_evidence(crate::types::EvidenceItem::root_indicator(
+                path.join(&best.pattern).to_string_lossy().to_string(),
+                best.pattern.clone(),
+                best.certainty,
+            ));
+        }
+
+        // The scan ran before this call; only its outcome is supplied.
+        self.detect_from_scan(
+            path.to_path_buf(),
+            root_markers,
+            scan,
+            0,
+            evidence,
+            file_cache,
+            parsed_cache,
+        )
+    }
+
+    /// Everything after the scan in `detect_one` and `detect_one_with_scan`:
+    /// source evidence, arbitration, framework detection, confidence
+    /// flooring, evidence finishing. Every early return of the original
+    /// scan-then-decide flow lives here.
+    // By-value caches and markers keep the extracted body identical to the
+    // inline flow it came from; the helper is a mechanical split.
+    #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
+    fn detect_from_scan(
+        &self,
+        scan_path: PathBuf,
+        root_markers: Vec<FoundRootIndicator>,
+        outcome: ScanOutcome,
+        scan_duration_ms: u64,
+        mut evidence: DetectionEvidence,
+        file_cache: FileSystemCache,
+        parsed_cache: ParsedFileCache,
+    ) -> DetectionResult {
         let detailed_files = outcome.matches;
         evidence.scan_truncated = outcome.truncated;
         evidence.read_failed = outcome.unreadable;
         evidence.watched_dirs = outcome.watched_dirs;
 
-        evidence.set_scan_metrics(
-            detailed_files.len(),
-            scan_start.elapsed().as_millis() as u64,
-        );
+        evidence.set_scan_metrics(detailed_files.len(), scan_duration_ms);
 
         // An empty scan only means "no project" when root discovery found
         // nothing either: a marker absent from its indicator's file patterns
@@ -609,6 +690,58 @@ mod tests {
             "Rust"
         );
         assert!(result.confidence > 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_detect_one_with_scan_uses_the_supplied_snapshot(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let rust = Indicator::with_root_indicators(
+            "Rust".to_string(),
+            vec!["*.rs".to_string()],
+            "#FF0000".to_string(),
+            "R".to_string(),
+            vec![],
+            vec![crate::types::RootIndicator {
+                pattern: "Cargo.toml".to_string(),
+                weight: 0.95,
+                context: crate::types::IndicatorContext::LanguageRoot,
+                alternative_group: None,
+            }],
+        );
+        let engine = DetectionEngine::new(vec![rust], vec![]);
+        let dir = tempfile::TempDir::new()?;
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"snap\"\n",
+        )?;
+        std::fs::write(dir.path().join("main.rs"), "fn main() {}\n")?;
+
+        let listing = crate::detection::directory::DirectoryListing::read(dir.path());
+        let markers = engine.root_indicator_engine.qualifying_markers_in(
+            dir.path(),
+            &listing,
+            &FileSystemCache::default(),
+            &ParsedFileCache::new(),
+        );
+        let scan = engine
+            .scanning_engine
+            .scan_with_listing(dir.path(), &listing);
+        let matched = scan.matches.len();
+        std::fs::remove_file(dir.path().join("Cargo.toml"))?;
+
+        let result = engine.detect_one_with_scan(dir.path(), markers, scan);
+
+        let indicator = result.indicator.as_ref().ok_or("expected a Rust project")?;
+        assert_eq!(indicator.name, "Rust");
+        assert!(result.confidence > 0.0);
+        assert_eq!(result.evidence.files_matched, matched);
+        assert!(result.evidence.scan_root.is_some());
+        assert!(result
+            .evidence
+            .root_discovery
+            .iter()
+            .any(|item| item.pattern_matched == "Cargo.toml"));
         Ok(())
     }
 

@@ -255,6 +255,14 @@ impl RootIndicatorEngine {
             .any(|dir| Self::has_vcs_marker(dir, file_cache))
     }
 
+    /// Whether the configured VCS requirement accepts `path` as a project
+    /// root: the check `find_root_markers_within` applies to markers found
+    /// at the start directory itself, extracted for callers that supply
+    /// markers from an existing directory listing.
+    pub(crate) fn root_vcs_validated(&self, path: &Path, file_cache: &FileSystemCache) -> bool {
+        !self.config.require_vcs_root || Self::has_vcs_marker(path, file_cache)
+    }
+
     /// The strongest marker of a directory: highest certainty, then config
     /// order (the collection iterates indicators in config order, so the
     /// first max wins ties). Callers pass a non-empty slice: every path here
