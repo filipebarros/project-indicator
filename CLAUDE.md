@@ -403,12 +403,18 @@ For ecosystem-specific dependency matching:
   in-process detection is ~0.2ms for a small project, per the criterion
   benchmarks, and grows ~2µs per non-matching file in the scan root)
 - Worst case (deep nesting): < 50ms
-- Repository scaling is measured separately. Synthetic fixtures cost ~24.5ms
-  cold / 0.279ms warm at 100 candidate dirs, ~238ms / 2.52ms at 1,000, and
-  ~2.61s / 31.6ms at 10,000 (20,001 watched paths, 6.52MB entry). Repository
-  scans have a five-second safety timeout and are never truncated by watch
-  count; incomplete or unreadable results are not cached. No repository cache
-  cap is needed at 1,000 paths because warm validation remains below 10ms.
+- Repository scaling is measured separately. Synthetic fixtures (flat
+  repositories) cost ~3.9ms cold / 0.28ms warm at 100 candidate dirs,
+  ~40ms / 2.5ms at 1,000, and ~540ms / 31ms at 10,000 (20,001 watched
+  paths, 6.6MB entry). A repository whose root is itself a project costs
+  ~6.8ms / 0.28ms at 100, ~72ms / 2.5ms at 1,000, and ~890ms / 31ms at
+  10,000. Cold scans share one directory listing per directory across
+  scanning, root-marker lookup, and child discovery (local ignore files still
+  use the ignore walker); nested project detection reuses the repository scan.
+  Cache validation cost is unchanged by this work. Repository scans have a
+  five-second safety timeout and are never truncated by watch count;
+  incomplete or unreadable results are not cached. No repository cache cap is
+  needed at 1,000 paths because warm validation remains below 10ms.
 
 ## Project Structure Notes
 
