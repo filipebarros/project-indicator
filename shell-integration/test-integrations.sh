@@ -1,5 +1,5 @@
 #!/bin/bash
-# Smoke-test the shell prompt hooks against a release build.
+# Smoke-test the shell prompt hooks against a local build.
 #
 # Each hook is loaded in its shell inside a fixture project with an isolated
 # XDG_CACHE_HOME; the prompt function must emit non-empty output.
@@ -7,11 +7,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# A release build if present, else the debug build `cargo test` leaves behind
-export PATH="$SCRIPT_DIR/../target/release:$SCRIPT_DIR/../target/debug:$PATH"
+# Prefer the debug build `cargo test` refreshes; a cached release may be stale
+export PATH="$SCRIPT_DIR/../target/debug:$SCRIPT_DIR/../target/release:$PATH"
 
 if ! command -v project-indicator >/dev/null 2>&1; then
-    echo "Error: project-indicator binary not found — run 'cargo build --release' first" >&2
+    echo "Error: project-indicator binary not found — run 'cargo build' first" >&2
     exit 1
 fi
 
@@ -65,9 +65,6 @@ out="$(cd "$container" && bash -c "source '$SCRIPT_DIR/project-indicator.bash'; 
 }
 if [[ -z "$out" ]]; then
     echo "✗ bash hook produced no multi-project output"
-    project-indicator --version
-    (cd "$container" && project-indicator --verbose --format json) || true
-    (cd "$container" && project-indicator --no-cache --format json) || true
     fail=1
 elif [[ "$out" == *$'\033[38;2'* ]]; then
     wrapped="$(grep -ao $'\001\033\[38;2' <<<"$out" | wc -l | tr -d ' ' || true)"
