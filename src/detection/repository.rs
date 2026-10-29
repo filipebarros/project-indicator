@@ -131,7 +131,13 @@ impl<'a> RepositoryScan<'a> {
                 &self.parsed_cache,
             );
             if !has_project || !markers.is_empty() {
-                let found = self.engine.detect_one_with_scan(directory, markers, scan);
+                let found = self.engine.detect_one_with_scan(
+                    directory,
+                    markers,
+                    scan,
+                    &self.file_cache,
+                    &self.parsed_cache,
+                );
                 merge_child_evidence(&mut self.result.evidence, directory, &found.evidence);
                 if let Some(indicator) = found.indicator {
                     let name = normalized_relative(directory, self.repository_root)
@@ -150,6 +156,8 @@ impl<'a> RepositoryScan<'a> {
     }
 
     fn finish(mut self) -> DetectionResult {
+        // Children share these caches; collect their evidence once here, not
+        // into every child result.
         self.result.evidence.read_failed |=
             self.parsed_cache.read_failed() || self.file_cache.read_failed();
         self.result.evidence.watched_dirs.extend(
@@ -392,6 +400,32 @@ mod tests {
                         .iter()
                         .any(|framework| framework.framework.name == "Spring Boot")
             })
+        }
+
+        #[test]
+        fn test_shared_cache_evidence_is_collected_at_repository_finish() -> TestResult {
+            let dir = TempDir::new()?;
+            write(
+                dir.path(),
+                &[
+                    ("package.json", r#"{"dependencies":{"react":"18"}}"#),
+                    ("child/package.json", r#"{"dependencies":{"vue":"3"}}"#),
+                ],
+            )?;
+            let engine = engine();
+            let mut scan = RepositoryScan::new(&engine, dir.path(), Instant::now());
+
+            scan.scan_directory(dir.path(), false);
+            scan.scan_directory(&dir.path().join("child"), false);
+
+            assert!(scan.result.evidence.read_files.is_empty());
+            let result = scan.finish();
+            let path = |relative| dir.path().join(relative).to_string_lossy().into_owned();
+            assert_eq!(
+                result.evidence.read_files,
+                [path("child/package.json"), path("package.json")]
+            );
+            Ok(())
         }
 
         #[test]

@@ -403,8 +403,9 @@ impl DetectionEngine {
             outcome,
             scan_duration_ms,
             evidence,
-            file_cache,
-            parsed_cache,
+            true,
+            &file_cache,
+            &parsed_cache,
         )
     }
 
@@ -419,10 +420,10 @@ impl DetectionEngine {
         path: &Path,
         root_markers: Vec<FoundRootIndicator>,
         scan: ScanOutcome,
+        file_cache: &FileSystemCache,
+        parsed_cache: &ParsedFileCache,
     ) -> DetectionResult {
         let mut evidence = DetectionEvidence::default();
-        let file_cache = FileSystemCache::default();
-        let parsed_cache = ParsedFileCache::new();
 
         if self.root_indicator_engine.is_boundary_directory(path) {
             log::debug!(
@@ -439,7 +440,7 @@ impl DetectionEngine {
             // exactly like the own-markers fallback.
             if self
                 .root_indicator_engine
-                .root_vcs_validated(path, &file_cache)
+                .root_vcs_validated(path, file_cache)
             {
                 evidence.scan_root = Some(path.to_path_buf());
             }
@@ -458,6 +459,7 @@ impl DetectionEngine {
             scan,
             0,
             evidence,
+            false,
             file_cache,
             parsed_cache,
         )
@@ -466,9 +468,8 @@ impl DetectionEngine {
     /// Everything after the scan in `detect_one` and `detect_one_with_scan`:
     /// source evidence, arbitration, framework detection, confidence
     /// flooring, evidence finishing. Every early return of the original
-    /// scan-then-decide flow lives here.
-    // By-value caches and markers keep the extracted body identical to the
-    // inline flow it came from; the helper is a mechanical split.
+    /// scan-then-decide flow lives here. Repository children do not collect
+    /// shared-cache evidence: `RepositoryScan::finish` collects it once.
     #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
     fn detect_from_scan(
         &self,
@@ -477,8 +478,9 @@ impl DetectionEngine {
         outcome: ScanOutcome,
         scan_duration_ms: u64,
         mut evidence: DetectionEvidence,
-        file_cache: FileSystemCache,
-        parsed_cache: ParsedFileCache,
+        collect_cache_evidence: bool,
+        file_cache: &FileSystemCache,
+        parsed_cache: &ParsedFileCache,
     ) -> DetectionResult {
         let detailed_files = outcome.matches;
         evidence.scan_truncated = outcome.truncated;
@@ -492,7 +494,13 @@ impl DetectionEngine {
         // (settings.gradle, pubspec.lock) must still identify the project
         // instead of blacking out the folder and everything beneath it.
         if detailed_files.is_empty() && root_markers.is_empty() {
-            finish_evidence(&mut evidence, &parsed_cache, &file_cache, &scan_path);
+            finish_evidence(
+                &mut evidence,
+                parsed_cache,
+                file_cache,
+                &scan_path,
+                collect_cache_evidence,
+            );
             return no_match(evidence);
         }
 
@@ -541,12 +549,18 @@ impl DetectionEngine {
                 &source_indicators,
                 &detailed_files,
                 &mut evidence,
-                &file_cache,
-                &parsed_cache,
+                file_cache,
+                parsed_cache,
             ) {
                 Some(decision) => decision,
                 None => {
-                    finish_evidence(&mut evidence, &parsed_cache, &file_cache, &scan_path);
+                    finish_evidence(
+                        &mut evidence,
+                        parsed_cache,
+                        file_cache,
+                        &scan_path,
+                        collect_cache_evidence,
+                    );
                     return no_match(evidence);
                 }
             }
@@ -562,7 +576,13 @@ impl DetectionEngine {
             );
 
             let Some((indicator, confidence)) = detected_indicator else {
-                finish_evidence(&mut evidence, &parsed_cache, &file_cache, &scan_path);
+                finish_evidence(
+                    &mut evidence,
+                    parsed_cache,
+                    file_cache,
+                    &scan_path,
+                    collect_cache_evidence,
+                );
                 return no_match(evidence);
             };
 
@@ -584,11 +604,17 @@ impl DetectionEngine {
             &indicator,
             &self.frameworks,
             &mut evidence,
-            &file_cache,
-            &parsed_cache,
+            file_cache,
+            parsed_cache,
         );
 
-        finish_evidence(&mut evidence, &parsed_cache, &file_cache, &scan_path);
+        finish_evidence(
+            &mut evidence,
+            parsed_cache,
+            file_cache,
+            &scan_path,
+            collect_cache_evidence,
+        );
 
         // A confirmed framework DEPENDENCY floors every path: the dependency
         // exists in a real manifest, which identifies the project
@@ -643,28 +669,32 @@ pub(crate) fn merge_child_evidence(
     parent.read_failed |= found.read_failed;
 }
 
-/// What the persistent cache must watch for this result, recorded on every
-/// return path after the scan (a "no match" depends on it too): every file
-/// read, and the directories where a probed path marker would appear.
+/// Finish evidence on every return path after the scan. Standalone detection
+/// also collects its per-call cache inputs. Repository children pass false:
+/// `RepositoryScan::finish` collects their shared cache inputs once.
 fn finish_evidence(
     evidence: &mut DetectionEvidence,
     parsed_cache: &ParsedFileCache,
     file_cache: &FileSystemCache,
     scan_path: &Path,
+    collect_cache_evidence: bool,
 ) {
-    let name = |path: &Path| {
-        normalized_relative(path, scan_path).unwrap_or_else(|| path.to_string_lossy().into_owned())
-    };
-    evidence.read_failed |= parsed_cache.read_failed() || file_cache.read_failed();
-    evidence.read_files = parsed_cache.read_paths().iter().map(|p| name(p)).collect();
-    // the scan root itself is always watched: no entry for it
-    evidence.watched_dirs.extend(
-        file_cache
-            .watched_dirs()
-            .iter()
-            .map(|p| name(p))
-            .filter(|dir| !dir.is_empty()),
-    );
+    if collect_cache_evidence {
+        let name = |path: &Path| {
+            normalized_relative(path, scan_path)
+                .unwrap_or_else(|| path.to_string_lossy().into_owned())
+        };
+        evidence.read_failed |= parsed_cache.read_failed() || file_cache.read_failed();
+        evidence.read_files = parsed_cache.read_paths().iter().map(|p| name(p)).collect();
+        // the scan root itself is always watched: no entry for it
+        evidence.watched_dirs.extend(
+            file_cache
+                .watched_dirs()
+                .iter()
+                .map(|p| name(p))
+                .filter(|dir| !dir.is_empty()),
+        );
+    }
     evidence.watched_dirs.sort();
     evidence.watched_dirs.dedup();
 }
@@ -726,11 +756,13 @@ mod tests {
         std::fs::write(dir.path().join("main.rs"), "fn main() {}\n")?;
 
         let listing = crate::detection::directory::DirectoryListing::read(dir.path());
+        let file_cache = FileSystemCache::default();
+        let parsed_cache = ParsedFileCache::new();
         let markers = engine.root_indicator_engine.qualifying_markers_in(
             dir.path(),
             &listing,
-            &FileSystemCache::default(),
-            &ParsedFileCache::new(),
+            &file_cache,
+            &parsed_cache,
         );
         let scan = engine
             .scanning_engine
@@ -738,7 +770,8 @@ mod tests {
         let matched = scan.matches.len();
         std::fs::remove_file(dir.path().join("Cargo.toml"))?;
 
-        let result = engine.detect_one_with_scan(dir.path(), markers, scan);
+        let result =
+            engine.detect_one_with_scan(dir.path(), markers, scan, &file_cache, &parsed_cache);
 
         let indicator = result.indicator.as_ref().ok_or("expected a Rust project")?;
         assert_eq!(indicator.name, "Rust");

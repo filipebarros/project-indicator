@@ -14,6 +14,32 @@ use std::sync::Arc;
 pub(crate) const VCS_MARKERS: [&str; 3] = [DOT_GIT, ".hg", ".svn"];
 
 #[derive(Default)]
+struct RootPatternIndex {
+    literal_patterns: std::collections::HashSet<String>,
+    wildcard_patterns: Vec<String>,
+}
+
+impl RootPatternIndex {
+    fn new(indicators: &[Arc<Indicator>]) -> Self {
+        let roots = || {
+            indicators
+                .iter()
+                .flat_map(|indicator| &indicator.root_indicators)
+        };
+        Self {
+            literal_patterns: roots()
+                .map(|root| root.pattern.clone())
+                .filter(|pattern| !pattern.contains('*') && !pattern.contains('/'))
+                .collect(),
+            wildcard_patterns: roots()
+                .map(|root| root.pattern.clone())
+                .filter(|pattern| pattern.contains('*'))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Default)]
 struct RootDirectoryListing {
     literal_names: std::collections::HashSet<String>,
     wildcard_matches: std::collections::HashMap<String, String>,
@@ -21,22 +47,9 @@ struct RootDirectoryListing {
 
 fn root_markers_from_entries<'a>(
     entries: impl Iterator<Item = &'a std::fs::DirEntry>,
-    indicators: &[Arc<Indicator>],
+    patterns: &RootPatternIndex,
     file_cache: &FileSystemCache,
 ) -> RootDirectoryListing {
-    let roots = || {
-        indicators
-            .iter()
-            .flat_map(|indicator| &indicator.root_indicators)
-    };
-    let literal_patterns: std::collections::HashSet<&str> = roots()
-        .map(|root| root.pattern.as_str())
-        .filter(|pattern| !pattern.contains('*') && !pattern.contains('/'))
-        .collect();
-    let wildcard_patterns: Vec<&str> = roots()
-        .map(|root| root.pattern.as_str())
-        .filter(|pattern| pattern.contains('*'))
-        .collect();
     let mut listing = RootDirectoryListing::default();
     for entry in entries {
         let Ok(name) = entry.file_name().into_string() else {
@@ -48,21 +61,23 @@ fn root_markers_from_entries<'a>(
                     && file_cache.exists(&entry.path())
                     && entry.path().is_file())
         });
-        if is_file && literal_patterns.contains(name.as_str()) {
+        if is_file && patterns.literal_patterns.contains(name.as_str()) {
             listing.literal_names.insert(name.clone());
         }
         if is_file
-            && wildcard_patterns
+            && patterns
+                .wildcard_patterns
                 .iter()
                 .any(|pattern| matches_pattern(&name, pattern))
         {
-            for pattern in wildcard_patterns
+            for pattern in patterns
+                .wildcard_patterns
                 .iter()
                 .filter(|pattern| matches_pattern(&name, pattern))
             {
                 listing
                     .wildcard_matches
-                    .entry((*pattern).to_string())
+                    .entry(pattern.clone())
                     .and_modify(|current| {
                         if name < *current {
                             *current = name.clone();
@@ -77,7 +92,7 @@ fn root_markers_from_entries<'a>(
 
 fn list_root_markers(
     path: &Path,
-    indicators: &[Arc<Indicator>],
+    patterns: &RootPatternIndex,
     file_cache: &FileSystemCache,
 ) -> Option<RootDirectoryListing> {
     let Ok(entries) = std::fs::read_dir(path) else {
@@ -93,7 +108,7 @@ fn list_root_markers(
     }
     Some(root_markers_from_entries(
         valid_entries.iter(),
-        indicators,
+        patterns,
         file_cache,
     ))
 }
@@ -111,6 +126,7 @@ pub struct FoundRootIndicator {
 
 pub struct RootIndicatorEngine {
     indicators: Vec<Arc<Indicator>>,
+    patterns: RootPatternIndex,
     config: DetectionConfig,
     cached_home_dir: Option<PathBuf>,
 }
@@ -119,8 +135,10 @@ impl RootIndicatorEngine {
     pub fn from_parts(indicators: Vec<Arc<Indicator>>, config: DetectionConfig) -> Self {
         // Checked in config order at every ancestor level: the vec order IS
         // the tie-break order
+        let patterns = RootPatternIndex::new(&indicators);
         Self {
             indicators,
+            patterns,
             config,
             cached_home_dir: std::env::home_dir().map(|h| h.canonicalize().unwrap_or(h)),
         }
@@ -305,7 +323,7 @@ impl RootIndicatorEngine {
             file_cache.mark_read_failed();
         }
         let listing =
-            root_markers_from_entries(supplied_listing.entries(), &self.indicators, file_cache);
+            root_markers_from_entries(supplied_listing.entries(), &self.patterns, file_cache);
         self.qualifying_markers(path, file_cache, parsed_cache, Some(Some(listing)), true)
     }
 
@@ -329,9 +347,7 @@ impl RootIndicatorEngine {
                 // literals it is the pattern itself
                 let matched_name = if root_indicator.pattern.contains('*') {
                     listing
-                        .get_or_insert_with(|| {
-                            list_root_markers(path, &self.indicators, file_cache)
-                        })
+                        .get_or_insert_with(|| list_root_markers(path, &self.patterns, file_cache))
                         .as_ref()
                         .and_then(|listing| {
                             listing
@@ -370,7 +386,7 @@ impl RootIndicatorEngine {
                         && (pattern.contains('/')
                             || listing
                                 .get_or_insert_with(|| {
-                                    list_root_markers(path, &self.indicators, file_cache)
+                                    list_root_markers(path, &self.patterns, file_cache)
                                 })
                                 .as_ref()
                                 .is_none_or(|listing| listing.literal_names.contains(pattern))))

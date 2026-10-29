@@ -31,6 +31,17 @@ impl DirectoryListing {
         self.entries.iter()
     }
 
+    pub(crate) fn contains_name(&self, name: &str) -> bool {
+        self.entries
+            .binary_search_by(|entry| {
+                entry
+                    .file_name()
+                    .as_os_str()
+                    .cmp(std::ffi::OsStr::new(name))
+            })
+            .is_ok()
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }

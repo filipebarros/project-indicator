@@ -130,14 +130,27 @@ impl ScanningEngine {
 
     /// Exact patterns that are relative paths (`src/main/java`) are probed,
     /// since the walk never leaves the root. Returns the matches, directories
-    /// to watch, and whether a probe could not be read. Existence is checked
-    /// prefix by prefix and shared across probes, so a project without `src/`
-    /// pays a single `stat`. Sorted for a stable result.
-    fn probe_paths(&self, root: &Path) -> (Vec<MatchedFile>, Vec<String>, bool) {
+    /// to watch, and whether a probe could not be read. A first component
+    /// absent from the root listing needs no filesystem probe. Otherwise,
+    /// existence is checked prefix by prefix and shared across probes, so a
+    /// project without `src/main/` pays a single `stat`. Sorted for stability.
+    fn probe_paths(
+        &self,
+        root: &Path,
+        listing: &DirectoryListing,
+    ) -> (Vec<MatchedFile>, Vec<String>, bool) {
         let mut exists: HashMap<&str, bool> = HashMap::new();
         let (mut matches, mut watched) = (Vec::new(), Vec::new());
         let mut unreadable = false;
         for pattern in &self.probe_patterns {
+            let Some((first_component, _)) = pattern.split_once('/') else {
+                continue;
+            };
+            if !matches!(first_component, "" | "." | "..")
+                && !listing.contains_name(first_component)
+            {
+                continue;
+            }
             let mut parent: Option<&str> = None;
             let prefixes = pattern
                 .match_indices('/')
@@ -210,7 +223,7 @@ impl ScanningEngine {
             // root (e.g. a big monorepo) is not reported as empty
             let mut matches = self.root_manifest_matches(&root_names);
             matches.extend(self.root_wildcard_matches(&root_names, &matches));
-            let (probed, watched_dirs, unreadable) = self.probe_paths(path);
+            let (probed, watched_dirs, unreadable) = self.probe_paths(path, listing);
             matches.extend(probed);
             return ScanOutcome {
                 matches,
@@ -220,16 +233,13 @@ impl ScanningEngine {
             };
         }
 
-        let (probed, probe_dirs, probe_unreadable) = self.probe_paths(path);
+        let (probed, probe_dirs, probe_unreadable) = self.probe_paths(path, listing);
         let mut seeded = self.root_manifest_matches(&root_names);
         seeded.extend(probed);
-        let has_ignore_files = listing.entries().any(|entry| {
-            entry
-                .file_name()
-                .to_str()
-                .is_some_and(|name| matches!(name, ".gitignore" | ".ignore"))
-        }) || std::fs::symlink_metadata(path.join(".git/info/exclude"))
-            .is_ok();
+        let has_git = listing.contains_name(".git");
+        let has_ignore_files = listing.contains_name(".gitignore")
+            || listing.contains_name(".ignore")
+            || (has_git && std::fs::symlink_metadata(path.join(".git/info/exclude")).is_ok());
         let mut outcome = if has_ignore_files {
             self.scan_sequential(path, scan_timeout(entry_count), seeded)
         } else {
@@ -470,7 +480,7 @@ mod tests {
         let listing = DirectoryListing::read(root);
         let from_listing = engine.scan_with_listing(root, &listing);
         let (entry_count, root_names, listed) = engine.list_root(&listing);
-        let (probed, probe_dirs, probe_unreadable) = engine.probe_paths(root);
+        let (probed, probe_dirs, probe_unreadable) = engine.probe_paths(root, &listing);
         let mut seeded = engine.root_manifest_matches(&root_names);
         seeded.extend(probed);
         let mut from_walker = engine.scan_sequential(root, scan_timeout(entry_count), seeded);
@@ -544,6 +554,49 @@ mod tests {
             .matches
             .iter()
             .any(|m| m.relative_path == "go.mod"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_git_exclude_is_checked_only_when_git_is_listed() -> Result<()> {
+        use crate::detection::directory::DirectoryListing;
+
+        let temp_dir = TempDir::new()?;
+        let root = temp_dir.path();
+        fs::write(root.join("app.js"), "")?;
+        let listing_without_git = DirectoryListing::read(root);
+        fs::create_dir_all(root.join(".git/info"))?;
+        fs::write(root.join(".git/info/exclude"), "app.js\n")?;
+
+        let without_git = js_engine().scan_with_listing(root, &listing_without_git);
+        assert!(without_git
+            .matches
+            .iter()
+            .any(|m| m.relative_path == "app.js"));
+
+        let listing_with_git = DirectoryListing::read(root);
+        let with_git = js_engine().scan_with_listing(root, &listing_with_git);
+        assert!(!with_git.matches.iter().any(|m| m.relative_path == "app.js"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_symlinked_git_directory_enables_git_exclude() -> Result<()> {
+        use crate::detection::directory::DirectoryListing;
+
+        let temp_dir = TempDir::new()?;
+        let git_dir = TempDir::new()?;
+        let root = temp_dir.path();
+        fs::create_dir_all(git_dir.path().join("info"))?;
+        fs::write(git_dir.path().join("info/exclude"), "app.js\n")?;
+        std::os::unix::fs::symlink(git_dir.path(), root.join(".git"))?;
+        fs::write(root.join("app.js"), "")?;
+
+        let listing = DirectoryListing::read(root);
+        let outcome = js_engine().scan_with_listing(root, &listing);
+
+        assert!(!outcome.matches.iter().any(|m| m.relative_path == "app.js"));
         Ok(())
     }
 
@@ -666,6 +719,42 @@ mod tests {
             "src/main/java".to_string(),
         ]);
         ScanningEngine::new(PatternProcessor::new(patterns))
+    }
+
+    #[test]
+    fn test_absent_probe_root_is_not_probed_or_watched() -> Result<()> {
+        use crate::detection::directory::DirectoryListing;
+
+        let temp_dir = TempDir::new()?;
+        let root = temp_dir.path();
+        let listing = DirectoryListing::read(root);
+        fs::create_dir_all(root.join("src/main/java"))?;
+        fs::write(root.join("src/main/java/Main.java"), "")?;
+
+        let (matches, watched, unreadable) = probe_engine().probe_paths(root, &listing);
+
+        assert!(matches.is_empty(), "stale filesystem state was probed");
+        assert!(watched.is_empty());
+        assert!(!unreadable);
+        Ok(())
+    }
+
+    #[test]
+    fn test_dot_prefixed_probe_uses_filesystem_resolution() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let root = temp_dir.path();
+        fs::create_dir_all(root.join("src/main/java"))?;
+        fs::write(root.join("src/main/java/Main.java"), "")?;
+        let engine = ScanningEngine::new(PatternProcessor::new(Arc::from(vec![
+            "./src/main/java".to_string()
+        ])));
+
+        let (matches, _, unreadable) = engine.probe_paths(root, &DirectoryListing::read(root));
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].relative_path, "./src/main/java");
+        assert!(!unreadable);
+        Ok(())
     }
 
     #[test]
