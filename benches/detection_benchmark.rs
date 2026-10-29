@@ -82,14 +82,9 @@ fn setup_large_project(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let base = temp_dir.path();
 
-    let src = base.join("src");
-    fs::create_dir_all(&src)?;
-
     for i in 0..file_count {
-        let dir = src.join(format!("module_{}", i / 10));
-        fs::create_dir_all(&dir)?;
         fs::write(
-            dir.join(format!("file_{}.rs", i)),
+            base.join(format!("file_{i:05}.rs")),
             "fn main() { println!(\"Hello\"); }",
         )?;
     }
@@ -162,7 +157,7 @@ fn benchmark_monorepo_detection(c: &mut Criterion) -> Result<(), Box<dyn std::er
 fn benchmark_file_count_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let mut group = c.benchmark_group("file_count_scaling");
 
-    for file_count in [50, 100, 200, 500].iter() {
+    for file_count in [50, 100, 200, 500, 5_000].iter() {
         let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
         let project_path = setup_large_project(&temp_dir, *file_count)?;
 
@@ -263,13 +258,11 @@ fn benchmark_indicator_strength(c: &mut Criterion) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-/// Warm engine vs the CLI's real cold start.
+/// Engine construction plus detection versus detection with an existing engine.
 ///
-/// `DetectionEngine` owns its per-run caches and never clears them, so every
-/// bench above that loops `detect()` on ONE engine measures warm-engine time
-/// after the first iteration. The CLI builds a fresh engine per process (or
-/// skips the engine entirely on a persistent-cache hit), so
-/// `cold_engine_detection` is the number that corresponds to a cold prompt.
+/// Filesystem and parsed-file caches are created inside every `detect` call,
+/// so `repeated_detection` still pays for fresh per-run caches. The CLI also
+/// constructs a fresh engine per process unless its persistent cache hits.
 fn benchmark_cache_effectiveness(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
@@ -538,6 +531,51 @@ fn setup_repository(
     Ok(root.to_path_buf())
 }
 
+fn setup_dense_node_repository(
+    temp_dir: &TempDir,
+    project_count: usize,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let root = temp_dir.path();
+    fs::create_dir_all(root.join(".git"))?;
+    for index in 0..project_count {
+        let project = root.join(format!("project_{index:05}"));
+        fs::create_dir_all(&project)?;
+        fs::write(
+            project.join("package.json"),
+            r#"{"dependencies":{"react":"18"}}"#,
+        )?;
+    }
+    Ok(root.to_path_buf())
+}
+
+fn benchmark_dense_node_repository(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
+    let mut group = c.benchmark_group("repository_dense_node");
+    group.sample_size(10);
+    group.warm_up_time(std::time::Duration::from_millis(250));
+    let config = built_in_config();
+    let engine =
+        DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
+
+    for project_count in [100, 1_000] {
+        let repository = TempDir::new()?;
+        let root = setup_dense_node_repository(&repository, project_count)?;
+        let result = engine.detect(&root)?;
+        assert!(!result.evidence.scan_truncated);
+        assert_eq!(result.nested.len(), project_count);
+
+        group.bench_with_input(BenchmarkId::new("cold", project_count), &root, |b, root| {
+            b.iter(|| {
+                if let Err(e) = engine.detect(black_box(root)) {
+                    eprintln!("Detection failed: {e}");
+                }
+            });
+        });
+    }
+
+    group.finish();
+    Ok(())
+}
+
 fn benchmark_repository_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let mut group = c.benchmark_group("repository_scaling");
     group.sample_size(10);
@@ -746,6 +784,7 @@ infallible!(
     benchmark_single_language_detection_wrapper => benchmark_single_language_detection,
     benchmark_polyglot_detection_wrapper => benchmark_polyglot_detection,
     benchmark_framework_count_scaling_wrapper => benchmark_framework_count_scaling,
+    benchmark_dense_node_repository_wrapper => benchmark_dense_node_repository,
     benchmark_repository_scaling_wrapper => benchmark_repository_scaling,
     benchmark_root_project_repository_scaling_wrapper =>
         benchmark_root_project_repository_scaling,
@@ -761,6 +800,7 @@ criterion_group!(
     benchmark_single_language_detection_wrapper,
     benchmark_polyglot_detection_wrapper,
     benchmark_framework_count_scaling_wrapper,
+    benchmark_dense_node_repository_wrapper,
     benchmark_repository_scaling_wrapper,
     benchmark_root_project_repository_scaling_wrapper,
 );

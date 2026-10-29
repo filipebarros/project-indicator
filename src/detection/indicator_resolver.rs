@@ -63,9 +63,9 @@ pub fn resolve_indicator(
     let mut candidates: Vec<(usize, f32, usize)> = Vec::with_capacity(indicators.len());
 
     for (idx, indicator) in indicators.iter().enumerate() {
-        let weighted_score = calculate_indicator_score(indicator, matched_files, indicators);
         let sources = root_source_count(indicator, matched_files, indicators);
         if sources > 0 {
+            let weighted_score = calculate_indicator_score(indicator, matched_files, indicators);
             evidence.add_confidence_factor(ConfidenceFactor::new(
                 format!("indicator_{}", indicator.name),
                 weighted_score,
