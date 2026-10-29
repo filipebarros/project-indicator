@@ -21,21 +21,21 @@ pub(super) fn framework_catalog() -> Vec<Framework> {
         dep("Angular", &[Npm], &["@angular/core"], Some("e753"), Some("#dd0031"), 2),
         // Neutral gray: the brand black is invisible on dark terminals
         dep("Next.js", &[Npm], &["next"], Some("e83e"), Some("#8b949e"), 1),
-        dep("Nuxt", &[Npm], &["nuxt"], None, Some("#00dc82"), 1),
+        dep("Nuxt", &[Npm], &["nuxt"], Some("f1106"), Some("#00dc82"), 1),
         dep("Astro", &[Npm], &["astro"], Some("e735"), Some("#ff5d01"), 1),
         dep("NestJS", &[Npm], &["@nestjs/core"], Some("e83b"), Some("#e0234e"), 1),
         dep("Svelte", &[Npm], &["svelte", "@sveltejs/kit"], Some("e8b7"), Some("#ff3e00"), 2),
         dep("SolidJS", &[Npm], &["solid-js"], Some("e8a7"), Some("#2c4f7c"), 2),
-        dep("React Native", &[Npm], &["react-native"], None, Some("#61dafb"), 1),
-        dep("Electron", &[Npm], &["electron"], None, Some("#47848f"), 1),
+        dep("React Native", &[Npm], &["react-native"], Some("e93c"), Some("#61dafb"), 1),
+        dep("Electron", &[Npm], &["electron"], Some("e7cb"), Some("#47848f"), 1),
         // Neutral gray: the brand black is invisible on dark terminals
-        dep("Express", &[Npm], &["express"], None, Some("#8b949e"), 2),
+        dep("Express", &[Npm], &["express"], Some("e7d3"), Some("#8b949e"), 2),
         // Build tooling: app frameworks (React, Svelte, …) win the display
         dep("Vite", &[Npm], &["vite"], Some("e8d7"), Some("#646cff"), 5),
         dep("Hono", &[Npm], &["hono"], None, Some("#E36002"), 2),
         dep("Axum", &[Cargo], &["axum"], None, Some("#7c3aed"), 1),
         dep("Actix Web", &[Cargo], &["actix-web"], None, Some("#8b949e"), 1),
-        dep("Rocket", &[Cargo], &["rocket"], None, Some("#d33847"), 1),
+        dep("Rocket", &[Cargo], &["rocket"], Some("f135"), Some("#d33847"), 1),
         // Every Tauri app has a tauri.conf.json — at the root or in
         // src-tauri/ — which is more reliable than the root Cargo.toml
         // (the dependency lives in src-tauri/ for JS-rooted projects).
@@ -48,12 +48,12 @@ pub(super) fn framework_catalog() -> Vec<Framework> {
         dep("Echo", &[Go], &["github.com/labstack/echo/v4", "github.com/labstack/echo/v5"],
             None, Some("#00abda"), 1),
         dep("Fiber", &[Go], &["github.com/gofiber/fiber/v2", "github.com/gofiber/fiber/v3"],
-            None, Some("#28b6f6"), 1),
+            Some("e90d"), Some("#28b6f6"), 1),
         dep("Django", &[Pypi], &["django"], Some("e71d"), Some("#092e20"), 1),
         dep("Flask", &[Pypi], &["flask"], Some("e7dc"), Some("#8b949e"), 2),
         dep("FastAPI", &[Pypi], &["fastapi"], Some("e7d5"), Some("#009688"), 3),
-        dep("Tornado", &[Pypi], &["tornado"], None, Some("#3bb9ff"), 4),
-        dep("Pyramid", &[Pypi], &["pyramid"], None, Some("#ff0000"), 5),
+        dep("Tornado", &[Pypi], &["tornado"], Some("ef2d"), Some("#3bb9ff"), 4),
+        dep("Pyramid", &[Pypi], &["pyramid"], Some("f1952"), Some("#ff0000"), 5),
         dep("Sanic", &[Pypi], &["sanic"], None, Some("#ff8c00"), 6),
         dep("Spring Boot", &[Maven, Gradle],
             &["spring-boot-starter", "spring-boot-starter-web", "spring-boot-starter-data-jpa",
