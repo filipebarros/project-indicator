@@ -61,7 +61,7 @@ fi
 echo "Testing multi-project prompt escaping..."
 out="$(cd "$container" && bash -c "source '$SCRIPT_DIR/project-indicator.bash'; project_indicator_prompt")"
 if [[ "$out" == *$'\033[38;2'* ]]; then
-    wrapped="$(grep -o $'\001\033\[38;2' <<<"$out" | wc -l | tr -d ' ' || true)"
+    wrapped="$(grep -ao $'\001\033\[38;2' <<<"$out" | wc -l | tr -d ' ' || true)"
     if [[ "$wrapped" == 2 ]]; then
         echo "✓ bash: every project colour is zero-width"
     else
@@ -72,7 +72,7 @@ fi
 if command -v zsh >/dev/null 2>&1; then
     out="$(cd "$container" && zsh -c "source '$SCRIPT_DIR/project-indicator.zsh'; project_indicator_prompt")"
     if [[ "$out" == *$'\033[38;2'* ]]; then
-        wrapped="$(grep -o '%{'$'\033\[38;2' <<<"$out" | wc -l | tr -d ' ' || true)"
+        wrapped="$(grep -ao '%{'$'\033\[38;2' <<<"$out" | wc -l | tr -d ' ' || true)"
         if [[ "$wrapped" == 2 ]]; then
             echo "✓ zsh: every project colour is zero-width"
         else
