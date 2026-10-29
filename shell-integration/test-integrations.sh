@@ -59,8 +59,17 @@ else
 fi
 
 echo "Testing multi-project prompt escaping..."
-out="$(cd "$container" && bash -c "source '$SCRIPT_DIR/project-indicator.bash'; project_indicator_prompt")"
-if [[ "$out" == *$'\033[38;2'* ]]; then
+out="$(cd "$container" && bash -c "source '$SCRIPT_DIR/project-indicator.bash'; project_indicator_prompt")" || {
+    echo "✗ bash hook failed on the multi-project fixture"
+    fail=1
+}
+if [[ -z "$out" ]]; then
+    echo "✗ bash hook produced no multi-project output"
+    project-indicator --version
+    (cd "$container" && project-indicator --verbose --format json) || true
+    (cd "$container" && project-indicator --no-cache --format json) || true
+    fail=1
+elif [[ "$out" == *$'\033[38;2'* ]]; then
     wrapped="$(grep -ao $'\001\033\[38;2' <<<"$out" | wc -l | tr -d ' ' || true)"
     if [[ "$wrapped" == 2 ]]; then
         echo "✓ bash: every project colour is zero-width"
@@ -70,8 +79,14 @@ if [[ "$out" == *$'\033[38;2'* ]]; then
     fi
 fi
 if command -v zsh >/dev/null 2>&1; then
-    out="$(cd "$container" && zsh -c "source '$SCRIPT_DIR/project-indicator.zsh'; project_indicator_prompt")"
-    if [[ "$out" == *$'\033[38;2'* ]]; then
+    out="$(cd "$container" && zsh -c "source '$SCRIPT_DIR/project-indicator.zsh'; project_indicator_prompt")" || {
+        echo "✗ zsh hook failed on the multi-project fixture"
+        fail=1
+    }
+    if [[ -z "$out" ]]; then
+        echo "✗ zsh hook produced no multi-project output"
+        fail=1
+    elif [[ "$out" == *$'\033[38;2'* ]]; then
         wrapped="$(grep -ao '%{'$'\033\[38;2' <<<"$out" | wc -l | tr -d ' ' || true)"
         if [[ "$wrapped" == 2 ]]; then
             echo "✓ zsh: every project colour is zero-width"

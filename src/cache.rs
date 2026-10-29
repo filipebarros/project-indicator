@@ -1046,6 +1046,7 @@ mod tests {
         // began with a time at or before `started`
         let (_c, project, cache) = setup()?;
         let result = rooted(test_result("Cargo.toml"), project.path());
+        let started = detection_started();
         fs::write(project.path().join("Cargo.toml"), "[package]\nname = \"y\"")?;
 
         cache.store(
@@ -1054,7 +1055,7 @@ mod tests {
             &result,
             &DisplayConfig::default(),
             &DetectionConfig::default(),
-            detection_started(),
+            started,
         );
         assert!(cache.load(project.path(), None).is_none());
         Ok(())
