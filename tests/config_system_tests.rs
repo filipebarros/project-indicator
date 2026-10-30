@@ -200,29 +200,12 @@ fn test_partial_sections_take_defaults() -> Result<(), Box<dyn std::error::Error
     let config = parser::load_from_file(&config_file)?;
     assert!(config.detection.require_vcs_root);
     assert_eq!(config.display.max_frameworks, 5);
-    Ok(())
-}
-
-/// An empty [display] section must give the same effective max_frameworks as
-/// having no config file at all (the built-in configuration).
-#[test]
-fn test_empty_display_section_matches_the_built_in_max_frameworks(
-) -> Result<(), Box<dyn std::error::Error>> {
-    let temp_dir = TempDir::new()?;
-    let config_file = temp_dir.path().join("config.toml");
-    fs::write(
-        &config_file,
-        "[display]\n\n[[indicators]]\nname = \"T\"\nfiles = [\"t.file\"]\ncolor = \"#FF0000\"\nicon = \"T\"\n",
-    )?;
-
-    let config = parser::load_from_file(&config_file)?;
     assert_eq!(
         config.display.max_frameworks,
         project_indicator::config::built_in_config()
             .display
             .max_frameworks
     );
-    assert_eq!(config.display.max_frameworks, 5);
     Ok(())
 }
 
@@ -302,7 +285,7 @@ fn test_removed_config_keys_fail_parse() -> Result<(), Box<dyn std::error::Error
     // key) instead of half-applying. At prompt time parser::load_default
     // still soft-falls-back to the built-in template, so a stale config
     // can never break the shell (covered by
-    // persistent_cache_tests::test_unparsable_config_soft_fallback).
+    // prompt_safety_tests::test_an_unparsable_config_warns_and_detection_still_works).
     let indicators = r##"
 [[indicators]]
 name = "Test Language"

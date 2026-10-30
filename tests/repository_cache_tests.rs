@@ -9,17 +9,9 @@ use tempfile::TempDir;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn run(home: &Path, path: &Path, extra: &[&str]) -> Result<Output, std::io::Error> {
-    common::cli(home)
-        .arg(path)
-        .args(["--format", "json"])
-        .args(extra)
+    common::json_cli(home, path, extra)
         .env("RUST_LOG", "project_indicator=debug")
         .output()
-}
-
-fn entry_count(home: &Path) -> usize {
-    fs::read_dir(home.join("xdg-cache/project-indicator/results"))
-        .map_or(0, |entries| entries.count())
 }
 
 fn success(out: &Output) {
@@ -57,7 +49,7 @@ fn test_repository_cache_is_shared_from_deep_directories() -> TestResult {
     success(&deep);
 
     assert_eq!(root.stdout, deep.stdout);
-    assert_eq!(entry_count(home.path()), 1);
+    assert_eq!(common::cache_entry_count(home.path()), 1);
     let stderr = String::from_utf8_lossy(&deep.stderr);
     assert!(
         stderr.contains(&format!(
@@ -165,7 +157,7 @@ fn test_nested_path_marker_creation_invalidates_cache() -> TestResult {
     std::thread::sleep(Duration::from_millis(60));
     let initial = run(home.path(), repo.path(), &[])?;
     success(&initial);
-    assert_eq!(entry_count(home.path()), 1);
+    assert_eq!(common::cache_entry_count(home.path()), 1);
 
     common::write_files(
         repo.path(),
@@ -198,7 +190,7 @@ fn test_nested_exact_marker_creation_invalidates_cache() -> TestResult {
     std::thread::sleep(Duration::from_millis(60));
     let initial = run(home.path(), repo.path(), &[])?;
     success(&initial);
-    assert_eq!(entry_count(home.path()), 1);
+    assert_eq!(common::cache_entry_count(home.path()), 1);
 
     common::write_files(
         repo.path(),
@@ -234,7 +226,7 @@ fn test_manifest_edit_reuses_unrelated_repository_directories() -> TestResult {
     std::thread::sleep(Duration::from_millis(60));
     let initial = run(home.path(), repo.path(), &[])?;
     success(&initial);
-    assert_eq!(entry_count(home.path()), 1);
+    assert_eq!(common::cache_entry_count(home.path()), 1);
 
     common::write_files(
         repo.path(),

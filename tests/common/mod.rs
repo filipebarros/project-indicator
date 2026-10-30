@@ -2,13 +2,29 @@
 #![allow(dead_code)]
 
 use project_indicator::{
-    config::Config,
+    config::{built_in_config, Config},
+    detection::DetectionEngine,
     types::{DetectionType, Ecosystem, Framework, Indicator, IndicatorContext, RootIndicator},
 };
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
+
+pub fn built_in_engine() -> DetectionEngine {
+    let config = built_in_config();
+    DetectionEngine::with_config(config.indicators, config.frameworks, config.detection)
+}
+
+pub fn built_in_engine_and_config() -> (DetectionEngine, Config) {
+    let config = built_in_config();
+    let engine = DetectionEngine::with_config(
+        config.indicators.clone(),
+        config.frameworks.clone(),
+        config.detection.clone(),
+    );
+    (engine, config)
+}
 
 /// The binary under test, isolated from the real machine: `home` is `$HOME`
 /// and holds the XDG config and cache directories (`xdg-config`, `xdg-cache`)
@@ -20,6 +36,17 @@ pub fn cli(home: &Path) -> Command {
         .env("XDG_CACHE_HOME", home.join("xdg-cache"))
         .env_remove("RUST_LOG");
     cmd
+}
+
+pub fn json_cli(home: &Path, path: &Path, extra: &[&str]) -> Command {
+    let mut cmd = cli(home);
+    cmd.arg(path).args(["--format", "json"]).args(extra);
+    cmd
+}
+
+pub fn cache_entry_count(home: &Path) -> usize {
+    fs::read_dir(home.join("xdg-cache/project-indicator/results"))
+        .map_or(0, |entries| entries.count())
 }
 
 /// A temp directory holding `(relative path, content)` files

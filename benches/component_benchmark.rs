@@ -111,19 +111,6 @@ fn benchmark_json_parsing(c: &mut Criterion) -> Result<(), Box<dyn std::error::E
         });
     });
 
-    group.bench_function("json_repeated_access", |b| {
-        let cache = ParsedFileCache::new();
-        let package_json_path = temp_dir.path().join("package.json");
-
-        b.iter(|| {
-            for _ in 0..10 {
-                if let Err(e) = cache.get_json_value(&package_json_path) {
-                    eprintln!("JSON parsing failed: {}", e);
-                }
-            }
-        });
-    });
-
     group.finish();
     Ok(())
 }
@@ -181,19 +168,6 @@ tempfile = "3.0"
         b.iter(|| {
             if let Err(e) = cache.get_toml_value(&cargo_toml_path) {
                 eprintln!("TOML parsing failed: {}", e);
-            }
-        });
-    });
-
-    group.bench_function("toml_repeated_access", |b| {
-        let cache = ParsedFileCache::new();
-        let cargo_toml_path = temp_dir.path().join("Cargo.toml");
-
-        b.iter(|| {
-            for _ in 0..10 {
-                if let Err(e) = cache.get_toml_value(&cargo_toml_path) {
-                    eprintln!("TOML parsing failed: {}", e);
-                }
             }
         });
     });

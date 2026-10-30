@@ -48,10 +48,7 @@ fn run_logged(
     start: &Path,
     extra: &[&str],
 ) -> Result<(String, bool), Box<dyn std::error::Error>> {
-    let out = common::cli(home)
-        .arg(start)
-        .args(["--format", "json"])
-        .args(extra)
+    let out = common::json_cli(home, start, extra)
         .env("RUST_LOG", "project_indicator=debug")
         .output()?;
     let hit = String::from_utf8_lossy(&out.stderr).contains("persistent cache hit");
@@ -60,11 +57,6 @@ fn run_logged(
 
 fn run(home: &Path, start: &Path, extra: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
     Ok(run_logged(home, start, extra)?.0)
-}
-
-fn entry_count(home: &Path) -> usize {
-    fs::read_dir(home.join("xdg-cache/project-indicator/results"))
-        .map_or(0, |entries| entries.count())
 }
 
 /// Warm the cache from `root/start`, apply `edit`, then require the cached
@@ -101,7 +93,7 @@ fn assert_cached_run_in_home(
     );
     assert_eq!(before, warm, "warm run differs");
     assert!(
-        entry_count(home.path()) > 0 && hit,
+        common::cache_entry_count(home.path()) > 0 && hit,
         "precondition: the second run must be answered from the cache"
     );
 
@@ -296,7 +288,10 @@ fn test_vcs_marker_above_the_root_removed_when_it_is_required() -> TestResult {
         before.contains("Rust"),
         "precondition: Rust accepted: {before}"
     );
-    assert!(entry_count(home.path()) > 0, "precondition: entry stored");
+    assert!(
+        common::cache_entry_count(home.path()) > 0,
+        "precondition: entry stored"
+    );
 
     fs::remove_dir_all(project.path().join("repo/.git"))?;
 

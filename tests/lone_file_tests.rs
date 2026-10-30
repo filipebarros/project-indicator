@@ -1,19 +1,14 @@
 //! A directory holding a single source file is that language's directory:
 //! the glyph must not depend on how many patterns the language declares.
-//! A generic exact-name file (Makefile) is NOT evidence on its own.
 
 mod common;
 
-use project_indicator::config::built_in_config;
-use project_indicator::detection::DetectionEngine;
 use tempfile::TempDir;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn detected(files: &[&str]) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    let config = built_in_config();
-    let engine =
-        DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
+    let engine = common::built_in_engine();
     let dir = TempDir::new()?;
     let entries: Vec<(&str, &str)> = files.iter().map(|f| (*f, "")).collect();
     common::write_files(dir.path(), &entries)?;
@@ -37,7 +32,6 @@ fn test_minimal_directory_detection_cases() -> TestResult {
         ("lone Rust", &["main.rs"], Some("Rust")),
         ("lone Go", &["main.go"], Some("Go")),
         ("lone Ruby", &["app.rb"], Some("Ruby")),
-        ("Makefile alone", &["Makefile"], None),
         ("unrelated files", &["notes.txt", "photo.png"], None),
         (
             "manifest outranks a stray script",

@@ -257,14 +257,6 @@ mod tests {
         assert_eq!(result, (0, 0.8), "Should return the single candidate");
     }
 
-    #[test]
-    fn test_resolve_indicator_conflicts_clear_winner() {
-        let candidates = vec![(0, 0.9, 0), (1, 0.5, 0)];
-
-        let result = resolve_indicator_conflicts(candidates);
-        assert_eq!(result.0, 0, "Should select clear winner (Rust)");
-    }
-
     /// Index chosen among candidates with the given `(config index, score)`
     fn pick(candidates: Vec<(usize, f32)>) -> usize {
         let candidates = candidates
@@ -275,8 +267,24 @@ mod tests {
     }
 
     #[test]
-    fn test_candidates_compete_on_score() {
-        assert_eq!(pick(vec![(0, 0.7), (1, 0.9)]), 1);
+    fn test_higher_score_wins_regardless_of_config_order() {
+        for (label, candidates, expected) in [
+            ("clear winner", vec![(0, 0.9), (1, 0.5)], 0),
+            ("candidates compete on score", vec![(0, 0.7), (1, 0.9)], 1),
+            (
+                "weak candidates compete on score",
+                vec![(0, 0.3), (1, 0.4)],
+                1,
+            ),
+            (
+                "higher score wins at any level",
+                vec![(0, 0.4), (1, 0.5)],
+                1,
+            ),
+            ("clear leader wins", vec![(0, 0.4), (1, 0.95)], 1),
+        ] {
+            assert_eq!(pick(candidates), expected, "{label}");
+        }
     }
 
     #[test]
@@ -298,23 +306,10 @@ mod tests {
     }
 
     #[test]
-    fn test_higher_score_wins_at_any_level_regardless_of_config_order() {
-        // no confidence tiers: the ratio ranks even weak candidates, and a
-        // later row with the higher score beats an earlier one
-        assert_eq!(pick(vec![(0, 0.3), (1, 0.4)]), 1);
-        assert_eq!(pick(vec![(0, 0.4), (1, 0.5)]), 1);
-    }
-
-    #[test]
     fn test_full_tie_picks_the_first_indicator_in_config_order() {
         // same score: config order decides
         assert_eq!(pick(vec![(0, 0.8), (1, 0.8)]), 0);
         assert_eq!(pick(vec![(0, 0.4), (1, 0.4)]), 0);
-    }
-
-    #[test]
-    fn test_clear_leader_wins_regardless_of_config_order() {
-        assert_eq!(pick(vec![(0, 0.4), (1, 0.95)]), 1);
     }
 
     #[test]

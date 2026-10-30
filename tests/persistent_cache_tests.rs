@@ -4,7 +4,6 @@ mod common;
 
 use project_indicator::{
     cache::PersistentCache,
-    config::built_in_config,
     detection::DetectionEngine,
     output::{render, OutputFormat},
 };
@@ -31,12 +30,7 @@ fn test_cached_result_renders_identically() -> Result<(), Box<dyn std::error::Er
     let cache_dir = TempDir::new()?;
     let cache = PersistentCache::at_base(cache_dir.path().join("results"));
 
-    let config = built_in_config();
-    let engine = DetectionEngine::with_config(
-        config.indicators.clone(),
-        config.frameworks.clone(),
-        config.detection.clone(),
-    );
+    let (engine, config) = common::built_in_engine_and_config();
 
     let fresh = engine.detect(project.path())?;
     cache.store(
@@ -69,9 +63,7 @@ fn test_binary_end_to_end_cache_behavior() -> Result<(), Box<dyn std::error::Err
     let cache_home = home.path().join("xdg-cache");
 
     let run = |extra: &[&str]| -> Result<std::process::Output, std::io::Error> {
-        let mut args = vec![project.path().to_str().unwrap_or("."), "--format", "json"];
-        args.extend_from_slice(extra);
-        common::cli(home.path()).args(&args).output()
+        common::json_cli(home.path(), project.path(), extra).output()
     };
 
     let first = run(&[])?;
@@ -104,13 +96,7 @@ fn test_binary_end_to_end_cache_behavior() -> Result<(), Box<dyn std::error::Err
 }
 
 fn test_engine() -> (DetectionEngine, project_indicator::config::Config) {
-    let config = built_in_config();
-    let engine = DetectionEngine::with_config(
-        config.indicators.clone(),
-        config.frameworks.clone(),
-        config.detection.clone(),
-    );
-    (engine, config)
+    common::built_in_engine_and_config()
 }
 
 fn store_fresh(

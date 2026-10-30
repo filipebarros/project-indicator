@@ -3,11 +3,14 @@
 //! strength, per-run cache effectiveness, framework/language scenarios).
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use project_indicator::config::built_in_config;
+use project_indicator::cache::PersistentCache;
+use project_indicator::config::{built_in_config, Config};
 use project_indicator::detection::engine::DetectionEngine;
+use project_indicator::types::DetectionResult;
 use std::fs;
 use std::hint::black_box;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use tempfile::TempDir;
 
 fn setup_monorepo(temp_dir: &TempDir) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
@@ -260,6 +263,8 @@ fn benchmark_indicator_strength(c: &mut Criterion) -> Result<(), Box<dyn std::er
 
 /// Engine construction plus detection versus detection with an existing engine.
 ///
+/// `cold_engine_detection` measures construction as part of each iteration, so
+/// its results are not comparable with baselines that excluded construction.
 /// Filesystem and parsed-file caches are created inside every `detect` call,
 /// so `repeated_detection` still pays for fresh per-run caches. The CLI also
 /// constructs a fresh engine per process unless its persistent cache hits.
@@ -275,17 +280,14 @@ fn benchmark_cache_effectiveness(c: &mut Criterion) -> Result<(), Box<dyn std::e
     let config = built_in_config();
     let engine = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
 
-    // Fresh engine per iteration (setup excluded): what one CLI run pays
+    // Fresh engine per iteration, including construction in the measurement.
     c.bench_function("cold_engine_detection", |b| {
-        b.iter_batched(
-            || DetectionEngine::new(config.indicators.clone(), config.frameworks.clone()),
-            |engine| {
-                if let Err(e) = engine.detect(black_box(temp_dir.path())) {
-                    eprintln!("Detection failed: {}", e);
-                }
-            },
-            criterion::BatchSize::SmallInput,
-        );
+        b.iter(|| {
+            let engine = DetectionEngine::new(config.indicators.clone(), config.frameworks.clone());
+            if let Err(e) = engine.detect(black_box(temp_dir.path())) {
+                eprintln!("Detection failed: {}", e);
+            }
+        });
     });
 
     c.bench_function("repeated_detection", |b| {
@@ -579,13 +581,79 @@ fn setup_dense_node_repository(
     Ok(root.to_path_buf())
 }
 
+fn built_in_engine() -> (Config, DetectionEngine) {
+    let config = built_in_config();
+    let engine = DetectionEngine::with_config(
+        config.indicators.clone(),
+        config.frameworks.clone(),
+        config.detection.clone(),
+    );
+    (config, engine)
+}
+
+fn setup_persistent_cache(
+    root: &Path,
+    result: &DetectionResult,
+    config: &Config,
+    started: SystemTime,
+) -> Result<(TempDir, PersistentCache), Box<dyn std::error::Error>> {
+    let cache_dir = TempDir::new()?;
+    let cache = PersistentCache::at_base(cache_dir.path().join("results"));
+    cache.store(
+        root,
+        None,
+        result,
+        &config.display,
+        &config.detection,
+        started,
+    );
+    Ok((cache_dir, cache))
+}
+
+fn report_cache_size(
+    cache_dir: &TempDir,
+    label: &str,
+    count: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let entry_bytes = fs::read_dir(cache_dir.path().join("results"))?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.metadata().ok())
+        .map(|metadata| metadata.len())
+        .sum::<u64>();
+    println!("{label}={count} cache_bytes={entry_bytes}");
+    Ok(())
+}
+
+fn register_warm_cache_benchmarks<M: criterion::measurement::Measurement>(
+    group: &mut criterion::BenchmarkGroup<'_, M>,
+    count: usize,
+    root: &PathBuf,
+    cache: &PersistentCache,
+) {
+    group.bench_with_input(BenchmarkId::new("warm", count), root, |b, root| {
+        b.iter(|| {
+            assert!(cache.load(black_box(root), None).is_some());
+        });
+    });
+    group.bench_with_input(BenchmarkId::new("warm_ttl", count), root, |b, root| {
+        b.iter(|| {
+            assert!(matches!(
+                cache.repository_lookup_with_ttl(
+                    black_box(root),
+                    None,
+                    Some(std::time::Duration::from_secs(60))
+                ),
+                project_indicator::cache::CacheLookup::Hit(_, _)
+            ));
+        });
+    });
+}
+
 fn benchmark_dense_node_repository(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
     let mut group = c.benchmark_group("repository_dense_node");
     group.sample_size(10);
     group.warm_up_time(std::time::Duration::from_millis(250));
-    let config = built_in_config();
-    let engine =
-        DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
+    let (_, engine) = built_in_engine();
 
     for project_count in [100, 1_000] {
         let repository = TempDir::new()?;
@@ -611,12 +679,7 @@ fn benchmark_incremental_repository(c: &mut Criterion) -> Result<(), Box<dyn std
     let mut group = c.benchmark_group("repository_incremental_node");
     group.sample_size(10);
     group.warm_up_time(std::time::Duration::from_millis(250));
-    let config = built_in_config();
-    let engine = DetectionEngine::with_config(
-        config.indicators.clone(),
-        config.frameworks.clone(),
-        config.detection.clone(),
-    );
+    let (config, engine) = built_in_engine();
 
     for project_count in [1_000, 10_000] {
         let repository = TempDir::new()?;
@@ -624,17 +687,7 @@ fn benchmark_incremental_repository(c: &mut Criterion) -> Result<(), Box<dyn std
         std::thread::sleep(std::time::Duration::from_millis(60));
         let started = project_indicator::cache::detection_started();
         let result = engine.detect(&root)?;
-        let cache_dir = TempDir::new()?;
-        let cache =
-            project_indicator::cache::PersistentCache::at_base(cache_dir.path().join("results"));
-        cache.store(
-            &root,
-            None,
-            &result,
-            &config.display,
-            &config.detection,
-            started,
-        );
+        let (_cache_dir, cache) = setup_persistent_cache(&root, &result, &config, started)?;
         assert!(cache.load(&root, None).is_some());
         fs::write(
             root.join("project_00000/package.json"),
@@ -693,12 +746,7 @@ fn benchmark_repository_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::er
     let mut group = c.benchmark_group("repository_scaling");
     group.sample_size(10);
     group.warm_up_time(std::time::Duration::from_millis(250));
-    let config = built_in_config();
-    let engine = DetectionEngine::with_config(
-        config.indicators.clone(),
-        config.frameworks.clone(),
-        config.detection.clone(),
-    );
+    let (config, engine) = built_in_engine();
 
     for candidate_dirs in [100, 1_000, 10_000] {
         let repository = TempDir::new()?;
@@ -729,53 +777,14 @@ fn benchmark_repository_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::er
             },
         );
 
-        let cache_dir = TempDir::new()?;
-        let cache =
-            project_indicator::cache::PersistentCache::at_base(cache_dir.path().join("results"));
-        cache.store(
-            &root,
-            None,
-            &result,
-            &config.display,
-            &config.detection,
-            started,
-        );
-        let entry_bytes = fs::read_dir(cache_dir.path().join("results"))?
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| entry.metadata().ok())
-            .map(|metadata| metadata.len())
-            .sum::<u64>();
-        println!("repository dirs={candidate_dirs} cache_bytes={entry_bytes}");
+        let (cache_dir, cache) = setup_persistent_cache(&root, &result, &config, started)?;
+        report_cache_size(&cache_dir, "repository dirs", candidate_dirs)?;
         assert!(
             cache.load(&root, None).is_some(),
             "{candidate_dirs} directories did not produce a cache entry"
         );
 
-        group.bench_with_input(
-            BenchmarkId::new("warm", candidate_dirs),
-            &root,
-            |b, root| {
-                b.iter(|| {
-                    assert!(cache.load(black_box(root), None).is_some());
-                });
-            },
-        );
-        group.bench_with_input(
-            BenchmarkId::new("warm_ttl", candidate_dirs),
-            &root,
-            |b, root| {
-                b.iter(|| {
-                    assert!(matches!(
-                        cache.repository_lookup_with_ttl(
-                            black_box(root),
-                            None,
-                            Some(std::time::Duration::from_secs(60))
-                        ),
-                        project_indicator::cache::CacheLookup::Hit(_, _)
-                    ));
-                });
-            },
-        );
+        register_warm_cache_benchmarks(&mut group, candidate_dirs, &root, &cache);
     }
 
     group.finish();
@@ -800,12 +809,7 @@ fn benchmark_project_heavy_cache(c: &mut Criterion) -> Result<(), Box<dyn std::e
     let mut group = c.benchmark_group("repository_project_heavy_cache");
     group.sample_size(10);
     group.warm_up_time(std::time::Duration::from_millis(250));
-    let config = built_in_config();
-    let engine = DetectionEngine::with_config(
-        config.indicators.clone(),
-        config.frameworks.clone(),
-        config.detection.clone(),
-    );
+    let (config, engine) = built_in_engine();
 
     for project_count in [100, 1_000, 10_000] {
         let repository = TempDir::new()?;
@@ -814,46 +818,11 @@ fn benchmark_project_heavy_cache(c: &mut Criterion) -> Result<(), Box<dyn std::e
         let started = project_indicator::cache::detection_started();
         let result = engine.detect(&root)?;
         assert_eq!(result.nested.len(), project_count);
-        let cache_dir = TempDir::new()?;
-        let cache =
-            project_indicator::cache::PersistentCache::at_base(cache_dir.path().join("results"));
-        cache.store(
-            &root,
-            None,
-            &result,
-            &config.display,
-            &config.detection,
-            started,
-        );
-        let entry_bytes = fs::read_dir(cache_dir.path().join("results"))?
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| entry.metadata().ok())
-            .map(|metadata| metadata.len())
-            .sum::<u64>();
-        println!("project-heavy projects={project_count} cache_bytes={entry_bytes}");
+        let (cache_dir, cache) = setup_persistent_cache(&root, &result, &config, started)?;
+        report_cache_size(&cache_dir, "project-heavy projects", project_count)?;
         assert!(cache.load(&root, None).is_some());
 
-        group.bench_with_input(BenchmarkId::new("warm", project_count), &root, |b, root| {
-            b.iter(|| {
-                assert!(cache.load(black_box(root), None).is_some());
-            });
-        });
-        group.bench_with_input(
-            BenchmarkId::new("warm_ttl", project_count),
-            &root,
-            |b, root| {
-                b.iter(|| {
-                    assert!(matches!(
-                        cache.repository_lookup_with_ttl(
-                            black_box(root),
-                            None,
-                            Some(std::time::Duration::from_secs(60))
-                        ),
-                        project_indicator::cache::CacheLookup::Hit(_, _)
-                    ));
-                });
-            },
-        );
+        register_warm_cache_benchmarks(&mut group, project_count, &root, &cache);
     }
 
     group.finish();
@@ -894,12 +863,7 @@ fn benchmark_root_project_repository_scaling(
     let mut group = c.benchmark_group("repository_scaling_root_project");
     group.sample_size(10);
     group.warm_up_time(std::time::Duration::from_millis(250));
-    let config = built_in_config();
-    let engine = DetectionEngine::with_config(
-        config.indicators.clone(),
-        config.frameworks.clone(),
-        config.detection.clone(),
-    );
+    let (config, engine) = built_in_engine();
 
     for candidate_dirs in [100, 1_000, 10_000] {
         let repository = TempDir::new()?;
@@ -934,53 +898,14 @@ fn benchmark_root_project_repository_scaling(
             },
         );
 
-        let cache_dir = TempDir::new()?;
-        let cache =
-            project_indicator::cache::PersistentCache::at_base(cache_dir.path().join("results"));
-        cache.store(
-            &root,
-            None,
-            &result,
-            &config.display,
-            &config.detection,
-            started,
-        );
-        let entry_bytes = fs::read_dir(cache_dir.path().join("results"))?
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| entry.metadata().ok())
-            .map(|metadata| metadata.len())
-            .sum::<u64>();
-        println!("root-project repository dirs={candidate_dirs} cache_bytes={entry_bytes}");
+        let (cache_dir, cache) = setup_persistent_cache(&root, &result, &config, started)?;
+        report_cache_size(&cache_dir, "root-project repository dirs", candidate_dirs)?;
         assert!(
             cache.load(&root, None).is_some(),
             "{candidate_dirs} directories did not produce a cache entry"
         );
 
-        group.bench_with_input(
-            BenchmarkId::new("warm", candidate_dirs),
-            &root,
-            |b, root| {
-                b.iter(|| {
-                    assert!(cache.load(black_box(root), None).is_some());
-                });
-            },
-        );
-        group.bench_with_input(
-            BenchmarkId::new("warm_ttl", candidate_dirs),
-            &root,
-            |b, root| {
-                b.iter(|| {
-                    assert!(matches!(
-                        cache.repository_lookup_with_ttl(
-                            black_box(root),
-                            None,
-                            Some(std::time::Duration::from_secs(60))
-                        ),
-                        project_indicator::cache::CacheLookup::Hit(_, _)
-                    ));
-                });
-            },
-        );
+        register_warm_cache_benchmarks(&mut group, candidate_dirs, &root, &cache);
     }
 
     group.finish();
