@@ -295,9 +295,8 @@ impl ScanningEngine {
         if !Self::prefilter_entry(&self.pattern_processor, file_type, path, file_name) {
             return;
         }
-        if let Some(file_match) = self
-            .pattern_processor
-            .match_file_against_patterns(path, base)
+        if let Some(file_match) =
+            PatternProcessor::match_prefiltered_file_against_patterns(path, base)
         {
             if !matched
                 .iter()

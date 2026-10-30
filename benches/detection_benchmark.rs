@@ -782,6 +782,84 @@ fn benchmark_repository_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+fn setup_project_heavy_repository(
+    temp_dir: &TempDir,
+    project_count: usize,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let root = temp_dir.path();
+    fs::create_dir_all(root.join(".git"))?;
+    for index in 0..project_count {
+        let source = root.join(format!("component_{index:05}/src"));
+        fs::create_dir_all(&source)?;
+        fs::write(source.join("lib.rs"), "pub fn f() {}\n")?;
+    }
+    Ok(root.to_path_buf())
+}
+
+fn benchmark_project_heavy_cache(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
+    let mut group = c.benchmark_group("repository_project_heavy_cache");
+    group.sample_size(10);
+    group.warm_up_time(std::time::Duration::from_millis(250));
+    let config = built_in_config();
+    let engine = DetectionEngine::with_config(
+        config.indicators.clone(),
+        config.frameworks.clone(),
+        config.detection.clone(),
+    );
+
+    for project_count in [100, 1_000, 10_000] {
+        let repository = TempDir::new()?;
+        let root = setup_project_heavy_repository(&repository, project_count)?;
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let started = project_indicator::cache::detection_started();
+        let result = engine.detect(&root)?;
+        assert_eq!(result.nested.len(), project_count);
+        let cache_dir = TempDir::new()?;
+        let cache =
+            project_indicator::cache::PersistentCache::at_base(cache_dir.path().join("results"));
+        cache.store(
+            &root,
+            None,
+            &result,
+            &config.display,
+            &config.detection,
+            started,
+        );
+        let entry_bytes = fs::read_dir(cache_dir.path().join("results"))?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| entry.metadata().ok())
+            .map(|metadata| metadata.len())
+            .sum::<u64>();
+        println!("project-heavy projects={project_count} cache_bytes={entry_bytes}");
+        assert!(cache.load(&root, None).is_some());
+
+        group.bench_with_input(BenchmarkId::new("warm", project_count), &root, |b, root| {
+            b.iter(|| {
+                assert!(cache.load(black_box(root), None).is_some());
+            });
+        });
+        group.bench_with_input(
+            BenchmarkId::new("warm_ttl", project_count),
+            &root,
+            |b, root| {
+                b.iter(|| {
+                    assert!(matches!(
+                        cache.repository_lookup_with_ttl(
+                            black_box(root),
+                            None,
+                            Some(std::time::Duration::from_secs(60))
+                        ),
+                        project_indicator::cache::CacheLookup::Hit(_, _)
+                    ));
+                });
+            },
+        );
+    }
+
+    group.finish();
+    Ok(())
+}
+
 /// Dotfiles-shaped repository: the root itself is a project, descendants
 /// beneath that project ancestor carry source files, and qualifying markers
 /// appear at the same 100-directory interval as the flat shape.
@@ -933,6 +1011,7 @@ infallible!(
     benchmark_dense_node_repository_wrapper => benchmark_dense_node_repository,
     benchmark_incremental_repository_wrapper => benchmark_incremental_repository,
     benchmark_repository_scaling_wrapper => benchmark_repository_scaling,
+    benchmark_project_heavy_cache_wrapper => benchmark_project_heavy_cache,
     benchmark_root_project_repository_scaling_wrapper =>
         benchmark_root_project_repository_scaling,
 );
@@ -951,6 +1030,7 @@ criterion_group!(
     benchmark_dense_node_repository_wrapper,
     benchmark_incremental_repository_wrapper,
     benchmark_repository_scaling_wrapper,
+    benchmark_project_heavy_cache_wrapper,
     benchmark_root_project_repository_scaling_wrapper,
 );
 criterion_main!(benches);

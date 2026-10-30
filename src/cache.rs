@@ -11,10 +11,13 @@
 //! Every failure path degrades silently to a cache miss: the cache must
 //! never be able to break a shell prompt.
 
+mod result;
+
 use crate::types::{
     CachedRepositoryDirectory, DetectionConfig, DetectionEvidence, DetectionResult, DisplayConfig,
     NestedProject,
 };
+use result::{CachedDetectionResult, CachedDetectionResultRef};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeSet;
@@ -56,7 +59,7 @@ const TMP_MAX_AGE_SECS: u64 = 10 * 60;
 const GC_MAX_AGE_SECS: u64 = 30 * 24 * 60 * 60;
 
 #[derive(Serialize, Deserialize)]
-struct CacheEntry<T> {
+struct CacheEntry<T, E = Vec<(PathBuf, Stamp)>> {
     dir: PathBuf,
     binary_version: String,
     /// The user's home directory (root discovery's boundary) when this was
@@ -68,12 +71,28 @@ struct CacheEntry<T> {
     /// Ancestor directories root discovery walked through, with mtimes: a
     /// new manifest in any of them can change the result
     ancestors: Vec<(PathBuf, Stamp)>,
-    evidence: Vec<(PathBuf, Stamp)>,
+    evidence: E,
     result: T,
     display: DisplayConfig,
     /// Lazily parsed only when a stale repository can provide an update
     #[serde(default, skip_serializing_if = "Option::is_none")]
     repository_directories: Option<Box<serde_json::value::RawValue>>,
+}
+
+fn entry_matches_context<T, E>(
+    entry: &CacheEntry<T, E>,
+    dir: &Path,
+    config_path: Option<&Path>,
+) -> bool {
+    let current_config = config_path.map(|path| (path.to_path_buf(), stamp(path)));
+    let stored_config = entry
+        .config
+        .as_ref()
+        .map(|(path, stamp)| (path.clone(), Some(*stamp)));
+    entry.dir == dir
+        && entry.binary_version == build_id()
+        && entry.home == current_home()
+        && current_config == stored_config
 }
 
 pub enum CacheLookup {
@@ -134,21 +153,6 @@ impl PersistentCache {
     ) -> CacheLookup {
         let dir = canonical(dir);
         let entry_path = self.entry_path(&dir);
-        let Some(content) = fs::read_to_string(&entry_path).ok() else {
-            return CacheLookup::Miss;
-        };
-        let Ok(entry) = serde_json::from_str::<CacheEntry<DetectionResult>>(&content) else {
-            return CacheLookup::Miss;
-        };
-        if entry.dir != dir || entry.binary_version != build_id() || entry.home != current_home() {
-            return CacheLookup::Miss;
-        }
-
-        let current_config = config_path.map(|p| (p.to_path_buf(), stamp(p)));
-        let stored_config = entry.config.as_ref().map(|(p, t)| (p.clone(), Some(*t)));
-        if current_config != stored_config {
-            return CacheLookup::Miss;
-        }
         let ttl_hit = ttl.is_some_and(|ttl| {
             ttl > Duration::ZERO
                 && mtime(&entry_path).is_some_and(|modified| {
@@ -157,8 +161,29 @@ impl PersistentCache {
                         .map_or(true, |age| age <= ttl)
                 })
         });
+        let Some(content) = fs::read_to_string(&entry_path).ok() else {
+            return CacheLookup::Miss;
+        };
         if ttl_hit {
-            return CacheLookup::Hit(entry.result, entry.display);
+            let Ok(entry) = serde_json::from_str::<
+                CacheEntry<CachedDetectionResult, Box<serde_json::value::RawValue>>,
+            >(&content) else {
+                return CacheLookup::Miss;
+            };
+            if !entry_matches_context(&entry, &dir, config_path) {
+                return CacheLookup::Miss;
+            }
+            let Some(result) = entry.result.into_result() else {
+                return CacheLookup::Miss;
+            };
+            return CacheLookup::Hit(result, entry.display);
+        }
+
+        let Ok(entry) = serde_json::from_str::<CacheEntry<CachedDetectionResult>>(&content) else {
+            return CacheLookup::Miss;
+        };
+        if !entry_matches_context(&entry, &dir, config_path) {
+            return CacheLookup::Miss;
         }
 
         let repository = entry.result.evidence.repository;
@@ -182,7 +207,10 @@ impl PersistentCache {
 
         if stale_paths.is_empty() {
             self.refresh_entry(&dir);
-            return CacheLookup::Hit(entry.result, entry.display);
+            let Some(result) = entry.result.into_result() else {
+                return CacheLookup::Miss;
+            };
+            return CacheLookup::Hit(result, entry.display);
         }
         if !repository {
             return CacheLookup::Miss;
@@ -229,12 +257,15 @@ impl PersistentCache {
             }
         }
 
+        let Some(result) = entry.result.into_result() else {
+            return CacheLookup::Miss;
+        };
         CacheLookup::Update(RepositoryCacheUpdate {
             directories,
-            projects: entry.result.nested,
+            projects: result.nested,
             changed_directories,
             changed_files,
-            read_files: entry.result.evidence.read_files,
+            read_files: result.evidence.read_files,
         })
     }
 
@@ -314,34 +345,35 @@ impl PersistentCache {
                 None
             };
 
+        let ancestors = stamped(ancestor_chain(
+            &dir,
+            result,
+            crate::detection::engine::MAX_UPWARD_TRAVERSAL,
+            detection.require_vcs_root,
+        ));
+        let evidence = stamped(collect_evidence(&dir, result));
+        let stamps = config
+            .iter()
+            .map(|(_, t)| t)
+            .chain(ancestors.iter().map(|(_, t)| t))
+            .chain(evidence.iter().map(|(_, t)| t))
+            .chain(std::iter::once(&dir_stamp));
+        if stamps.into_iter().any(|t| t.is_unsettled(started)) {
+            return Ok(false);
+        }
+
         let entry = CacheEntry {
             dir: dir.clone(),
             binary_version: build_id().to_string(),
             home: current_home(),
             config,
             dir_stamp,
-            ancestors: stamped(ancestor_chain(
-                &dir,
-                result,
-                crate::detection::engine::MAX_UPWARD_TRAVERSAL,
-                detection.require_vcs_root,
-            )),
-            evidence: stamped(collect_evidence(&dir, result)),
-            result,
+            ancestors,
+            evidence,
+            result: CachedDetectionResultRef::from(result),
             display: display.clone(),
             repository_directories,
         };
-
-        let stamps = entry
-            .config
-            .iter()
-            .map(|(_, t)| t)
-            .chain(entry.ancestors.iter().map(|(_, t)| t))
-            .chain(entry.evidence.iter().map(|(_, t)| t))
-            .chain(std::iter::once(&entry.dir_stamp));
-        if stamps.into_iter().any(|t| t.is_unsettled(started)) {
-            return Ok(false);
-        }
 
         fs::create_dir_all(&self.base)?;
         let final_path = self.entry_path(&dir);
@@ -824,6 +856,25 @@ mod tests {
             "a TTL hit must not extend its life"
         );
         assert!(update(&cache, project.path(), None).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_fresh_ttl_defers_watched_evidence_deserialization(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (_c, project, cache) = setup()?;
+        let result = repository_result(project.path());
+        store_now(&cache, project.path(), None, &result);
+        let entry = cache.entry_path(&canonical(project.path()));
+        let mut json: serde_json::Value = serde_json::from_str(&fs::read_to_string(&entry)?)?;
+        json["evidence"] = "not an array".into();
+        fs::write(&entry, serde_json::to_vec(&json)?)?;
+
+        assert!(cache.load(project.path(), None).is_none());
+        assert!(matches!(
+            cache.repository_lookup_with_ttl(project.path(), None, Some(Duration::from_secs(60))),
+            CacheLookup::Hit(_, _)
+        ));
         Ok(())
     }
 
