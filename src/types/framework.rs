@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// A package ecosystem: where dependency declarations live and how they are
 /// parsed. Mirrors the ecosystem matcher functions 1:1.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Ecosystem {
     Npm,

@@ -86,6 +86,7 @@ project-indicator [OPTIONS] [PATH]
 **Options:**
 - `--format <FORMAT>` - Output format: simple (default), full, json, debug
 - `--no-cache` - Skip the persistent result cache for this invocation
+- `--cache-ttl <SECONDS>` - Serve recent entries without revalidating watched paths; config and binary changes still invalidate them
 - `-v, --verbose` - Enable verbose logging (also `RUST_LOG=debug`). Expected conditions such as an unparsable manifest or running in `$HOME` are silent by default and only logged here, so a prompt never shows them
 
 ### Subcommands
@@ -161,6 +162,12 @@ as the key, so every subdirectory shares one entry; non-VCS detection uses the
 canonical invocation directory. Entries invalidate when manifests, ignore
 files, watched directories, the active config, or the binary change. Timed-out,
 partial, and unreadable scans are never cached.
+
+By default every watched path is revalidated on a cache hit. For large
+repositories, `--cache-ttl <SECONDS>` skips that evidence validation while the
+entry is younger than the TTL, trading bounded result staleness for lower
+latency. Active-config, binary, repository-path, and home checks still apply;
+TTL hits do not refresh the entry or extend its lifetime.
 
 Current median measurements on the development machine:
 

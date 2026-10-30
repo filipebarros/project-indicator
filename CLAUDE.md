@@ -98,14 +98,16 @@ The detection flow follows this path:
    - `find_vcs_root` (`src/detection/repository.rs`) finds the nearest VCS
      root (`.git` — file or directory — `.hg`, `.svn`) with no numeric depth
      cap, then `detect_repository` recursively aggregates projects beneath it
-   - Repository traversal uses `ignore::WalkBuilder`; detected projects are
-     sorted into breadth-first, name-stable output. It includes the root
-     project, nested projects at any depth, and source-only projects with no
-     marked ancestor; hidden dirs, symlinks, noise dirs, and directories
-     excluded by inherited `.gitignore`/`.ignore`/`.git/info/exclude` rules are
-     skipped, with nested negations honoured. Unsafe special or oversized ignore
-     files restart the same walk with those filters disabled rather than being
-     read. `DetectionResult.indicator` is `None` and `nested` contains every project.
+   - Repository traversal is a breadth-first walk using `ignore::IncrementalIgnore`;
+     one prefetched listing per directory drives ignore-safety checks, traversal,
+     and project scanning. Detected projects are sorted into breadth-first,
+     name-stable output. It includes the root project, nested projects at any
+     depth, and source-only projects with no marked ancestor; hidden dirs,
+     symlinks, noise dirs, and directories excluded by inherited
+     `.gitignore`/`.ignore`/`.git/info/exclude` rules are skipped, with nested
+     negations honoured. Unsafe special or oversized ignore files restart the
+     same walk with those filters disabled rather than being read.
+     `DetectionResult.indicator` is `None` and `nested` contains every project.
      Simple/full rendering deduplicates rendered indicators; JSON/debug retain
      project paths. Every visited directory and read file becomes cache evidence
    - Outside VCS, the existing nearest-project fallback remains: up to
@@ -165,8 +167,10 @@ The detection flow follows this path:
      configs and version pins alone identify nothing. Confidence is the scan
      ratio. A confirmed framework dependency floors every path at 0.75
 
-5. **ConfidenceScorer** (stateless) - the ratio score used by the markerless
+5. **ConfidenceScorer** (prepared per engine) - the ratio score used by the markerless
    path and by a sources-only arbitration winner
+   - Pattern weights, alternative groups, and the maximum score are precomputed
+     once per indicator; root-marker indexes are shared by source classification
    - Per-pattern importance (weight × context of the declaring root
      indicator; 0.5 neutral otherwise), best matched file per pattern
    - File weight = depth weight (1.0/0.7/0.4/…) × directory tier
@@ -177,9 +181,13 @@ The detection flow follows this path:
      format choices don't inflate the denominator
 
 6. **Framework detection** (`src/detection/framework_detector.rs`) - Framework identification
-   - Candidates scoped by ecosystem intersection with the winning indicator
-   - Ecosystem-specific matchers (`src/detection/matchers/ecosystems/`)
-   - Dependency analysis from package.json, Cargo.toml, etc.
+   - Per-indicator candidate plans are precomputed by ecosystem intersection
+   - Ecosystem-specific matchers (`src/detection/matchers/ecosystems/`);
+     Node/npm, Cargo, and Python batch all active frameworks against one
+     dependency index per manifest, while other ecosystems retain their
+     specialized matchers and fallback rules
+   - Existing directory listings drive direct file probes and bounded
+     `.csproj`/`.rockspec` discovery instead of a second enumeration
 
 7. **OutputFormatter** (`src/output/`) - Result rendering
    - Multiple formats: simple, full, json, debug
@@ -212,11 +220,29 @@ The detection flow follows this path:
   can come from a coarser clock; a whole-second timestamp betrays a 1–2 s
   filesystem (FAT/exFAT, ext3, HFS+, some NFS), so one under 4 s old is not
   trusted either)
+- **Incremental repository misses**: repository entries also retain one compact
+  record per visited directory, stored as raw JSON and parsed only when a stale
+  entry can provide an update; projects live only in the normal `nested` result.
+  One lookup returns a complete hit, an incremental update, or a full miss, so
+  cold/stale work never reads and validates the entry twice. Unchanged sibling
+  subtrees reuse borrowed records instead of repeating listing, marker
+  qualification, and framework detection. A changed file invalidates its
+  containing directory and ancestors; a changed directory invalidates its
+  ancestors and descendants as well, covering source-path probes and project
+  propagation. Ignore-rule changes, unreadable/partial results, and legacy
+  entries without the directory index use a full scan. Previous read-file
+  evidence is retained only for reused directory records; fresh scans supply
+  their current inputs before storing
 - **Failure policy**: every error degrades silently to a fresh detection
   (`log::debug` only) — the cache must never break a prompt
 - **Bypass**: `--no-cache`. (`--format debug` served from a cache hit shows the original
   run's `total_scan_time_ms` and `files_matched`; pass `--no-cache` for
   fresh diagnostics)
+- **Optional TTL**: `--cache-ttl <SECONDS>` serves entries younger than the
+  requested age after the normal path/build/home/config checks but before
+  watched-path validation. This deliberately permits bounded staleness; expired
+  entries resume exact/incremental validation, and TTL-only hits never refresh
+  the entry mtime. The default remains exact validation
 - **Housekeeping**: entries are 0600, written via a temp file + rename; a
   hit older than 24 h touches the entry's mtime; GC after a store removes
   temp files older than 10 minutes and, only above 512 entries, entries

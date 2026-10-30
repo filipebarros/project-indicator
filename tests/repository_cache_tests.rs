@@ -215,3 +215,78 @@ fn test_nested_exact_marker_creation_invalidates_cache() -> TestResult {
     assert!(!stderr.contains("persistent cache hit"), "{stderr}");
     Ok(())
 }
+
+#[test]
+fn test_manifest_edit_reuses_unrelated_repository_directories() -> TestResult {
+    let repo = TempDir::new()?;
+    let home = TempDir::new()?;
+    common::write_files(
+        repo.path(),
+        &[
+            (".git/HEAD", ""),
+            (
+                "apps/web/package.json",
+                r#"{"dependencies":{"react":"18"}}"#,
+            ),
+            ("apps/api/package.json", r#"{"dependencies":{"vue":"3"}}"#),
+        ],
+    )?;
+    std::thread::sleep(Duration::from_millis(60));
+    let initial = run(home.path(), repo.path(), &[])?;
+    success(&initial);
+    assert_eq!(entry_count(home.path()), 1);
+
+    common::write_files(
+        repo.path(),
+        &[(
+            "apps/web/package.json",
+            r#"{"dependencies":{"svelte":"4"}}"#,
+        )],
+    )?;
+    let fresh = run(home.path(), repo.path(), &["--no-cache"])?;
+    let cached = run(home.path(), repo.path(), &[])?;
+    success(&fresh);
+    success(&cached);
+
+    assert_eq!(cached.stdout, fresh.stdout);
+    let stderr = String::from_utf8_lossy(&cached.stderr);
+    let reused = stderr
+        .split("Repository scan reused ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|count| count.parse::<usize>().ok())
+        .ok_or_else(|| format!("missing reuse metric in {stderr}"))?;
+    assert!(reused > 0, "no unrelated directories reused: {stderr}");
+    Ok(())
+}
+
+#[test]
+fn test_cache_ttl_flag_skips_only_fresh_evidence_validation() -> TestResult {
+    let repo = TempDir::new()?;
+    let home = TempDir::new()?;
+    common::write_files(
+        repo.path(),
+        &[
+            (".git/HEAD", ""),
+            ("app/package.json", r#"{"dependencies":{"react":"18"}}"#),
+        ],
+    )?;
+    std::thread::sleep(Duration::from_millis(60));
+    let initial = run(home.path(), repo.path(), &[])?;
+    success(&initial);
+
+    common::write_files(
+        repo.path(),
+        &[("app/package.json", r#"{"dependencies":{"vue":"3"}}"#)],
+    )?;
+    let ttl = run(home.path(), repo.path(), &["--cache-ttl", "60"])?;
+    success(&ttl);
+    assert_eq!(ttl.stdout, initial.stdout);
+    assert!(String::from_utf8_lossy(&ttl.stderr).contains("persistent cache hit"));
+
+    let exact = run(home.path(), repo.path(), &[])?;
+    success(&exact);
+    assert_ne!(exact.stdout, initial.stdout);
+    assert!(String::from_utf8_lossy(&exact.stdout).contains("Vue"));
+    Ok(())
+}

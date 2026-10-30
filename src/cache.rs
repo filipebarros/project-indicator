@@ -11,7 +11,10 @@
 //! Every failure path degrades silently to a cache miss: the cache must
 //! never be able to break a shell prompt.
 
-use crate::types::{DetectionConfig, DetectionEvidence, DetectionResult, DisplayConfig};
+use crate::types::{
+    CachedRepositoryDirectory, DetectionConfig, DetectionEvidence, DetectionResult, DisplayConfig,
+    NestedProject,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeSet;
@@ -68,6 +71,23 @@ struct CacheEntry<T> {
     evidence: Vec<(PathBuf, Stamp)>,
     result: T,
     display: DisplayConfig,
+    /// Lazily parsed only when a stale repository can provide an update
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    repository_directories: Option<Box<serde_json::value::RawValue>>,
+}
+
+pub enum CacheLookup {
+    Hit(DetectionResult, DisplayConfig),
+    Update(RepositoryCacheUpdate),
+    Miss,
+}
+
+pub struct RepositoryCacheUpdate {
+    pub directories: Vec<CachedRepositoryDirectory>,
+    pub projects: Vec<NestedProject>,
+    pub changed_directories: Vec<PathBuf>,
+    pub changed_files: Vec<PathBuf>,
+    pub read_files: Vec<String>,
 }
 
 pub struct PersistentCache {
@@ -96,33 +116,130 @@ impl PersistentCache {
         dir: &Path,
         config_path: Option<&Path>,
     ) -> Option<(DetectionResult, DisplayConfig)> {
-        let dir = canonical(dir);
-        let content = fs::read_to_string(self.entry_path(&dir)).ok()?;
-        let entry: CacheEntry<DetectionResult> = serde_json::from_str(&content).ok()?;
+        match self.repository_lookup(dir, config_path) {
+            CacheLookup::Hit(result, display) => Some((result, display)),
+            _ => None,
+        }
+    }
 
+    pub fn repository_lookup(&self, dir: &Path, config_path: Option<&Path>) -> CacheLookup {
+        self.repository_lookup_with_ttl(dir, config_path, None)
+    }
+
+    pub fn repository_lookup_with_ttl(
+        &self,
+        dir: &Path,
+        config_path: Option<&Path>,
+        ttl: Option<Duration>,
+    ) -> CacheLookup {
+        let dir = canonical(dir);
+        let entry_path = self.entry_path(&dir);
+        let Some(content) = fs::read_to_string(&entry_path).ok() else {
+            return CacheLookup::Miss;
+        };
+        let Ok(entry) = serde_json::from_str::<CacheEntry<DetectionResult>>(&content) else {
+            return CacheLookup::Miss;
+        };
         if entry.dir != dir || entry.binary_version != build_id() || entry.home != current_home() {
-            return None;
+            return CacheLookup::Miss;
         }
 
         let current_config = config_path.map(|p| (p.to_path_buf(), stamp(p)));
         let stored_config = entry.config.as_ref().map(|(p, t)| (p.clone(), Some(*t)));
         if current_config != stored_config {
-            return None;
+            return CacheLookup::Miss;
+        }
+        let ttl_hit = ttl.is_some_and(|ttl| {
+            ttl > Duration::ZERO
+                && mtime(&entry_path).is_some_and(|modified| {
+                    SystemTime::now()
+                        .duration_since(modified)
+                        .map_or(true, |age| age <= ttl)
+                })
+        });
+        if ttl_hit {
+            return CacheLookup::Hit(entry.result, entry.display);
         }
 
-        if stamp(&dir)? != entry.dir_stamp {
-            return None;
+        let repository = entry.result.evidence.repository;
+        let mut stale_paths = BTreeSet::new();
+        if stamp(&dir).as_ref() != Some(&entry.dir_stamp) {
+            stale_paths.insert(dir.clone());
         }
-
-        for (path, stored) in entry.ancestors.iter().chain(&entry.evidence) {
-            if stamp(path)? != *stored {
-                return None;
+        for (path, stored) in &entry.ancestors {
+            if stamp(path).as_ref() != Some(stored) {
+                if repository {
+                    return CacheLookup::Miss;
+                }
+                stale_paths.insert(path.clone());
+            }
+        }
+        for (path, stored) in &entry.evidence {
+            if stamp(path).as_ref() != Some(stored) {
+                stale_paths.insert(path.clone());
             }
         }
 
-        // Keep actively used entries fresh for the age-based GC; best-effort,
-        // a hit must never fail
-        let entry_path = self.entry_path(&dir);
+        if stale_paths.is_empty() {
+            self.refresh_entry(&dir);
+            return CacheLookup::Hit(entry.result, entry.display);
+        }
+        if !repository {
+            return CacheLookup::Miss;
+        }
+
+        let git_exclude = Path::new(".git").join("info").join("exclude");
+        if stale_paths.iter().any(|path| {
+            path.ends_with(".gitignore")
+                || path.ends_with(".ignore")
+                || path.ends_with(&git_exclude)
+        }) {
+            return CacheLookup::Miss;
+        }
+
+        let Some(index) = entry.repository_directories.as_ref() else {
+            return CacheLookup::Miss;
+        };
+        let Ok(directories) = serde_json::from_str::<Vec<CachedRepositoryDirectory>>(index.get())
+        else {
+            return CacheLookup::Miss;
+        };
+        if directories.is_empty() {
+            return CacheLookup::Miss;
+        }
+
+        let base = entry.result.evidence.scan_root.as_deref().unwrap_or(&dir);
+        let mut watched_directories = BTreeSet::new();
+        watched_directories.insert(dir.clone());
+        watched_directories.extend(
+            entry
+                .result
+                .evidence
+                .watched_dirs
+                .iter()
+                .map(|path| base.join(path)),
+        );
+        let mut changed_directories = Vec::new();
+        let mut changed_files = Vec::new();
+        for path in stale_paths {
+            if watched_directories.contains(&path) {
+                changed_directories.push(path);
+            } else {
+                changed_files.push(path);
+            }
+        }
+
+        CacheLookup::Update(RepositoryCacheUpdate {
+            directories,
+            projects: entry.result.nested,
+            changed_directories,
+            changed_files,
+            read_files: entry.result.evidence.read_files,
+        })
+    }
+
+    fn refresh_entry(&self, dir: &Path) {
+        let entry_path = self.entry_path(dir);
         let stale =
             mtime(&entry_path).is_some_and(|t| age_secs(SystemTime::now(), t) > TOUCH_AFTER_SECS);
         if stale {
@@ -131,8 +248,6 @@ impl PersistentCache {
                 .open(&entry_path)
                 .and_then(|f| f.set_modified(SystemTime::now()));
         }
-
-        Some((entry.result, entry.display))
     }
 
     /// Store a detection result for `dir`. `started` is when detection began:
@@ -190,6 +305,14 @@ impl PersistentCache {
         let Some(dir_stamp) = stamp(&dir) else {
             return Ok(false);
         };
+        let repository_directories =
+            if result.evidence.repository && !result.repository_directories.is_empty() {
+                Some(serde_json::value::RawValue::from_string(
+                    serde_json::to_string(&result.repository_directories)?,
+                )?)
+            } else {
+                None
+            };
 
         let entry = CacheEntry {
             dir: dir.clone(),
@@ -206,6 +329,7 @@ impl PersistentCache {
             evidence: stamped(collect_evidence(&dir, result)),
             result,
             display: display.clone(),
+            repository_directories,
         };
 
         let stamps = entry
@@ -576,6 +700,23 @@ mod tests {
         result
     }
 
+    fn repository_result(dir: &Path) -> DetectionResult {
+        let root = canonical(dir);
+        let mut result = rooted(test_result("Cargo.toml"), dir);
+        result.evidence.repository = true;
+        result.evidence.watched_dirs = vec![root.to_string_lossy().into_owned()];
+        result.evidence.read_files = vec!["Cargo.toml".to_string()];
+        result
+            .repository_directories
+            .push(CachedRepositoryDirectory {
+                path: PathBuf::new(),
+                has_project_ancestor: false,
+                files_matched: 1,
+                has_project: false,
+            });
+        result
+    }
+
     fn setup() -> Result<(TempDir, TempDir, PersistentCache), Box<dyn std::error::Error>> {
         let cache_dir = TempDir::new()?;
         let project = TempDir::new()?;
@@ -601,6 +742,17 @@ mod tests {
         );
     }
 
+    fn update(
+        cache: &PersistentCache,
+        dir: &Path,
+        config_path: Option<&Path>,
+    ) -> Option<RepositoryCacheUpdate> {
+        match cache.repository_lookup(dir, config_path) {
+            CacheLookup::Update(update) => Some(update),
+            _ => None,
+        }
+    }
+
     fn set_file_mtime(path: &Path, t: SystemTime) -> Result<(), Box<dyn std::error::Error>> {
         fs::File::options()
             .write(true)
@@ -618,6 +770,167 @@ mod tests {
         #[cfg(not(windows))]
         options.read(true);
         options.open(path)?.set_modified(t)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_repository_update_classifies_changed_files_and_directories(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (_c, project, cache) = setup()?;
+        let root = canonical(project.path());
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested)?;
+        let mut result = repository_result(project.path());
+        result
+            .evidence
+            .watched_dirs
+            .push(nested.to_string_lossy().into_owned());
+        store_now(&cache, project.path(), None, &result);
+        assert!(update(&cache, project.path(), None).is_none());
+
+        sleep(MTIME_SLACK * 2);
+        fs::remove_file(root.join("Cargo.toml"))?;
+        fs::write(nested.join("new.txt"), "x")?;
+
+        let update = update(&cache, project.path(), None)
+            .ok_or("expected an incremental repository update")?;
+        assert_eq!(update.changed_directories, vec![root.clone(), nested]);
+        assert_eq!(update.changed_files, vec![root.join("Cargo.toml")]);
+        assert_eq!(update.directories, result.repository_directories);
+        assert_eq!(update.read_files, result.evidence.read_files);
+        Ok(())
+    }
+
+    #[test]
+    fn test_fresh_ttl_serves_stale_evidence_without_refreshing_the_entry(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (_c, project, cache) = setup()?;
+        let result = repository_result(project.path());
+        store_now(&cache, project.path(), None, &result);
+        let entry = cache.entry_path(&canonical(project.path()));
+        let modified = mtime(&entry);
+        fs::remove_file(project.path().join("Cargo.toml"))?;
+
+        let CacheLookup::Hit(cached, _) =
+            cache.repository_lookup_with_ttl(project.path(), None, Some(Duration::from_secs(60)))
+        else {
+            return Err("a fresh TTL should serve the cached repository".into());
+        };
+        assert_eq!(cached.evidence, result.evidence);
+        assert_eq!(cached.nested, result.nested);
+        assert_eq!(
+            mtime(&entry),
+            modified,
+            "a TTL hit must not extend its life"
+        );
+        assert!(update(&cache, project.path(), None).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_expired_ttl_resumes_exact_incremental_validation(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (_c, project, cache) = setup()?;
+        store_now(
+            &cache,
+            project.path(),
+            None,
+            &repository_result(project.path()),
+        );
+        let entry = cache.entry_path(&canonical(project.path()));
+        set_file_mtime(&entry, SystemTime::now() - Duration::from_secs(120))?;
+        fs::remove_file(project.path().join("Cargo.toml"))?;
+
+        assert!(matches!(
+            cache.repository_lookup_with_ttl(project.path(), None, Some(Duration::from_secs(60))),
+            CacheLookup::Update(_)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_repository_update_falls_back_for_ignore_changes(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for relative in [".gitignore", ".ignore", ".git/info/exclude"] {
+            let (_c, project, cache) = setup()?;
+            let ignore = project.path().join(relative);
+            if let Some(parent) = ignore.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&ignore, "target")?;
+            store_now(
+                &cache,
+                project.path(),
+                None,
+                &repository_result(project.path()),
+            );
+
+            fs::remove_file(&ignore)?;
+
+            assert!(
+                update(&cache, project.path(), None).is_none(),
+                "a change to {relative} must force a full scan"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_repository_update_rejects_legacy_empty_index() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (_c, project, cache) = setup()?;
+        let mut result = repository_result(project.path());
+        result.repository_directories.clear();
+        store_now(&cache, project.path(), None, &result);
+        fs::remove_file(project.path().join("Cargo.toml"))?;
+
+        assert!(update(&cache, project.path(), None).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_complete_hit_does_not_parse_the_directory_index(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (_c, project, cache) = setup()?;
+        let mut result = repository_result(project.path());
+        let indicator = result.indicator.clone().ok_or("test indicator")?;
+        result.nested.push(NestedProject {
+            name: "app".to_string(),
+            indicator,
+            frameworks: Vec::new(),
+        });
+        store_now(&cache, project.path(), None, &result);
+        let entry_path = cache.entry_path(&canonical(project.path()));
+        let mut entry: serde_json::Value = serde_json::from_str(&fs::read_to_string(&entry_path)?)?;
+        entry["repository_directories"] = serde_json::Value::String("not an array".to_string());
+        fs::write(&entry_path, serde_json::to_vec(&entry)?)?;
+
+        let (loaded, _) = cache
+            .load(project.path(), None)
+            .ok_or("a complete hit must not parse the index")?;
+        assert_eq!(loaded.nested, result.nested);
+
+        fs::remove_file(project.path().join("Cargo.toml"))?;
+        assert!(update(&cache, project.path(), None).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_repository_update_rejects_config_mismatch() -> Result<(), Box<dyn std::error::Error>> {
+        let (_c, project, cache) = setup()?;
+        let config_dir = TempDir::new()?;
+        let config_path = config_dir.path().join("config.toml");
+        fs::write(&config_path, "x")?;
+        store_now(
+            &cache,
+            project.path(),
+            Some(&config_path),
+            &repository_result(project.path()),
+        );
+        fs::remove_file(project.path().join("Cargo.toml"))?;
+
+        assert!(update(&cache, project.path(), None).is_none());
+        assert!(update(&cache, project.path(), Some(&config_path)).is_some());
         Ok(())
     }
 
@@ -817,6 +1130,14 @@ mod tests {
         fs::write(&config_path, "[meta]\nversion = \"2.1\"")?;
 
         assert!(cache.load(project.path(), Some(&config_path)).is_none());
+        assert!(matches!(
+            cache.repository_lookup_with_ttl(
+                project.path(),
+                Some(&config_path),
+                Some(Duration::from_secs(60))
+            ),
+            CacheLookup::Miss
+        ));
         Ok(())
     }
 

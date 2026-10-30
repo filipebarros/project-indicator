@@ -8,7 +8,8 @@ mod matched_file;
 
 pub use config::{DetectionConfig, DisplayConfig};
 pub use detection::{
-    ConfidenceFactor, DetectionEvidence, DetectionResult, EvidenceItem, EvidenceType, NestedProject,
+    CachedRepositoryDirectory, ConfidenceFactor, DetectionEvidence, DetectionResult, EvidenceItem,
+    EvidenceType, NestedProject,
 };
 pub use framework::{DetectionType, Ecosystem, Framework, FrameworkMatch};
 pub use indicators::{Indicator, IndicatorContext, RootIndicator};

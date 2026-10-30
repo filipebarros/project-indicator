@@ -20,6 +20,14 @@ pub struct Cli {
     #[arg(long, help = "Skip the persistent result cache for this invocation")]
     pub no_cache: bool,
 
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        conflicts_with = "no_cache",
+        help = "Serve recent cache entries without revalidating watched paths"
+    )]
+    pub cache_ttl: Option<u64>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -100,6 +108,19 @@ mod tests {
         let cli = Cli::try_parse_from(["project-indicator"])?;
         assert!(!cli.no_cache);
         Ok(())
+    }
+
+    #[test]
+    fn test_cli_cache_ttl_is_opt_in_and_conflicts_with_bypass() {
+        let cli = Cli::try_parse_from(["project-indicator", "--cache-ttl", "30"])
+            .unwrap_or_else(|error| panic!("valid TTL failed to parse: {error}"));
+        assert_eq!(cli.cache_ttl, Some(30));
+        assert!(
+            Cli::try_parse_from(["project-indicator"]).is_ok_and(|cli| { cli.cache_ttl.is_none() })
+        );
+        assert!(
+            Cli::try_parse_from(["project-indicator", "--cache-ttl", "30", "--no-cache"]).is_err()
+        );
     }
 
     #[test]

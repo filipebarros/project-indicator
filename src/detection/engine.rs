@@ -1,7 +1,9 @@
 use crate::detection::caches::ParsedFileCache;
-use crate::detection::confidence_scorer::calculate_indicator_score;
+use crate::detection::confidence_scorer::IndicatorScorePlan;
+use crate::detection::directory::DirectoryListing;
 use crate::detection::framework_detector;
 use crate::detection::indicator_resolver;
+use crate::detection::indicator_resolver::RootMarkerIndex;
 use crate::detection::pattern_processor::{normalized_relative, PatternProcessor};
 use crate::detection::root_indicators::{FoundRootIndicator, RootIndicatorEngine};
 use crate::detection::scanner::{ScanOutcome, ScanningEngine};
@@ -46,6 +48,9 @@ pub const MAX_UPWARD_TRAVERSAL: usize = 4;
 pub struct DetectionEngine {
     indicators: Vec<Arc<Indicator>>,
     frameworks: Arc<[Framework]>,
+    marker_index: RootMarkerIndex,
+    score_plans: Vec<IndicatorScorePlan>,
+    framework_plans: std::collections::HashMap<String, framework_detector::FrameworkPlan>,
 
     pub(crate) scanning_engine: ScanningEngine,
     pub(crate) root_indicator_engine: RootIndicatorEngine,
@@ -95,10 +100,27 @@ impl DetectionEngine {
 
         let root_indicator_engine =
             RootIndicatorEngine::from_parts(indicators.clone(), detection_config);
+        let marker_index = RootMarkerIndex::new(&indicators);
+        let score_plans = indicators
+            .iter()
+            .map(|indicator| IndicatorScorePlan::new(indicator, &indicators))
+            .collect();
+        let framework_plans = indicators
+            .iter()
+            .map(|indicator| {
+                (
+                    indicator.name.clone(),
+                    framework_detector::FrameworkPlan::new(indicator, &frameworks),
+                )
+            })
+            .collect();
 
         Self {
             indicators,
             frameworks,
+            marker_index,
+            score_plans,
+            framework_plans,
             scanning_engine,
             root_indicator_engine,
         }
@@ -228,6 +250,7 @@ impl DetectionEngine {
         source_indicators: &[Arc<Indicator>],
         detailed_files: &[crate::types::MatchedFile],
         evidence: &mut DetectionEvidence,
+        listing: Option<&DirectoryListing>,
         file_cache: &FileSystemCache,
         parsed_cache: &ParsedFileCache,
     ) -> Option<(Arc<Indicator>, f32)> {
@@ -283,7 +306,9 @@ impl DetectionEngine {
             contender.framework_deps = framework_detector::detect_frameworks(
                 scan_path,
                 &contender.indicator,
+                &self.framework_plans[&contender.indicator.name],
                 &self.frameworks,
+                listing,
                 &mut scratch,
                 file_cache,
                 parsed_cache,
@@ -318,7 +343,10 @@ impl DetectionEngine {
             winner_certainty
         } else {
             // won on sources alone: report the honest scan ratio
-            calculate_indicator_score(&winner.indicator, detailed_files, &self.indicators)
+            self.indicators
+                .iter()
+                .position(|candidate| candidate.name == winner.indicator.name)
+                .map_or(0.0, |index| self.score_plans[index].score(detailed_files))
         };
         evidence.add_confidence_factor(crate::types::ConfidenceFactor::new(
             "arbitration".to_string(),
@@ -394,7 +422,8 @@ impl DetectionEngine {
         }
 
         let scan_start = std::time::Instant::now();
-        let outcome = self.scanning_engine.scan_with_status(&scan_path);
+        let listing = DirectoryListing::read(&scan_path);
+        let outcome = self.scanning_engine.scan_with_listing(&scan_path, &listing);
         let scan_duration_ms = scan_start.elapsed().as_millis() as u64;
 
         self.detect_from_scan(
@@ -404,6 +433,7 @@ impl DetectionEngine {
             scan_duration_ms,
             evidence,
             true,
+            Some(&listing),
             &file_cache,
             &parsed_cache,
         )
@@ -420,6 +450,7 @@ impl DetectionEngine {
         path: &Path,
         root_markers: Vec<FoundRootIndicator>,
         scan: ScanOutcome,
+        listing: &DirectoryListing,
         file_cache: &FileSystemCache,
         parsed_cache: &ParsedFileCache,
     ) -> DetectionResult {
@@ -460,6 +491,7 @@ impl DetectionEngine {
             0,
             evidence,
             false,
+            Some(listing),
             file_cache,
             parsed_cache,
         )
@@ -479,6 +511,7 @@ impl DetectionEngine {
         scan_duration_ms: u64,
         mut evidence: DetectionEvidence,
         collect_cache_evidence: bool,
+        listing: Option<&DirectoryListing>,
         file_cache: &FileSystemCache,
         parsed_cache: &ParsedFileCache,
     ) -> DetectionResult {
@@ -516,7 +549,7 @@ impl DetectionEngine {
                     && indicator_resolver::root_source_evidence(
                         candidate,
                         &detailed_files,
-                        &self.indicators,
+                        &self.marker_index,
                     )
             }))
         .then(|| RootIndicatorEngine::best_marker(&root_markers).clone());
@@ -538,7 +571,7 @@ impl DetectionEngine {
                     indicator_resolver::root_source_evidence(
                         candidate,
                         &detailed_files,
-                        &self.indicators,
+                        &self.marker_index,
                     )
                 })
                 .cloned()
@@ -549,6 +582,7 @@ impl DetectionEngine {
                 &source_indicators,
                 &detailed_files,
                 &mut evidence,
+                listing,
                 file_cache,
                 parsed_cache,
             ) {
@@ -569,10 +603,12 @@ impl DetectionEngine {
             // language — a marker pattern whose content check failed (a
             // tool-only pyproject.toml) and tool configs or version pins
             // alone identify nothing.
-            let detected_indicator = indicator_resolver::resolve_indicator(
+            let detected_indicator = indicator_resolver::resolve_indicator_with_plans(
                 &self.indicators,
                 &detailed_files,
                 &mut evidence,
+                &self.marker_index,
+                &self.score_plans,
             );
 
             let Some((indicator, confidence)) = detected_indicator else {
@@ -602,7 +638,9 @@ impl DetectionEngine {
         let frameworks = framework_detector::detect_frameworks(
             &scan_path,
             &indicator,
+            &self.framework_plans[&indicator.name],
             &self.frameworks,
+            listing,
             &mut evidence,
             file_cache,
             parsed_cache,
@@ -739,7 +777,7 @@ mod tests {
             vec!["*.rs".to_string()],
             "#FF0000".to_string(),
             "R".to_string(),
-            vec![],
+            vec![crate::types::Ecosystem::Cargo],
             vec![crate::types::RootIndicator {
                 pattern: "Cargo.toml".to_string(),
                 weight: 0.95,
@@ -747,13 +785,22 @@ mod tests {
                 alternative_group: None,
             }],
         );
-        let engine = DetectionEngine::new(vec![rust], vec![]);
+        let framework = Framework {
+            name: "Snapshot Framework".to_string(),
+            ecosystems: vec![crate::types::Ecosystem::Cargo],
+            detection: crate::types::DetectionType::FileExists(vec!["snapshot.config".to_string()]),
+            icon: None,
+            color: None,
+            priority: 1,
+        };
+        let engine = DetectionEngine::new(vec![rust], vec![framework]);
         let dir = tempfile::TempDir::new()?;
         std::fs::write(
             dir.path().join("Cargo.toml"),
             "[package]\nname = \"snap\"\n",
         )?;
         std::fs::write(dir.path().join("main.rs"), "fn main() {}\n")?;
+        std::fs::write(dir.path().join("snapshot.config"), "{}\n")?;
 
         let listing = crate::detection::directory::DirectoryListing::read(dir.path());
         let file_cache = FileSystemCache::default();
@@ -769,12 +816,21 @@ mod tests {
             .scan_with_listing(dir.path(), &listing);
         let matched = scan.matches.len();
         std::fs::remove_file(dir.path().join("Cargo.toml"))?;
+        std::fs::remove_file(dir.path().join("snapshot.config"))?;
 
-        let result =
-            engine.detect_one_with_scan(dir.path(), markers, scan, &file_cache, &parsed_cache);
+        let result = engine.detect_one_with_scan(
+            dir.path(),
+            markers,
+            scan,
+            &listing,
+            &file_cache,
+            &parsed_cache,
+        );
 
         let indicator = result.indicator.as_ref().ok_or("expected a Rust project")?;
         assert_eq!(indicator.name, "Rust");
+        assert_eq!(result.frameworks.len(), 1);
+        assert_eq!(result.frameworks[0].evidence, ["snapshot.config"]);
         assert!(result.confidence > 0.0);
         assert_eq!(result.evidence.files_matched, matched);
         assert!(result.evidence.scan_root.is_some());
