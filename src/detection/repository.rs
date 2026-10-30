@@ -279,17 +279,18 @@ impl<'a, 'b> RepositoryScan<'a, 'b> {
                 }
             }
         }
-        if let Some(project) = &project {
-            self.result.nested.push(project.clone());
+        let found_project = project.is_some();
+        if let Some(project) = project {
+            self.result.nested.push(project);
         }
-        let has_project = has_project_ancestor || project.is_some();
+        let has_project = has_project_ancestor || found_project;
         self.result
             .repository_directories
             .push(CachedRepositoryDirectory {
                 path: relative,
                 has_project_ancestor,
                 files_matched,
-                has_project: project.is_some(),
+                has_project: found_project,
             });
         has_project
     }

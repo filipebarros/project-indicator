@@ -61,30 +61,26 @@ fn root_markers_from_entries<'a>(
                     && file_cache.exists(&entry.path())
                     && entry.path().is_file())
         });
-        if is_file && patterns.literal_patterns.contains(name.as_str()) {
+        if !is_file {
+            continue;
+        }
+        if patterns.literal_patterns.contains(name.as_str()) {
             listing.literal_names.insert(name.clone());
         }
-        if is_file
-            && patterns
-                .wildcard_patterns
-                .iter()
-                .any(|pattern| matches_pattern(&name, pattern))
+        for pattern in patterns
+            .wildcard_patterns
+            .iter()
+            .filter(|pattern| matches_pattern(&name, pattern))
         {
-            for pattern in patterns
-                .wildcard_patterns
-                .iter()
-                .filter(|pattern| matches_pattern(&name, pattern))
-            {
-                listing
-                    .wildcard_matches
-                    .entry(pattern.clone())
-                    .and_modify(|current| {
-                        if name < *current {
-                            *current = name.clone();
-                        }
-                    })
-                    .or_insert_with(|| name.clone());
-            }
+            listing
+                .wildcard_matches
+                .entry(pattern.clone())
+                .and_modify(|current| {
+                    if name < *current {
+                        *current = name.clone();
+                    }
+                })
+                .or_insert_with(|| name.clone());
         }
     }
     listing

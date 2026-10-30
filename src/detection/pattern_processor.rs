@@ -54,6 +54,12 @@ impl PatternProcessor {
                 .any(|pattern| matches_pattern(filename, pattern))
     }
 
+    fn matched_file(relative_path: &Path) -> Option<MatchedFile> {
+        let filename = relative_path.file_name().and_then(|n| n.to_str())?;
+        let relative_str = join_components(relative_path)?;
+        Some(MatchedFile::new(filename.to_string(), relative_str))
+    }
+
     /// Match `file_path` (relative to `base_path`) against the configured
     /// patterns. `relative_path` always uses `/` separators, whatever the OS,
     /// so depth and directory classification behave the same on Windows.
@@ -64,10 +70,19 @@ impl PatternProcessor {
     ) -> Option<MatchedFile> {
         let relative_path = file_path.strip_prefix(base_path).ok()?;
         let filename = relative_path.file_name().and_then(|n| n.to_str())?;
-        let relative_str = join_components(relative_path)?;
+        if self.should_scan_file(filename) {
+            Self::matched_file(relative_path)
+        } else {
+            None
+        }
+    }
 
-        self.should_scan_file(filename)
-            .then(|| MatchedFile::new(filename.to_string(), relative_str))
+    pub(crate) fn match_prefiltered_file_against_patterns(
+        file_path: &Path,
+        base_path: &Path,
+    ) -> Option<MatchedFile> {
+        let relative_path = file_path.strip_prefix(base_path).ok()?;
+        Self::matched_file(relative_path)
     }
 
     pub fn get_exact_patterns(&self) -> &HashSet<String> {

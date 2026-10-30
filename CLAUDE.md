@@ -203,6 +203,11 @@ The detection flow follows this path:
   `$XDG_CACHE_HOME/project-indicator/results/`; every subdirectory of the same
   repository shares that entry. A warm prompt hit skips config parsing and
   engine construction entirely
+- **Result encoding**: unique indicator and framework definitions are stored
+  once and referenced by root and nested matches, then rebuilt with shared
+  indicators on load. Invalid references degrade to a miss. Fresh TTL hits
+  leave the watched-path stamp array as raw JSON; exact and expired lookups
+  deserialize and validate it normally
 - **Invalidation**: evidence-keyed mtimes — the entry stores mtimes of the
   root, active config file, and every file that influenced the result, plus
   the binary build (package version + executable size/mtime), the directories
