@@ -15,10 +15,7 @@ use std::path::Path;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn detect(root: &Path) -> Result<DetectionResult, Box<dyn std::error::Error>> {
-    let config = built_in_config();
-    let engine =
-        DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
-    Ok(engine.detect(root)?)
+    Ok(common::built_in_engine().detect(root)?)
 }
 
 fn names(result: &DetectionResult) -> Vec<&str> {
@@ -130,6 +127,7 @@ fn test_nested_markers_are_found_beneath_a_root_project() -> TestResult {
 
     let result = detect(dir.path())?;
 
+    assert!(result.indicator.is_none());
     assert_eq!(names(&result), [".", "csharp", "java", "typescript"]);
     let languages: Vec<&str> = result
         .nested
@@ -163,21 +161,6 @@ fn test_noise_directories_are_not_examined() -> TestResult {
     ])?;
 
     assert_eq!(names(&detect(dir.path())?), ["real"]);
-    Ok(())
-}
-
-#[test]
-fn test_root_and_nested_projects_are_aggregated() -> TestResult {
-    let dir = create_test_project(&[
-        (".git/HEAD", ""),
-        ("Cargo.toml", AXUM_CARGO),
-        ("tools/package.json", REACT_PACKAGE),
-    ])?;
-
-    let result = detect(dir.path())?;
-
-    assert!(result.indicator.is_none());
-    assert_eq!(names(&result), [".", "tools"]);
     Ok(())
 }
 
@@ -262,11 +245,7 @@ fn run_cli(
     dir: &Path,
     extra: &[&str],
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let out = common::cli(home)
-        .arg(dir)
-        .args(["--format", "json"])
-        .args(extra)
-        .output()?;
+    let out = common::json_cli(home, dir, extra).output()?;
     Ok(serde_json::from_slice(&out.stdout)?)
 }
 

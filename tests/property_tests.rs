@@ -1,3 +1,5 @@
+mod common;
+
 use project_indicator::config::built_in_config;
 use project_indicator::detection::confidence_scorer::calculate_indicator_score;
 use project_indicator::detection::pattern_processor::PatternProcessor;
@@ -146,12 +148,7 @@ fn detect_in(files: &[(&str, &str)]) -> Result<Option<String>, TestCaseError> {
         std::fs::write(dir.path().join(name), content)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
     }
-    let config = built_in_config();
-    let engine = project_indicator::detection::DetectionEngine::with_config(
-        config.indicators,
-        config.frameworks,
-        config.detection,
-    );
+    let engine = common::built_in_engine();
     let result = engine
         .detect(dir.path())
         .map_err(|e| TestCaseError::fail(e.to_string()))?;

@@ -1,7 +1,8 @@
+mod common;
+
 #[cfg(unix)]
 mod unix_symlink_tests {
-    use project_indicator::config::built_in_config;
-    use project_indicator::detection::engine::DetectionEngine;
+    use super::common;
     use project_indicator::types::DetectionResult;
     use std::fs;
     use std::os::unix::fs::symlink;
@@ -9,10 +10,7 @@ mod unix_symlink_tests {
 
     /// Detection with the full built-in configuration
     fn detect(path: &std::path::Path) -> Result<DetectionResult, Box<dyn std::error::Error>> {
-        let config = built_in_config();
-        let engine =
-            DetectionEngine::with_config(config.indicators, config.frameworks, config.detection);
-        Ok(engine.detect(path)?)
+        Ok(common::built_in_engine().detect(path)?)
     }
 
     fn write_cargo_toml(dir: &std::path::Path) -> std::io::Result<()> {

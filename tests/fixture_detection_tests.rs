@@ -2,9 +2,11 @@
 //! would let upward root-indicator traversal find this repo's own
 //! `Cargo.toml`/`.git` and report everything as Rust.
 
-use project_indicator::{config::built_in_config, detection::DetectionEngine};
+mod common;
+
+use project_indicator::{detection::DetectionEngine, types::DetectionResult};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 /// (fixture dir, expected language, expected frameworks)
@@ -221,26 +223,31 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn fixtures_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+}
+
+fn detect_fixture(
+    engine: &DetectionEngine,
+    fixtures_root: &Path,
+    name: &str,
+) -> Result<DetectionResult, Box<dyn std::error::Error>> {
+    let staged = TempDir::new()?;
+    copy_dir(&fixtures_root.join(name), staged.path())?;
+    Ok(engine.detect(staged.path())?)
+}
+
 #[test]
 fn test_all_fixtures_detect_as_expected() -> Result<(), Box<dyn std::error::Error>> {
-    let fixtures_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures");
-
-    let config = built_in_config();
-    let engine = DetectionEngine::with_config(
-        config.indicators.clone(),
-        config.frameworks.clone(),
-        config.detection,
-    );
+    let fixtures_root = fixtures_root();
+    let engine = common::built_in_engine();
 
     let mut failures = Vec::new();
 
     for (name, expected_language, expected_frameworks) in EXPECTATIONS {
-        let staged = TempDir::new()?;
-        copy_dir(&fixtures_root.join(name), staged.path())?;
-
-        let result = engine.detect(staged.path())?;
+        let result = detect_fixture(&engine, &fixtures_root, name)?;
 
         let language = result
             .indicator
@@ -275,21 +282,12 @@ fn test_all_fixtures_detect_as_expected() -> Result<(), Box<dyn std::error::Erro
 
 #[test]
 fn test_not_a_project_fixtures_detect_nothing() -> Result<(), Box<dyn std::error::Error>> {
-    let fixtures_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures");
-    let config = built_in_config();
-    let engine = DetectionEngine::with_config(
-        config.indicators.clone(),
-        config.frameworks.clone(),
-        config.detection,
-    );
+    let fixtures_root = fixtures_root();
+    let engine = common::built_in_engine();
 
     let mut failures = Vec::new();
     for (name, why) in NOT_A_PROJECT {
-        let staged = TempDir::new()?;
-        copy_dir(&fixtures_root.join(name), staged.path())?;
-        let result = engine.detect(staged.path())?;
+        let result = detect_fixture(&engine, &fixtures_root, name)?;
         if let Some(indicator) = &result.indicator {
             failures.push(format!("{name} ({why}): detected {}", indicator.name));
         }
@@ -311,9 +309,7 @@ fn test_not_a_project_fixtures_detect_nothing() -> Result<(), Box<dyn std::error
 /// fixtures can't be added without locking in their behavior.
 #[test]
 fn test_every_fixture_has_an_expectation() -> Result<(), Box<dyn std::error::Error>> {
-    let fixtures_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures");
+    let fixtures_root = fixtures_root();
 
     let mut missing = Vec::new();
     for entry in fs::read_dir(&fixtures_root)? {

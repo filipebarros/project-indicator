@@ -130,11 +130,7 @@ dependencies = ["react"]
         let dir = tempfile::TempDir::new()?;
         let path = dir.path().join("config.toml");
         let text = "[display]\nmax_frameworks = 2\n\n[[indicators]]\nname = \"TypeScript\"\nfiles = [\"package.json\"]\ncolor = \"#3178C6\"\nicon = \"TS\"\n";
-        let mut bytes = vec![0xFF, 0xFE];
-        for unit in text.encode_utf16() {
-            bytes.extend(unit.to_le_bytes());
-        }
-        std::fs::write(&path, bytes)?;
+        std::fs::write(&path, crate::test_utils::utf16le_with_bom(text))?;
         let config = load_from_file(&path)?;
         assert_eq!(config.indicators.len(), 1);
         Ok(())

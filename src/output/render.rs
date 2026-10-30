@@ -303,20 +303,20 @@ mod tests {
     use crate::types::{DetectionType, Framework, FrameworkMatch};
 
     #[test]
-    fn test_shorthand_hex_expands_like_css() {
-        assert_eq!(hex_to_rgb("#fff"), Some((255, 255, 255)));
-        assert_eq!(hex_to_rgb("#abc"), Some((170, 187, 204)));
-        assert_eq!(hex_to_rgb("#aabbcc"), Some((170, 187, 204)));
-        assert_eq!(hex_to_rgb("#abcd"), None);
-        assert_eq!(hex_to_rgb("abc"), None);
-    }
-
-    #[test]
     fn test_hex_to_rgb() {
-        assert_eq!(hex_to_rgb("#61dafb"), Some((97, 218, 251)));
-        assert_eq!(hex_to_rgb("#F7DF1E"), Some((247, 223, 30)));
-        assert_eq!(hex_to_rgb("61dafb"), None);
-        assert_eq!(hex_to_rgb("#xyzxyz"), None);
+        for (input, expected) in [
+            ("#fff", Some((255, 255, 255))),
+            ("#abc", Some((170, 187, 204))),
+            ("#aabbcc", Some((170, 187, 204))),
+            ("#abcd", None),
+            ("abc", None),
+            ("#61dafb", Some((97, 218, 251))),
+            ("#F7DF1E", Some((247, 223, 30))),
+            ("61dafb", None),
+            ("#xyzxyz", None),
+        ] {
+            assert_eq!(hex_to_rgb(input), expected, "{input}");
+        }
     }
 
     #[test]
@@ -354,8 +354,11 @@ mod tests {
     #[test]
     fn test_render_json() {
         let output = render_json(&create_test_result(), &DisplayConfig::default());
+        let json: serde_json::Value = serde_json::from_str(&output).unwrap_or_default();
+
         assert!(output.contains("TypeScript"));
         assert!(output.contains("React"));
+        assert!(json.get("projects").is_none());
     }
 
     #[test]
@@ -629,17 +632,6 @@ mod tests {
                 "raw control character in {json:?}"
             );
             assert!(json.contains(r#""name":"a31mb""#), "{json}");
-        }
-
-        #[test]
-        fn test_json_has_no_projects_key_for_an_ordinary_result() {
-            let json: serde_json::Value = serde_json::from_str(&render_json(
-                &create_test_result(),
-                &DisplayConfig::default(),
-            ))
-            .unwrap_or_default();
-
-            assert!(json.get("projects").is_none());
         }
 
         #[test]

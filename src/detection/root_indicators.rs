@@ -999,15 +999,11 @@ mod tests {
     #[test]
     fn test_utf16_root_manifests_are_validated() -> Result<(), Box<dyn std::error::Error>> {
         let dir = TempDir::new()?;
-        let utf16 = |text: &str| -> Vec<u8> {
-            let mut bytes = vec![0xFF, 0xFE];
-            for unit in text.encode_utf16() {
-                bytes.extend(unit.to_le_bytes());
-            }
-            bytes
-        };
         let pyproject = dir.path().join("pyproject.toml");
-        fs::write(&pyproject, utf16("[project]\nname = \"x\"\n"))?;
+        fs::write(
+            &pyproject,
+            crate::test_utils::utf16le_with_bom("[project]\nname = \"x\"\n"),
+        )?;
         assert!(RootIndicatorEngine::is_valid_python_project(
             &pyproject,
             &ParsedFileCache::new()
@@ -1177,11 +1173,10 @@ mod tests {
     fn test_typescript_detected_in_utf16_package_json() -> Result<(), Box<dyn std::error::Error>> {
         let dir = TempDir::new()?;
         let p = dir.path().join("package.json");
-        let mut bytes = vec![0xFF, 0xFE];
-        for unit in r#"{"devDependencies":{"typescript":"^5"}}"#.encode_utf16() {
-            bytes.extend(unit.to_le_bytes());
-        }
-        fs::write(&p, bytes)?;
+        fs::write(
+            &p,
+            crate::test_utils::utf16le_with_bom(r#"{"devDependencies":{"typescript":"^5"}}"#),
+        )?;
         assert!(RootIndicatorEngine::has_typescript_dependencies(
             &p,
             &ParsedFileCache::new()

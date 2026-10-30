@@ -28,6 +28,15 @@ pub fn create_test_result() -> DetectionResult {
     DetectionResult::new(Some(Arc::new(language)), vec![framework_match], 0.9)
 }
 
+/// Encode text as UTF-16LE with a byte-order mark.
+pub fn utf16le_with_bom(text: &str) -> Vec<u8> {
+    let mut bytes = vec![0xFF, 0xFE];
+    for unit in text.encode_utf16() {
+        bytes.extend(unit.to_le_bytes());
+    }
+    bytes
+}
+
 /// A temp directory with `Cargo.toml`, `main.rs` and `src/lib.rs`
 pub fn create_test_rust_project() -> Result<TempDir, Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;

@@ -468,10 +468,7 @@ mod tests {
         let cache = ParsedFileCache::new();
 
         // PowerShell 5 `>` writes UTF-16LE with a BOM
-        let mut utf16 = vec![0xFF, 0xFE];
-        for unit in "flask==2.0\n".encode_utf16() {
-            utf16.extend_from_slice(&unit.to_le_bytes());
-        }
+        let utf16 = crate::test_utils::utf16le_with_bom("flask==2.0\n");
         let p16 = dir.path().join("requirements.txt");
         fs::write(&p16, utf16)?;
         let text = cache.get_file_content(&p16)?.ok_or("missing")?;
@@ -509,10 +506,7 @@ mod tests {
 
         // UTF-16 decodes to roughly half its disk size; charging the decoded
         // text would let a run read ~2x the budget from disk
-        let mut utf16 = vec![0xFF, 0xFE];
-        for unit in "flask==2.0\n".encode_utf16() {
-            utf16.extend_from_slice(&unit.to_le_bytes());
-        }
+        let utf16 = crate::test_utils::utf16le_with_bom("flask==2.0\n");
         let disk_len = utf16.len() as u64;
         let path = dir.path().join("requirements.txt");
         fs::write(&path, utf16)?;
@@ -644,6 +638,7 @@ mod tests {
 
         assert_eq!(value["dependencies"]["serde"].as_str(), Some("1"));
         assert!(!cache.read_failed());
+        assert_eq!(cache.read_paths(), vec![path]);
         Ok(())
     }
 
@@ -659,19 +654,6 @@ mod tests {
 
         assert!(cache.get_file_content(&path)?.is_some());
         assert!(cache.get_file_content(&path)?.is_some());
-        Ok(())
-    }
-
-    #[test]
-    fn test_a_file_read_in_two_classes_is_listed_once() -> Result<(), Box<dyn std::error::Error>> {
-        let padding = "#\n".repeat(MAX_TEXT_BYTES as usize / 2 + 1);
-        let (_dir, path) = write_json("Cargo.toml", &format!("[package]\n{padding}"))?;
-        let cache = ParsedFileCache::new();
-
-        assert!(cache.get_file_content(&path).is_err());
-        assert!(cache.get_toml_value(&path)?.is_some());
-
-        assert_eq!(cache.read_paths(), vec![path]);
         Ok(())
     }
 
