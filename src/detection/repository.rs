@@ -16,10 +16,24 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-/// Windows system directories, matched case-insensitively with any verbatim
-/// `\\?\` prefix (which `canonicalize` adds) stripped
+fn normalized_windows_path(path: &str) -> String {
+    let path = path.replace('/', "\\");
+    if let Some(path) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{path}")
+    } else {
+        path.strip_prefix(r"\\?\")
+            .unwrap_or(path.as_str())
+            .to_string()
+    }
+}
+
+/// Windows system directories, matched case-insensitively with either
+/// separator and any verbatim `\\?\` prefix (which `canonicalize` adds) stripped
 pub(crate) fn is_windows_system_dir(path: &str) -> bool {
-    let path = path.strip_prefix(r"\\?\").unwrap_or(path);
+    if !path.contains(':') {
+        return false;
+    }
+    let path = normalized_windows_path(path);
     [
         r"C:\Windows",
         r"C:\Program Files",
@@ -30,8 +44,19 @@ pub(crate) fn is_windows_system_dir(path: &str) -> bool {
     .any(|dir| path.eq_ignore_ascii_case(dir))
 }
 
+#[cfg(windows)]
+fn windows_paths_equal(left: &Path, right: &Path) -> bool {
+    normalized_windows_path(&left.to_string_lossy())
+        .eq_ignore_ascii_case(&normalized_windows_path(&right.to_string_lossy()))
+}
+
 pub(crate) fn is_boundary_directory(path: &Path, home: Option<&Path>) -> bool {
     if home == Some(path) || path.parent().is_none() {
+        return true;
+    }
+
+    #[cfg(windows)]
+    if home.is_some_and(|home| windows_paths_equal(home, path)) {
         return true;
     }
 
@@ -605,11 +630,18 @@ mod tests {
 
             assert!(scan.result.evidence.read_files.is_empty());
             let result = scan.finish();
-            let path = |relative| dir.path().join(relative).to_string_lossy().into_owned();
-            assert_eq!(
-                result.evidence.read_files,
-                [path("child/package.json"), path("package.json")]
-            );
+            let child_manifest = dir
+                .path()
+                .join("child")
+                .join("package.json")
+                .to_string_lossy()
+                .into_owned();
+            let root_manifest = dir
+                .path()
+                .join("package.json")
+                .to_string_lossy()
+                .into_owned();
+            assert_eq!(result.evidence.read_files, [child_manifest, root_manifest]);
             Ok(())
         }
 
@@ -777,7 +809,7 @@ mod tests {
                 .evidence
                 .watched_dirs
                 .iter()
-                .all(|path| !path.contains("generated/drop")));
+                .all(|path| !Path::new(path).ends_with("config/generated/drop")));
             assert!(!result.evidence.read_failed);
             Ok(())
         }
@@ -957,12 +989,12 @@ mod tests {
                 .evidence
                 .read_files
                 .iter()
-                .any(|path| path.ends_with("apps/web/package.json")));
+                .any(|path| Path::new(path).ends_with("apps/web/package.json")));
             assert!(incremental
                 .evidence
                 .read_files
                 .iter()
-                .any(|path| path.ends_with("apps/api/package.json")));
+                .any(|path| Path::new(path).ends_with("apps/api/package.json")));
             Ok(())
         }
 
