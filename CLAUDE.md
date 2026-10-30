@@ -99,8 +99,9 @@ The detection flow follows this path:
      root (`.git` — file or directory — `.hg`, `.svn`) with no numeric depth
      cap, then `detect_repository` recursively aggregates projects beneath it
    - Repository traversal is a breadth-first walk using `ignore::IncrementalIgnore`;
-     one prefetched listing per directory drives ignore-safety checks, traversal,
-     and project scanning. Detected projects are sorted into breadth-first,
+     each directory's listing is read when processed and reused for ignore-safety
+     checks, traversal, and project scanning without retaining snapshots in the
+     queue. Detected projects are sorted into breadth-first,
      name-stable output. It includes the root project, nested projects at any
      depth, and source-only projects with no marked ancestor; hidden dirs,
      symlinks, noise dirs, and directories excluded by inherited
