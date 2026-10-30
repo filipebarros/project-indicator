@@ -1,5 +1,6 @@
 use crate::detection::caches::parsed_file::strip_c_comments;
 use crate::detection::caches::ParsedFileCache;
+use crate::detection::directory::DirectoryListing;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -131,7 +132,13 @@ fn strip_lua_comments(src: &str) -> String {
     out
 }
 
-pub fn check_toml_dependencies(toml_value: &toml::Value, dep_names: &[String]) -> bool {
+pub fn toml_dependency_hits(toml_value: &toml::Value, dep_names: &[String]) -> HashSet<usize> {
+    let wanted: std::collections::HashMap<&str, usize> = dep_names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.as_str(), index))
+        .collect();
+    let mut hits = HashSet::new();
     // The manifest itself, Cargo workspaces ([workspace.dependencies]) and
     // platform tables ([target.'cfg(unix)'.dependencies])
     let platforms = toml_value
@@ -139,28 +146,41 @@ pub fn check_toml_dependencies(toml_value: &toml::Value, dep_names: &[String]) -
         .and_then(|v| v.as_table())
         .into_iter()
         .flat_map(|targets| targets.values());
-    [Some(toml_value), toml_value.get("workspace")]
+    for parent in [Some(toml_value), toml_value.get("workspace")]
         .into_iter()
         .flatten()
         .chain(platforms)
-        .any(|parent| {
-            ["dependencies", "dev-dependencies", "build-dependencies"]
-                .iter()
-                .filter_map(|section| parent.get(section).and_then(|v| v.as_table()))
-                .any(|table| table_names_dependency(table, dep_names))
-        })
+    {
+        for table in ["dependencies", "dev-dependencies", "build-dependencies"]
+            .iter()
+            .filter_map(|section| parent.get(section).and_then(|v| v.as_table()))
+        {
+            for (name, spec) in table {
+                if let Some(index) = wanted.get(name.as_str()) {
+                    hits.insert(*index);
+                }
+                if let Some(index) = spec
+                    .get("package")
+                    .and_then(toml::Value::as_str)
+                    .and_then(|name| wanted.get(name))
+                {
+                    hits.insert(*index);
+                }
+            }
+        }
+    }
+    hits
 }
 
-/// A dependency table lists one of `dep_names`, directly or through
-/// `web = { package = "axum" }`, which renames the real package
-fn table_names_dependency(table: &toml::Table, dep_names: &[String]) -> bool {
-    dep_names.iter().any(|dep| table.contains_key(dep))
-        || table.values().any(|spec| {
-            matches!(spec.get("package"), Some(toml::Value::String(real)) if dep_names.contains(real))
-        })
+#[cfg(test)]
+pub fn check_toml_dependencies(toml_value: &toml::Value, dep_names: &[String]) -> bool {
+    !toml_dependency_hits(toml_value, dep_names).is_empty()
 }
 
-pub fn check_json_dependencies(json_value: &serde_json::Value, dep_names: &[String]) -> bool {
+pub fn json_dependency_hits(
+    json_value: &serde_json::Value,
+    dep_names: &[String],
+) -> HashSet<usize> {
     const SECTIONS: [&str; 6] = [
         "dependencies",
         "devDependencies",
@@ -169,16 +189,26 @@ pub fn check_json_dependencies(json_value: &serde_json::Value, dep_names: &[Stri
         "require",
         "require-dev",
     ];
+    let wanted: std::collections::HashMap<&str, usize> = dep_names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.as_str(), index))
+        .collect();
     SECTIONS
         .iter()
         .filter_map(|section| json_value.get(section).and_then(|v| v.as_object()))
-        .any(|deps| dep_names.iter().any(|dep| deps.contains_key(dep)))
+        .flat_map(|dependencies| dependencies.keys())
+        .filter_map(|name| wanted.get(name.as_str()).copied())
+        .collect()
 }
 
+pub fn check_json_dependencies(json_value: &serde_json::Value, dep_names: &[String]) -> bool {
+    !json_dependency_hits(json_value, dep_names).is_empty()
+}
+
+#[cfg(test)]
 pub fn check_pyproject_dependencies(toml_value: &toml::Value, dep_names: &[String]) -> bool {
-    dep_names
-        .iter()
-        .any(|dep| has_pyproject_dependency(toml_value, dep))
+    !pyproject_dependency_hits(toml_value, dep_names).is_empty()
 }
 
 /// PEP 503 name normalisation: case-insensitive, `_` `.` `-` equivalent.
@@ -186,12 +216,9 @@ fn normalize_py_name(name: &str) -> String {
     name.to_ascii_lowercase().replace(['_', '.'], "-")
 }
 
-/// The requirement's package name when `line` (a PEP 508 requirement or a
-/// Pipfile `name = ...` entry) names `dep_name`. The name is the leading run
-/// of name characters and must END at a requirement boundary — end of line,
-/// extras, a version specifier, a marker, or whitespace — so look-alikes
-/// (`django-extensions`) never match.
-fn python_requirement_names(line: &str, dep_name: &str) -> bool {
+/// The normalized requirement package name, provided the name ends at a
+/// requirement boundary so look-alikes (`django-extensions`) never match.
+fn python_requirement_name(line: &str) -> Option<String> {
     // A UTF-8 BOM can prefix the first line of a file
     let line = line.trim_start_matches('\u{feff}').trim();
     let end = line
@@ -203,30 +230,7 @@ fn python_requirement_names(line: &str, dep_name: &str) -> bool {
         .chars()
         .next()
         .is_none_or(|c| "[=<>!~;@(#".contains(c));
-    !name.is_empty() && boundary && normalize_py_name(name) == normalize_py_name(dep_name)
-}
-
-/// Checks a single `project.dependencies`/`optional-dependencies`/
-/// `dependency-groups` array for a requirement naming `dep_name`.
-fn deps_array_matches(deps: &toml::Value, dep_name: &str) -> bool {
-    let Some(deps_array) = deps.as_array() else {
-        return false;
-    };
-
-    deps_array.iter().any(|dep| {
-        dep.as_str()
-            .is_some_and(|d| python_requirement_names(d, dep_name))
-    })
-}
-
-/// requirements.txt / Pipfile matching with Python name semantics
-pub fn check_python_text_dependencies(content: &str, dep_names: &[String]) -> bool {
-    dep_names.iter().any(|dep| {
-        content.lines().any(|line| {
-            let line = line.trim();
-            !line.starts_with('#') && !line.starts_with('-') && python_requirement_names(line, dep)
-        })
-    })
+    (!name.is_empty() && boundary).then(|| normalize_py_name(name))
 }
 
 /// The values of a TOML table, or nothing when `value` is absent or not a table
@@ -237,36 +241,84 @@ fn table_values(value: Option<&toml::Value>) -> impl Iterator<Item = &toml::Valu
         .flat_map(|table| table.values())
 }
 
-fn has_pyproject_dependency(toml_value: &toml::Value, dep_name: &str) -> bool {
-    let is_dep = |k: &String| normalize_py_name(k) == normalize_py_name(dep_name);
-    let lists_it = |deps: &toml::Value| deps_array_matches(deps, dep_name);
-    let names_it = |table: Option<&toml::Value>| {
-        table
-            .and_then(toml::Value::as_table)
-            .is_some_and(|t| t.keys().any(is_dep))
-    };
+fn extend_python_array(names: &mut HashSet<String>, value: &toml::Value) {
+    if let Some(requirements) = value.as_array() {
+        names.extend(
+            requirements
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .filter_map(python_requirement_name),
+        );
+    }
+}
 
+fn extend_python_table(names: &mut HashSet<String>, value: Option<&toml::Value>) {
+    if let Some(table) = value.and_then(toml::Value::as_table) {
+        names.extend(table.keys().map(|name| normalize_py_name(name)));
+    }
+}
+
+fn pyproject_dependency_names(toml_value: &toml::Value) -> HashSet<String> {
+    let mut names = HashSet::new();
     let project = toml_value.get("project");
-    let tool = toml_value.get("tool");
-    // PEP 621: [project].dependencies and [project.optional-dependencies.<extra>]
-    project.and_then(|p| p.get("dependencies")).is_some_and(lists_it)
-        || table_values(project.and_then(|p| p.get("optional-dependencies"))).any(lists_it)
-        // PEP 735: [dependency-groups]
-        || table_values(toml_value.get("dependency-groups")).any(lists_it)
-        || ["poetry", "pdm", "uv"]
-            .iter()
-            .filter_map(|name| tool?.get(name))
-            .any(|section| {
-            // [tool.poetry.dependencies]
-            names_it(section.get("dependencies"))
-                // [tool.poetry.group.<g>.dependencies]
-                || table_values(section.get("group")).any(|g| names_it(g.get("dependencies")))
-                // dev-dependencies: poetry's legacy table of names, pdm's
-                // table of requirement arrays, uv's plain array
-                || section.get("dev-dependencies").is_some_and(|dev| {
-                    lists_it(dev) || names_it(Some(dev)) || table_values(Some(dev)).any(lists_it)
-                })
-        })
+    if let Some(dependencies) = project.and_then(|p| p.get("dependencies")) {
+        extend_python_array(&mut names, dependencies);
+    }
+    for dependencies in table_values(project.and_then(|p| p.get("optional-dependencies"))) {
+        extend_python_array(&mut names, dependencies);
+    }
+    for dependencies in table_values(toml_value.get("dependency-groups")) {
+        extend_python_array(&mut names, dependencies);
+    }
+    for section in ["poetry", "pdm", "uv"]
+        .iter()
+        .filter_map(|name| toml_value.get("tool")?.get(name))
+    {
+        extend_python_table(&mut names, section.get("dependencies"));
+        for group in table_values(section.get("group")) {
+            extend_python_table(&mut names, group.get("dependencies"));
+        }
+        if let Some(development) = section.get("dev-dependencies") {
+            extend_python_array(&mut names, development);
+            extend_python_table(&mut names, Some(development));
+            for dependencies in table_values(Some(development)) {
+                extend_python_array(&mut names, dependencies);
+            }
+        }
+    }
+    names
+}
+
+fn python_hits(dep_names: &[String], declared: &HashSet<String>) -> HashSet<usize> {
+    let wanted: std::collections::HashMap<String, usize> = dep_names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (normalize_py_name(name), index))
+        .collect();
+    declared
+        .iter()
+        .filter_map(|name| wanted.get(name).copied())
+        .collect()
+}
+
+pub fn pyproject_dependency_hits(toml_value: &toml::Value, dep_names: &[String]) -> HashSet<usize> {
+    python_hits(dep_names, &pyproject_dependency_names(toml_value))
+}
+
+pub fn python_text_dependency_hits(content: &str, dep_names: &[String]) -> HashSet<usize> {
+    let declared = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with('#') && !line.starts_with('-'))
+        .filter_map(python_requirement_name)
+        .collect();
+    python_hits(dep_names, &declared)
+}
+
+/// requirements.txt / Pipfile matching with Python name semantics
+#[cfg(test)]
+pub fn check_python_text_dependencies(content: &str, dep_names: &[String]) -> bool {
+    !python_text_dependency_hits(content, dep_names).is_empty()
 }
 
 /// Check go.mod dependencies. The single-line form puts the `require`
@@ -338,16 +390,24 @@ fn gem_line_names(line: &str, dep_name: &str) -> bool {
         .is_some_and(|after| after.starts_with(quote))
 }
 
-pub fn check_package_lock_dependencies(
+pub fn package_lock_dependency_hits(
     json_value: &serde_json::Value,
     dep_names: &[String],
-) -> bool {
+) -> HashSet<usize> {
+    let wanted: std::collections::HashMap<&str, usize> = dep_names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.as_str(), index))
+        .collect();
+    let mut hits = HashSet::new();
     if let Some(packages) = json_value.get("packages").and_then(|v| v.as_object()) {
-        if dep_names
-            .iter()
-            .any(|dep| packages.contains_key(&format!("node_modules/{dep}")))
-        {
-            return true;
+        for name in packages.keys() {
+            if let Some(index) = name
+                .strip_prefix("node_modules/")
+                .and_then(|name| wanted.get(name))
+            {
+                hits.insert(*index);
+            }
         }
     }
 
@@ -357,13 +417,13 @@ pub fn check_package_lock_dependencies(
             continue;
         };
         for (name, details) in dependencies {
-            if dep_names.contains(name) {
-                return true;
+            if let Some(index) = wanted.get(name.as_str()) {
+                hits.insert(*index);
             }
             pending.push(details);
         }
     }
-    false
+    hits
 }
 
 pub fn check_yarn_lock_dependencies(content: &str, dep_names: &[String]) -> bool {
@@ -428,11 +488,19 @@ pub fn check_poetry_lock_dependencies(content: &str, dep_names: &[String]) -> bo
     })
 }
 
-pub fn check_cargo_lock_dependencies(content: &str, dep_names: &[String]) -> bool {
+pub fn cargo_lock_dependency_hits(content: &str, dep_names: &[String]) -> HashSet<usize> {
     let content = strip_hash_comments(content);
     dep_names
         .iter()
-        .any(|dep| content.contains(&format!("name = \"{dep}\"")))
+        .enumerate()
+        .filter(|(_, dep)| content.contains(&format!("name = \"{dep}\"")))
+        .map(|(index, _)| index)
+        .collect()
+}
+
+#[cfg(test)]
+pub fn check_cargo_lock_dependencies(content: &str, dep_names: &[String]) -> bool {
+    !cargo_lock_dependency_hits(content, dep_names).is_empty()
 }
 
 /// Check build.sbt dependencies: the artifact is the quoted string right
@@ -711,6 +779,22 @@ pub fn first_hit(
 /// would be read and recorded as a cache input.
 pub const MAX_PROJECT_FILES: usize = 32;
 
+pub fn files_with_extension_in(
+    dir: &Path,
+    extension: &str,
+    listing: Option<&DirectoryListing>,
+) -> Vec<String> {
+    if let Some(listing) = listing {
+        return listing
+            .entries()
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| name.ends_with(extension))
+            .take(MAX_PROJECT_FILES)
+            .collect();
+    }
+    files_with_extension(dir, extension)
+}
+
 /// Sorted names of up to `MAX_PROJECT_FILES` files in `dir` ending in
 /// `extension` (`.csproj`): the smallest ones, so the choice does not depend
 /// on the order the file system lists them in
@@ -744,6 +828,11 @@ mod tests {
         );
         assert!(names.windows(2).all(|w| w[0] < w[1]), "sorted");
         assert!(names.iter().all(|n| n.ends_with(".csproj")));
+        let listing = DirectoryListing::read(dir.path());
+        assert_eq!(
+            files_with_extension_in(dir.path(), ".csproj", Some(&listing)),
+            names
+        );
         Ok(())
     }
 

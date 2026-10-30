@@ -18,9 +18,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Largest line-oriented manifest (`requirements.txt`, `go.mod`, a pom, a
-/// lockfile read as text …). Several matchers walk these line by line for
-/// every dependency name, and a file of newlines is tiny in git but huge on
-/// disk, so this is small: real manifests are kilobytes.
+/// lockfile read as text …). Specialized matchers walk these line by line,
+/// and a file of newlines is tiny in git but huge on disk, so this is small:
+/// real manifests are kilobytes.
 pub(crate) const MAX_TEXT_BYTES: u64 = 1024 * 1024;
 
 /// Largest JSON or TOML manifest. Those go through the streaming

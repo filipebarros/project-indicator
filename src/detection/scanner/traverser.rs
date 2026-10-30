@@ -4,6 +4,7 @@
 //! which are machine-dependent). Hidden files are included: they often hold
 //! project configuration (`.eslintrc`, `.babelrc`).
 
+use crate::detection::directory::DirectoryListing;
 use ignore::WalkBuilder;
 use std::fs;
 use std::path::Path;
@@ -25,6 +26,13 @@ pub(crate) fn root_ignore_files_are_safe(root: &Path) -> bool {
     [".gitignore", ".ignore", ".git/info/exclude"]
         .iter()
         .all(|name| ignore_file_is_safe(&root.join(name)))
+}
+
+pub(crate) fn listing_ignore_files_are_safe(root: &Path, listing: &DirectoryListing) -> bool {
+    [".gitignore", ".ignore"]
+        .iter()
+        .all(|name| !listing.contains_name(name) || ignore_file_is_safe(&root.join(name)))
+        && (!listing.contains_name(".git") || ignore_file_is_safe(&root.join(".git/info/exclude")))
 }
 
 /// A name-sorted walker over `path`'s immediate entries (the walk never

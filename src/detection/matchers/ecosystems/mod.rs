@@ -7,20 +7,46 @@ use crate::constants::{
     PUBSPEC_LOCK, PUBSPEC_YAML, PYPROJECT_TOML, REQUIREMENTS_TXT, YARN_LOCK,
 };
 use crate::detection::caches::ParsedFileCache;
+use crate::detection::directory::DirectoryListing;
 use crate::Result;
 use helpers::{
-    check_cargo_lock_dependencies, check_composer_lock_dependencies, check_csproj_dependencies,
+    cargo_lock_dependency_hits, check_composer_lock_dependencies, check_csproj_dependencies,
     check_gemfile_dependencies, check_gemfile_lock_dependencies, check_go_mod_dependencies,
     check_gradle_dependencies, check_json_dependencies, check_luarocks_lock_dependencies,
-    check_mill_dependencies, check_mix_dependencies, check_package_lock_dependencies,
-    check_packages_config_dependencies, check_pnpm_lock_dependencies,
-    check_poetry_lock_dependencies, check_pom_xml_dependencies, check_pubspec_dependencies,
-    check_pubspec_lock_dependencies, check_pyproject_dependencies, check_python_text_dependencies,
-    check_rockspec_dependencies, check_sbt_dependencies, check_swift_package_dependencies,
-    check_toml_dependencies, check_yarn_lock_dependencies, files_with_extension, first_hit, hit,
-    pubspec_declares_dependencies, rockspec_declares_dependencies, TextCheck,
+    check_mill_dependencies, check_mix_dependencies, check_packages_config_dependencies,
+    check_pnpm_lock_dependencies, check_poetry_lock_dependencies, check_pom_xml_dependencies,
+    check_pubspec_dependencies, check_pubspec_lock_dependencies, check_rockspec_dependencies,
+    check_sbt_dependencies, check_swift_package_dependencies, check_yarn_lock_dependencies,
+    files_with_extension_in, first_hit, hit, json_dependency_hits, package_lock_dependency_hits,
+    pubspec_declares_dependencies, pyproject_dependency_hits, python_text_dependency_hits,
+    rockspec_declares_dependencies, toml_dependency_hits, TextCheck,
 };
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+
+#[derive(Clone)]
+pub struct DependencyHit {
+    pub file: String,
+    pub precedence: usize,
+}
+
+pub type DependencyHits = HashMap<usize, DependencyHit>;
+
+fn record_hits(hits: &mut DependencyHits, found: HashSet<usize>, file: &str, precedence: usize) {
+    for index in found {
+        hits.entry(index)
+            .and_modify(|current| {
+                if precedence < current.precedence {
+                    current.file = file.to_owned();
+                    current.precedence = precedence;
+                }
+            })
+            .or_insert_with(|| DependencyHit {
+                file: file.to_owned(),
+                precedence,
+            });
+    }
+}
 
 pub fn check_dart_ecosystem(
     path: &Path,
@@ -53,12 +79,13 @@ pub fn check_dart_ecosystem(
     )
 }
 
-pub fn check_dotnet_ecosystem(
+pub(crate) fn check_dotnet_ecosystem(
     path: &Path,
     packages: &[String],
+    listing: Option<&DirectoryListing>,
     parsed_cache: &ParsedFileCache,
 ) -> Result<Option<String>> {
-    let csprojs = files_with_extension(path, ".csproj");
+    let csprojs = files_with_extension_in(path, ".csproj", listing);
     let mut probes: Vec<(&str, TextCheck)> = csprojs
         .iter()
         .map(|name| (name.as_str(), check_csproj_dependencies as TextCheck))
@@ -112,13 +139,14 @@ pub fn check_java_ecosystem(
     )
 }
 
-pub fn check_lua_ecosystem(
+pub(crate) fn check_lua_ecosystem(
     path: &Path,
     packages: &[String],
+    listing: Option<&DirectoryListing>,
     parsed_cache: &ParsedFileCache,
 ) -> Result<Option<String>> {
     let mut rockspec_declares_deps = false;
-    for rockspec in files_with_extension(path, ".rockspec") {
+    for rockspec in files_with_extension_in(path, ".rockspec", listing) {
         if let Some(content) = parsed_cache.get_file_content(path.join(&rockspec))? {
             rockspec_declares_deps |= rockspec_declares_dependencies(&content);
             if check_rockspec_dependencies(&content, packages) {
@@ -146,12 +174,28 @@ pub fn check_node_ecosystem(
     dependencies: &[String],
     parsed_cache: &ParsedFileCache,
 ) -> Result<Option<String>> {
+    Ok(
+        check_node_ecosystem_batch(path, dependencies, parsed_cache)?
+            .into_values()
+            .min_by_key(|hit| hit.precedence)
+            .map(|hit| hit.file),
+    )
+}
+
+pub fn check_node_ecosystem_batch(
+    path: &Path,
+    dependencies: &[String],
+    parsed_cache: &ParsedFileCache,
+) -> Result<DependencyHits> {
+    let mut hits = HashMap::new();
     let manifest = parsed_cache.get_json_value(path.join(PACKAGE_JSON))?;
-    if manifest
-        .as_ref()
-        .is_some_and(|json| check_json_dependencies(json, dependencies))
-    {
-        return Ok(Some(PACKAGE_JSON.to_owned()));
+    if let Some(json) = manifest.as_ref() {
+        record_hits(
+            &mut hits,
+            json_dependency_hits(json, dependencies),
+            PACKAGE_JSON,
+            0,
+        );
     }
 
     // package.json is authoritative, even when it does not parse: lockfiles
@@ -170,28 +214,38 @@ pub fn check_node_ecosystem(
         .any(|deps| !deps.is_empty())
     });
     let unparsable = manifest.is_none() && parsed_cache.is_present(path.join(PACKAGE_JSON))?;
-    if !declares_dependencies && !unparsable {
-        let found = match parsed_cache.get_json_value(path.join(PACKAGE_LOCK_JSON))? {
-            Some(json) => hit(
-                PACKAGE_LOCK_JSON,
-                check_package_lock_dependencies(&json, dependencies),
-            ),
-            None => first_hit(
-                parsed_cache,
-                path,
-                &[
-                    (YARN_LOCK, check_yarn_lock_dependencies),
-                    (PNPM_LOCK_YAML, check_pnpm_lock_dependencies),
-                ],
-                dependencies,
-            )?,
-        };
-        if found.is_some() {
-            return Ok(found);
-        }
+    if declares_dependencies || unparsable {
+        return Ok(hits);
     }
 
-    Ok(None)
+    match parsed_cache.get_json_value(path.join(PACKAGE_LOCK_JSON))? {
+        Some(json) => record_hits(
+            &mut hits,
+            package_lock_dependency_hits(&json, dependencies),
+            PACKAGE_LOCK_JSON,
+            1,
+        ),
+        None => {
+            for (precedence, (file, check)) in [
+                (YARN_LOCK, check_yarn_lock_dependencies as TextCheck),
+                (PNPM_LOCK_YAML, check_pnpm_lock_dependencies),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if let Some(content) = parsed_cache.get_file_content(path.join(file))? {
+                    let found = dependencies
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, dependency)| check(&content, std::slice::from_ref(dependency)))
+                        .map(|(index, _)| index)
+                        .collect();
+                    record_hits(&mut hits, found, file, precedence + 1);
+                }
+            }
+        }
+    }
+    Ok(hits)
 }
 
 pub fn check_php_ecosystem(
@@ -228,11 +282,28 @@ pub fn check_python_ecosystem(
     dependencies: &[String],
     parsed_cache: &ParsedFileCache,
 ) -> Result<Option<String>> {
+    Ok(
+        check_python_ecosystem_batch(path, dependencies, parsed_cache)?
+            .into_values()
+            .min_by_key(|hit| hit.precedence)
+            .map(|hit| hit.file),
+    )
+}
+
+pub fn check_python_ecosystem_batch(
+    path: &Path,
+    dependencies: &[String],
+    parsed_cache: &ParsedFileCache,
+) -> Result<DependencyHits> {
+    let mut hits = HashMap::new();
     let mut pyproject_declares_deps = false;
     if let Some(manifest) = parsed_cache.get_toml_value(path.join(PYPROJECT_TOML))? {
-        if check_pyproject_dependencies(&manifest, dependencies) {
-            return Ok(Some(PYPROJECT_TOML.to_owned()));
-        }
+        record_hits(
+            &mut hits,
+            pyproject_dependency_hits(&manifest, dependencies),
+            PYPROJECT_TOML,
+            0,
+        );
         // A tool-only pyproject (just [tool.ruff]) declares no dependencies
         pyproject_declares_deps = manifest.get("project").is_some()
             || manifest.get("dependency-groups").is_some()
@@ -242,32 +313,37 @@ pub fn check_python_ecosystem(
         pyproject_declares_deps = true;
     }
 
-    let text_manifests: [(&str, TextCheck); 2] = [
-        (REQUIREMENTS_TXT, check_python_text_dependencies),
-        (PIPFILE, check_python_text_dependencies),
-    ];
-    if let Some(file) = first_hit(parsed_cache, path, &text_manifests, dependencies)? {
-        return Ok(Some(file));
+    let mut text_manifest_present = false;
+    for (precedence, file) in [REQUIREMENTS_TXT, PIPFILE].into_iter().enumerate() {
+        if let Some(content) = parsed_cache.get_file_content(path.join(file))? {
+            text_manifest_present = true;
+            record_hits(
+                &mut hits,
+                python_text_dependency_hits(&content, dependencies),
+                file,
+                precedence + 1,
+            );
+        }
     }
 
     // Manifests that declare dependencies are authoritative; poetry.lock
     // lists transitive packages too, so it is only a fallback when none do.
-    // (Presence checks go through the parse cache: no extra syscalls.)
-    for (file, _) in &text_manifests {
-        if parsed_cache.get_file_content(path.join(file))?.is_some() {
-            return Ok(None);
-        }
-    }
-    if pyproject_declares_deps {
-        return Ok(None);
+    if text_manifest_present || pyproject_declares_deps {
+        return Ok(hits);
     }
 
-    first_hit(
-        parsed_cache,
-        path,
-        &[(POETRY_LOCK, check_poetry_lock_dependencies)],
-        dependencies,
-    )
+    if let Some(content) = parsed_cache.get_file_content(path.join(POETRY_LOCK))? {
+        let found = dependencies
+            .iter()
+            .enumerate()
+            .filter(|(_, dependency)| {
+                check_poetry_lock_dependencies(&content, std::slice::from_ref(dependency))
+            })
+            .map(|(index, _)| index)
+            .collect();
+        record_hits(&mut hits, found, POETRY_LOCK, 3);
+    }
+    Ok(hits)
 }
 
 pub fn check_ruby_ecosystem(
@@ -307,28 +383,49 @@ pub fn check_rust_ecosystem(
     dependencies: &[String],
     parsed_cache: &ParsedFileCache,
 ) -> Result<Option<String>> {
-    if let Some(manifest) = parsed_cache.get_toml_value(path.join(CARGO_TOML))? {
-        if check_toml_dependencies(&manifest, dependencies) {
-            return Ok(Some(CARGO_TOML.to_owned()));
-        }
+    Ok(
+        check_rust_ecosystem_batch(path, dependencies, parsed_cache)?
+            .into_values()
+            .min_by_key(|hit| hit.precedence)
+            .map(|hit| hit.file),
+    )
+}
+
+pub fn check_rust_ecosystem_batch(
+    path: &Path,
+    dependencies: &[String],
+    parsed_cache: &ParsedFileCache,
+) -> Result<DependencyHits> {
+    let mut hits = HashMap::new();
+    let manifest = parsed_cache.get_toml_value(path.join(CARGO_TOML))?;
+    if let Some(manifest) = manifest.as_ref() {
+        record_hits(
+            &mut hits,
+            toml_dependency_hits(manifest, dependencies),
+            CARGO_TOML,
+            0,
+        );
         // A manifest that declares dependencies is authoritative: Cargo.lock
         // also lists transitive crates (tonic pulls in axum). A virtual
         // workspace (no [package]) declares none itself — its members do —
         // so the lockfile stays a fallback there.
         if manifest.get("package").is_some() {
-            return Ok(None);
+            return Ok(hits);
         }
     } else if parsed_cache.is_present(path.join(CARGO_TOML))? {
         // present but unparseable: still the authority, not the lockfile
-        return Ok(None);
+        return Ok(hits);
     }
 
-    first_hit(
-        parsed_cache,
-        path,
-        &[(CARGO_LOCK, check_cargo_lock_dependencies)],
-        dependencies,
-    )
+    if let Some(content) = parsed_cache.get_file_content(path.join(CARGO_LOCK))? {
+        record_hits(
+            &mut hits,
+            cargo_lock_dependency_hits(&content, dependencies),
+            CARGO_LOCK,
+            1,
+        );
+    }
+    Ok(hits)
 }
 
 pub fn check_scala_ecosystem(
@@ -379,8 +476,12 @@ mod tests {
             "return { dependencies = { [\"lapis\"] = \"1.0\" } }",
         )?;
 
-        let found =
-            check_lua_ecosystem(dir.path(), &["lapis".to_string()], &ParsedFileCache::new())?;
+        let found = check_lua_ecosystem(
+            dir.path(),
+            &["lapis".to_string()],
+            None,
+            &ParsedFileCache::new(),
+        )?;
         assert_eq!(found, None);
         Ok(())
     }
@@ -398,8 +499,12 @@ mod tests {
             "return { dependencies = { [\"lapis\"] = \"1.0\" } }",
         )?;
 
-        let found =
-            check_lua_ecosystem(dir.path(), &["lapis".to_string()], &ParsedFileCache::new())?;
+        let found = check_lua_ecosystem(
+            dir.path(),
+            &["lapis".to_string()],
+            None,
+            &ParsedFileCache::new(),
+        )?;
         assert_eq!(found.as_deref(), Some("luarocks.lock"));
         Ok(())
     }

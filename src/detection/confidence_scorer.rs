@@ -28,50 +28,70 @@ fn get_pattern_details(
         })
 }
 
+pub(crate) struct IndicatorScorePlan {
+    indicator: Indicator,
+    patterns: Vec<(String, f32, Option<String>)>,
+    max_possible_score: f32,
+}
+
+impl IndicatorScorePlan {
+    pub(crate) fn new(indicator: &Indicator, indicators: &[Arc<Indicator>]) -> Self {
+        // Declared file patterns sharing an alternative_group (e.g. Python's
+        // poetry.lock vs uv.lock) contribute their max, not their sum — the
+        // same rule as for root indicators, and for the same reason: these
+        // patterns are typically ALSO declared as root indicators, so the
+        // denominator inflates unless both sides respect the grouping.
+        let patterns: Vec<(String, f32, Option<String>)> = indicator
+            .files
+            .iter()
+            .map(|pattern| {
+                let (weight, priority, group) = get_pattern_details(pattern, indicator, indicators);
+                (pattern.clone(), weight * priority, group)
+            })
+            .collect();
+        let max_possible_score =
+            sum_with_grouped_max(
+                patterns
+                    .iter()
+                    .map(|(_, importance, group)| (group.as_deref(), *importance)),
+            ) + sum_with_grouped_max(weighted(indicator.root_indicators.iter()));
+        Self {
+            indicator: indicator.clone(),
+            patterns,
+            max_possible_score,
+        }
+    }
+
+    pub(crate) fn score(&self, matched_files: &[MatchedFile]) -> f32 {
+        if matched_files.is_empty() {
+            return 0.0;
+        }
+        let weighted_score = sum_with_grouped_max(self.patterns.iter().filter_map(
+            |(pattern, importance, group)| {
+                let best_match_weight = matched_files
+                    .iter()
+                    .filter(|file| matches_pattern(&file.filename, pattern))
+                    .map(|file| file.weight())
+                    .fold(0.0f32, f32::max);
+                (best_match_weight > 0.0)
+                    .then(|| (group.as_deref(), best_match_weight * importance))
+            },
+        )) + calculate_root_indicator_bonus(&self.indicator, matched_files);
+
+        if self.max_possible_score > 0.0 {
+            (weighted_score / self.max_possible_score).min(1.0)
+        } else {
+            0.0
+        }
+    }
+}
+
 pub fn calculate_indicator_score(
     indicator: &Indicator,
     matched_files: &[MatchedFile],
     indicators: &[Arc<Indicator>],
 ) -> f32 {
-    if matched_files.is_empty() {
-        return 0.0;
-    }
-
-    // Declared file patterns sharing an alternative_group (e.g. Python's
-    // poetry.lock vs uv.lock) contribute their max, not their sum — the
-    // same rule as for root indicators, and for the same reason: these
-    // patterns are typically ALSO declared as root indicators, so the
-    // denominator inflates unless both sides respect the grouping.
-    let patterns: Vec<(&String, f32, Option<String>)> = indicator
-        .files
-        .iter()
-        .map(|pattern| {
-            let (weight, priority, group) = get_pattern_details(pattern, indicator, indicators);
-            (pattern, weight * priority, group)
-        })
-        .collect();
-
-    let max_possible_score = sum_with_grouped_max(
-        patterns
-            .iter()
-            .map(|(_, importance, group)| (group.as_deref(), *importance)),
-    ) + sum_with_grouped_max(weighted(indicator.root_indicators.iter()));
-
-    let weighted_score =
-        sum_with_grouped_max(patterns.iter().filter_map(|(pattern, importance, group)| {
-            let best_match_weight = matched_files
-                .iter()
-                .filter(|file| matches_pattern(&file.filename, pattern))
-                .map(|file| file.weight())
-                .fold(0.0f32, f32::max);
-            (best_match_weight > 0.0).then(|| (group.as_deref(), best_match_weight * importance))
-        })) + calculate_root_indicator_bonus(indicator, matched_files);
-
-    if max_possible_score > 0.0 {
-        (weighted_score / max_possible_score).min(1.0)
-    } else {
-        0.0
-    }
+    IndicatorScorePlan::new(indicator, indicators).score(matched_files)
 }
 
 /// Same grouping rule as the denominator (see `calculate_indicator_score`):

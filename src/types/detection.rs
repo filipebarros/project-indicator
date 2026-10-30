@@ -158,6 +158,17 @@ impl DetectionEvidence {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CachedRepositoryDirectory {
+    /// Directory path relative to the repository root
+    pub path: std::path::PathBuf,
+    /// Whether a project above this directory suppressed source-only detection
+    pub has_project_ancestor: bool,
+    pub files_matched: usize,
+    /// Whether a project was found at this directory
+    pub has_project: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DetectionResult {
     pub indicator: Option<Arc<Indicator>>,
     pub frameworks: Vec<FrameworkMatch>,
@@ -165,6 +176,9 @@ pub struct DetectionResult {
     pub evidence: DetectionEvidence,
     /// Projects discovered within a repository or a bounded non-VCS container
     pub nested: Vec<NestedProject>,
+    /// Per-directory inputs available for incremental repository detection
+    #[serde(skip)]
+    pub repository_directories: Vec<CachedRepositoryDirectory>,
 }
 
 /// The framework that stands for a project: lowest priority number, then
@@ -232,6 +246,7 @@ impl DetectionResult {
             confidence,
             evidence: DetectionEvidence::default(),
             nested: Vec::new(),
+            repository_directories: Vec::new(),
         }
     }
 
@@ -247,6 +262,7 @@ impl DetectionResult {
             confidence,
             evidence,
             nested: Vec::new(),
+            repository_directories: Vec::new(),
         }
     }
 

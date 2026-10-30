@@ -1,16 +1,19 @@
+use crate::cache::RepositoryCacheUpdate;
 use crate::detection::caches::ParsedFileCache;
 use crate::detection::directory::DirectoryListing;
 use crate::detection::engine::{merge_child_evidence, DetectionEngine};
-use crate::detection::pattern_processor::normalized_relative;
+use crate::detection::pattern_processor::{join_components, normalized_relative};
 use crate::detection::root_indicators::VCS_MARKERS;
-use crate::detection::scanner::traverser::root_ignore_files_are_safe;
+use crate::detection::scanner::traverser::{
+    listing_ignore_files_are_safe, root_ignore_files_are_safe,
+};
 use crate::performance::FileSystemCache;
-use crate::types::{DetectionEvidence, DetectionResult, DirectoryType, NestedProject};
-use ignore::WalkBuilder;
-use std::collections::HashSet;
+use crate::types::{
+    CachedRepositoryDirectory, DetectionEvidence, DetectionResult, DirectoryType, NestedProject,
+};
+use ignore::{IncrementalIgnore, WalkBuilder};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Windows system directories, matched case-insensitively with any verbatim
@@ -75,7 +78,82 @@ pub(crate) fn find_vcs_root_with_home(start: &Path, home: Option<&Path>) -> Opti
 
 const REPOSITORY_SCAN_TIMEOUT: Duration = Duration::from_secs(5);
 
-struct RepositoryScan<'a> {
+struct RepositoryReuse<'a> {
+    directories: HashMap<&'a Path, &'a CachedRepositoryDirectory>,
+    projects: HashMap<&'a str, &'a NestedProject>,
+    changed_directories: HashSet<PathBuf>,
+    changed_file_ancestors: HashSet<PathBuf>,
+    changed_directory_ancestors: HashSet<PathBuf>,
+}
+
+impl<'a> RepositoryReuse<'a> {
+    fn new(update: &'a RepositoryCacheUpdate, repository_root: &Path) -> Self {
+        let relative = |path: &PathBuf| {
+            path.strip_prefix(repository_root)
+                .unwrap_or(path)
+                .to_path_buf()
+        };
+        let changed_directories: HashSet<PathBuf> =
+            update.changed_directories.iter().map(relative).collect();
+        let mut changed_file_ancestors = HashSet::new();
+        for path in &update.changed_files {
+            for ancestor in relative(path).ancestors() {
+                changed_file_ancestors.insert(ancestor.to_path_buf());
+            }
+        }
+        let mut changed_directory_ancestors = HashSet::new();
+        for path in &changed_directories {
+            for ancestor in path.ancestors() {
+                changed_directory_ancestors.insert(ancestor.to_path_buf());
+            }
+        }
+        Self {
+            directories: update
+                .directories
+                .iter()
+                .map(|record| (record.path.as_path(), record))
+                .collect(),
+            projects: update
+                .projects
+                .iter()
+                .map(|project| (project.name.as_str(), project))
+                .collect(),
+            changed_directories,
+            changed_file_ancestors,
+            changed_directory_ancestors,
+        }
+    }
+
+    fn get(
+        &self,
+        directory: &Path,
+        has_project_ancestor: bool,
+    ) -> Option<&CachedRepositoryDirectory> {
+        if self.changed_file_ancestors.contains(directory)
+            || self.changed_directory_ancestors.contains(directory)
+            || directory
+                .ancestors()
+                .any(|ancestor| self.changed_directories.contains(ancestor))
+        {
+            return None;
+        }
+        self.directories.get(directory).copied().filter(|record| {
+            record.has_project_ancestor == has_project_ancestor
+                && (!record.has_project || self.project(directory).is_some())
+        })
+    }
+
+    fn project(&self, directory: &Path) -> Option<&NestedProject> {
+        let name = if directory.as_os_str().is_empty() {
+            ".".to_string()
+        } else {
+            join_components(directory)?
+        };
+        self.projects.get(name.as_str()).copied()
+    }
+}
+
+struct RepositoryScan<'a, 'b> {
     engine: &'a DetectionEngine,
     repository_root: &'a Path,
     started: Instant,
@@ -83,13 +161,27 @@ struct RepositoryScan<'a> {
     file_cache: FileSystemCache,
     parsed_cache: ParsedFileCache,
     files_matched: usize,
+    reuse: Option<RepositoryReuse<'b>>,
+    reused_directories: usize,
+    reused_paths: HashSet<PathBuf>,
 }
 
-impl<'a> RepositoryScan<'a> {
+impl<'a, 'b> RepositoryScan<'a, 'b> {
+    #[cfg(test)]
     fn new(engine: &'a DetectionEngine, repository_root: &'a Path, started: Instant) -> Self {
+        Self::with_reuse(engine, repository_root, started, None)
+    }
+
+    fn with_reuse(
+        engine: &'a DetectionEngine,
+        repository_root: &'a Path,
+        started: Instant,
+        update: Option<&'b RepositoryCacheUpdate>,
+    ) -> Self {
         let evidence = DetectionEvidence {
             repository: true,
             scan_root: Some(repository_root.to_path_buf()),
+            read_files: update.map_or_else(Vec::new, |update| update.read_files.clone()),
             ..DetectionEvidence::default()
         };
         Self {
@@ -100,20 +192,55 @@ impl<'a> RepositoryScan<'a> {
             file_cache: FileSystemCache::default(),
             parsed_cache: ParsedFileCache::new(),
             files_matched: 0,
+            reuse: update.map(|update| RepositoryReuse::new(update, repository_root)),
+            reused_directories: 0,
+            reused_paths: HashSet::new(),
         }
     }
 
-    fn scan_directory(&mut self, directory: &Path, has_project_ancestor: bool) -> bool {
+    fn scan_directory(
+        &mut self,
+        directory: &Path,
+        has_project_ancestor: bool,
+        listing: &DirectoryListing,
+    ) -> bool {
         self.result
             .evidence
             .watched_dirs
             .push(directory.to_string_lossy().into_owned());
-        let listing = DirectoryListing::read(directory);
+        let relative = directory
+            .strip_prefix(self.repository_root)
+            .unwrap_or(directory)
+            .to_path_buf();
+        if let Some(record) = self
+            .reuse
+            .as_ref()
+            .and_then(|reuse| reuse.get(&relative, has_project_ancestor))
+            .cloned()
+        {
+            self.files_matched += record.files_matched;
+            self.reused_directories += 1;
+            self.reused_paths.insert(relative.clone());
+            if record.has_project {
+                if let Some(project) = self
+                    .reuse
+                    .as_ref()
+                    .and_then(|reuse| reuse.project(&relative))
+                {
+                    self.result.nested.push(project.clone());
+                }
+            }
+            let has_project = record.has_project_ancestor || record.has_project;
+            self.result.repository_directories.push(record);
+            return has_project;
+        }
+
         let scan = self
             .engine
             .scanning_engine
-            .scan_with_listing(directory, &listing);
-        self.files_matched += scan.matches.len();
+            .scan_with_listing(directory, listing);
+        let files_matched = scan.matches.len();
+        self.files_matched += files_matched;
         self.result.evidence.scan_truncated |= scan.truncated;
         self.result.evidence.read_failed |= scan.unreadable;
         self.result.evidence.watched_dirs.extend(
@@ -122,19 +249,20 @@ impl<'a> RepositoryScan<'a> {
                 .map(|watched| directory.join(watched).to_string_lossy().into_owned()),
         );
 
-        let mut has_project = has_project_ancestor;
+        let mut project = None;
         if !scan.matches.is_empty() {
             let markers = self.engine.root_indicator_engine.qualifying_markers_in(
                 directory,
-                &listing,
+                listing,
                 &self.file_cache,
                 &self.parsed_cache,
             );
-            if !has_project || !markers.is_empty() {
+            if !has_project_ancestor || !markers.is_empty() {
                 let found = self.engine.detect_one_with_scan(
                     directory,
                     markers,
                     scan,
+                    listing,
                     &self.file_cache,
                     &self.parsed_cache,
                 );
@@ -143,21 +271,53 @@ impl<'a> RepositoryScan<'a> {
                     let name = normalized_relative(directory, self.repository_root)
                         .filter(|name| !name.is_empty())
                         .unwrap_or_else(|| ".".to_string());
-                    self.result.nested.push(NestedProject {
+                    project = Some(NestedProject {
                         name,
                         indicator,
                         frameworks: found.frameworks,
                     });
-                    has_project = true;
                 }
             }
         }
+        if let Some(project) = &project {
+            self.result.nested.push(project.clone());
+        }
+        let has_project = has_project_ancestor || project.is_some();
+        self.result
+            .repository_directories
+            .push(CachedRepositoryDirectory {
+                path: relative,
+                has_project_ancestor,
+                files_matched,
+                has_project: project.is_some(),
+            });
         has_project
+    }
+
+    fn retain_reused_read_files(&mut self) {
+        let Some(reuse) = self.reuse.as_ref() else {
+            return;
+        };
+        self.result.evidence.read_files.retain(|file| {
+            let path = Path::new(file);
+            let Ok(relative) = path.strip_prefix(self.repository_root) else {
+                return true;
+            };
+            let mut directory = relative.parent();
+            while let Some(candidate) = directory {
+                if reuse.directories.contains_key(candidate) {
+                    return self.reused_paths.contains(candidate);
+                }
+                directory = candidate.parent();
+            }
+            false
+        });
     }
 
     fn finish(mut self) -> DetectionResult {
         // Children share these caches; collect their evidence once here, not
         // into every child result.
+        self.retain_reused_read_files();
         self.result.evidence.read_failed |=
             self.parsed_cache.read_failed() || self.file_cache.read_failed();
         self.result.evidence.watched_dirs.extend(
@@ -188,6 +348,13 @@ impl<'a> RepositoryScan<'a> {
                 .cmp(&depth(&b.name))
                 .then_with(|| a.name.cmp(&b.name))
         });
+        self.result
+            .repository_directories
+            .sort_by(|a, b| a.path.cmp(&b.path));
+        log::debug!(
+            "Repository scan reused {} directories",
+            self.reused_directories
+        );
         self.result.evidence.set_scan_metrics(
             self.files_matched,
             self.started.elapsed().as_millis() as u64,
@@ -205,6 +372,28 @@ pub(crate) fn detect_repository_with_timeout(
     repository_root: &Path,
     timeout: Duration,
 ) -> DetectionResult {
+    detect_repository_inner(engine, repository_root, timeout, None)
+}
+
+pub fn detect_repository_incremental(
+    engine: &DetectionEngine,
+    repository_root: &Path,
+    update: &RepositoryCacheUpdate,
+) -> DetectionResult {
+    detect_repository_inner(
+        engine,
+        repository_root,
+        REPOSITORY_SCAN_TIMEOUT,
+        Some(update),
+    )
+}
+
+fn detect_repository_inner(
+    engine: &DetectionEngine,
+    repository_root: &Path,
+    timeout: Duration,
+    update: Option<&RepositoryCacheUpdate>,
+) -> DetectionResult {
     let repository_root = repository_root
         .canonicalize()
         .unwrap_or_else(|_| repository_root.to_path_buf());
@@ -212,12 +401,12 @@ pub(crate) fn detect_repository_with_timeout(
     let deadline = started + timeout;
     if root_ignore_files_are_safe(&repository_root) {
         if let Some(result) =
-            detect_repository_walk(engine, &repository_root, started, deadline, true)
+            detect_repository_walk(engine, &repository_root, started, deadline, true, update)
         {
             return result;
         }
     }
-    match detect_repository_walk(engine, &repository_root, started, deadline, false) {
+    match detect_repository_walk(engine, &repository_root, started, deadline, false, update) {
         Some(result) => result,
         None => unreachable!("an unfiltered walk cannot encounter unsafe ignore files"),
     }
@@ -229,71 +418,72 @@ fn detect_repository_walk(
     started: Instant,
     deadline: Instant,
     respect_ignores: bool,
+    update: Option<&RepositoryCacheUpdate>,
 ) -> Option<DetectionResult> {
-    let unsafe_ignore = Arc::new(AtomicBool::new(false));
-    let unsafe_in_filter = unsafe_ignore.clone();
-    let mut builder = WalkBuilder::new(repository_root);
-    builder
-        .standard_filters(true)
-        .git_ignore(respect_ignores)
-        .ignore(respect_ignores)
-        .git_exclude(respect_ignores)
-        .parents(false)
-        .git_global(false)
-        .require_git(false)
-        .hidden(false)
-        .sort_by_file_name(|a, b| a.cmp(b))
-        .filter_entry(move |entry| {
-            if entry.depth() == 0 {
-                return true;
-            }
-            if !entry.file_type().is_some_and(|kind| kind.is_dir()) {
-                return false;
-            }
-            let Some(name) = entry.file_name().to_str() else {
-                return false;
-            };
-            if name.starts_with('.') || DirectoryType::classify(name) == DirectoryType::Noise {
-                return false;
-            }
-            if respect_ignores && !root_ignore_files_are_safe(entry.path()) {
-                unsafe_in_filter.store(true, Ordering::Relaxed);
-                return false;
-            }
-            true
-        });
+    let mut ignores: Option<IncrementalIgnore> = if respect_ignores {
+        let mut builder = WalkBuilder::new(repository_root);
+        builder
+            .standard_filters(true)
+            .git_ignore(true)
+            .ignore(true)
+            .git_exclude(true)
+            .parents(false)
+            .git_global(false)
+            .require_git(false)
+            .hidden(false);
+        builder.build_matchers().into_iter().next()
+    } else {
+        None
+    };
 
-    let mut scan = RepositoryScan::new(engine, repository_root, started);
-    let mut project_roots = HashSet::new();
-    for entry in builder.build() {
-        if unsafe_ignore.load(Ordering::Relaxed) {
-            return None;
-        }
+    let mut scan = RepositoryScan::with_reuse(engine, repository_root, started, update);
+    let mut queue = VecDeque::from([(
+        repository_root.to_path_buf(),
+        false,
+        DirectoryListing::read(repository_root),
+    )]);
+    'walk: while let Some((directory, has_project_ancestor, listing)) = queue.pop_front() {
         if Instant::now() >= deadline {
             scan.result.evidence.scan_truncated = true;
             break;
         }
-        match entry {
-            Ok(entry) => {
-                let directory = entry.into_path();
-                let has_project_ancestor = directory
-                    .ancestors()
-                    .skip(1)
-                    .take_while(|ancestor| ancestor.starts_with(repository_root))
-                    .any(|ancestor| project_roots.contains(ancestor));
-                let has_project = scan.scan_directory(&directory, has_project_ancestor);
-                if has_project && !has_project_ancestor {
-                    project_roots.insert(directory);
+        if respect_ignores && !listing_ignore_files_are_safe(&directory, &listing) {
+            return None;
+        }
+        let has_project = scan.scan_directory(&directory, has_project_ancestor, &listing);
+
+        for entry in listing.entries() {
+            if Instant::now() >= deadline {
+                scan.result.evidence.scan_truncated = true;
+                break 'walk;
+            }
+            if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                continue;
+            };
+            if name.starts_with('.') || DirectoryType::classify(name) == DirectoryType::Noise {
+                continue;
+            }
+
+            let child = entry.path();
+            let child_listing = DirectoryListing::read(&child);
+            if respect_ignores {
+                if !listing_ignore_files_are_safe(&child, &child_listing) {
+                    return None;
+                }
+                let relative = child.strip_prefix(repository_root).unwrap_or(&child);
+                if ignores
+                    .as_mut()
+                    .is_some_and(|matcher| matcher.matched(relative, true).is_ignore())
+                {
+                    continue;
                 }
             }
-            Err(error) => {
-                log::debug!("Repository walk skipped an unreadable entry: {error}");
-                scan.result.evidence.read_failed = true;
-            }
+            queue.push_back((child, has_project, child_listing));
         }
-    }
-    if unsafe_ignore.load(Ordering::Relaxed) {
-        return None;
     }
     Some(scan.finish())
 }
@@ -415,8 +605,9 @@ mod tests {
             let engine = engine();
             let mut scan = RepositoryScan::new(&engine, dir.path(), Instant::now());
 
-            scan.scan_directory(dir.path(), false);
-            scan.scan_directory(&dir.path().join("child"), false);
+            scan.scan_directory(dir.path(), false, &DirectoryListing::read(dir.path()));
+            let child = dir.path().join("child");
+            scan.scan_directory(&child, false, &DirectoryListing::read(&child));
 
             assert!(scan.result.evidence.read_files.is_empty());
             let result = scan.finish();
@@ -641,6 +832,143 @@ mod tests {
             let result = detect_repository(&engine(), dir.path());
 
             assert!(result.nested.is_empty());
+            Ok(())
+        }
+
+        fn cache_update(
+            previous: &DetectionResult,
+            changed_directories: &[&str],
+            changed_files: &[&str],
+        ) -> RepositoryCacheUpdate {
+            RepositoryCacheUpdate {
+                directories: previous.repository_directories.clone(),
+                projects: previous.nested.clone(),
+                changed_directories: changed_directories.iter().map(PathBuf::from).collect(),
+                changed_files: changed_files.iter().map(PathBuf::from).collect(),
+                read_files: previous.evidence.read_files.clone(),
+            }
+        }
+
+        #[test]
+        fn test_incremental_manifest_edit_reuses_unrelated_sibling() -> TestResult {
+            let dir = TempDir::new()?;
+            write(
+                dir.path(),
+                &[
+                    (".git/HEAD", ""),
+                    (
+                        "apps/web/package.json",
+                        r#"{"dependencies":{"react":"18"}}"#,
+                    ),
+                    ("apps/api/package.json", r#"{"dependencies":{"vue":"3"}}"#),
+                ],
+            )?;
+            let engine = engine();
+            let initial = detect_repository(&engine, dir.path());
+            write(
+                dir.path(),
+                &[(
+                    "apps/web/package.json",
+                    r#"{"dependencies":{"svelte":"4"}}"#,
+                )],
+            )?;
+
+            let changed = dir.path().join("apps/web/package.json").canonicalize()?;
+            let changed = changed.to_str().ok_or("UTF-8 test path")?;
+            let update = cache_update(&initial, &[], &[changed]);
+            let reuse = RepositoryReuse::new(&update, &dir.path().canonicalize()?);
+            assert!(reuse.get(Path::new("apps/web"), false).is_none());
+            assert!(reuse.get(Path::new("apps/api"), false).is_some());
+
+            let incremental = detect_repository_incremental(&engine, dir.path(), &update);
+            let full = detect_repository(&engine, dir.path());
+
+            assert_eq!(incremental.nested, full.nested);
+            assert_eq!(
+                incremental.repository_directories,
+                full.repository_directories
+            );
+            assert_eq!(
+                incremental.evidence.files_matched,
+                full.evidence.files_matched
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn test_incremental_source_directory_invalidates_ancestors_and_descendants() -> TestResult {
+            let dir = TempDir::new()?;
+            write(
+                dir.path(),
+                &[
+                    (".git/HEAD", ""),
+                    ("src/main/java/com/acme/.keep", ""),
+                    ("sibling/package.json", r#"{"dependencies":{"react":"18"}}"#),
+                ],
+            )?;
+            let engine = engine();
+            let initial = detect_repository(&engine, dir.path());
+            write(
+                dir.path(),
+                &[("src/main/java/com/acme/Main.java", "class Main {}")],
+            )?;
+
+            let update = cache_update(&initial, &["src"], &[]);
+            let reuse = RepositoryReuse::new(&update, dir.path());
+            assert!(reuse.get(Path::new(""), false).is_none());
+            assert!(reuse
+                .get(Path::new("src/main/java/com/acme"), false)
+                .is_none());
+            assert!(reuse.get(Path::new("sibling"), true).is_some());
+
+            let incremental = detect_repository_incremental(&engine, dir.path(), &update);
+            let full = detect_repository(&engine, dir.path());
+
+            assert_eq!(incremental.nested, full.nested);
+            assert_eq!(
+                incremental.repository_directories,
+                full.repository_directories
+            );
+            assert_eq!(
+                incremental.evidence.files_matched,
+                full.evidence.files_matched
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn test_incremental_prunes_dependencies_of_removed_projects() -> TestResult {
+            let dir = TempDir::new()?;
+            write(
+                dir.path(),
+                &[
+                    (".git/HEAD", ""),
+                    (
+                        "apps/web/package.json",
+                        r#"{"dependencies":{"react":"18"}}"#,
+                    ),
+                    ("apps/api/package.json", r#"{"dependencies":{"vue":"3"}}"#),
+                ],
+            )?;
+            let engine = engine();
+            let initial = detect_repository(&engine, dir.path());
+            std::fs::remove_file(dir.path().join("apps/web/package.json"))?;
+
+            let update = cache_update(&initial, &["apps/web"], &[]);
+            let incremental = detect_repository_incremental(&engine, dir.path(), &update);
+            let full = detect_repository(&engine, dir.path());
+
+            assert_eq!(incremental.nested, full.nested);
+            assert!(!incremental
+                .evidence
+                .read_files
+                .iter()
+                .any(|path| path.ends_with("apps/web/package.json")));
+            assert!(incremental
+                .evidence
+                .read_files
+                .iter()
+                .any(|path| path.ends_with("apps/api/package.json")));
             Ok(())
         }
 

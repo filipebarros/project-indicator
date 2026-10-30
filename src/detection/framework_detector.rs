@@ -1,4 +1,5 @@
 use crate::detection::caches::ParsedFileCache;
+use crate::detection::directory::DirectoryListing;
 use crate::detection::matchers::dependency_matcher;
 use crate::detection::pattern_processor::join_components;
 use crate::performance::FileSystemCache;
@@ -11,15 +12,50 @@ use std::path::Path;
 /// Confidence of a framework detected only by the presence of its files
 const FILE_EXISTS_CONFIDENCE: f32 = 0.8;
 
-pub fn detect_frameworks(
+pub(crate) struct FrameworkPlan {
+    dependency: Vec<usize>,
+    files: Vec<usize>,
+}
+
+impl FrameworkPlan {
+    pub(crate) fn new(indicator: &Indicator, catalog: &[Framework]) -> Self {
+        let (mut dependency, mut files) = (Vec::new(), Vec::new());
+        for (index, framework) in catalog.iter().enumerate().filter(|(_, framework)| {
+            framework
+                .ecosystems
+                .iter()
+                .any(|ecosystem| indicator.ecosystems.contains(ecosystem))
+        }) {
+            if matches!(framework.detection, DetectionType::Dependencies(..)) {
+                dependency.push(index);
+            } else {
+                files.push(index);
+            }
+        }
+        Self { dependency, files }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn detect_frameworks(
     path: &Path,
     indicator: &Indicator,
+    plan: &FrameworkPlan,
     catalog: &[Framework],
+    listing: Option<&DirectoryListing>,
     evidence: &mut DetectionEvidence,
     file_cache: &FileSystemCache,
     parsed_cache: &ParsedFileCache,
 ) -> Vec<FrameworkMatch> {
-    let (frameworks, watched) = detect(path, indicator, catalog, file_cache, parsed_cache);
+    let (frameworks, watched) = detect(
+        path,
+        indicator,
+        plan,
+        catalog,
+        listing,
+        file_cache,
+        parsed_cache,
+    );
     evidence.watched_dirs.extend(watched);
     evidence.watched_dirs.sort();
     evidence.watched_dirs.dedup();
@@ -45,28 +81,22 @@ pub fn detect_frameworks(
 fn detect(
     path: &Path,
     indicator: &Indicator,
+    plan: &FrameworkPlan,
     catalog: &[Framework],
+    listing: Option<&DirectoryListing>,
     file_cache: &FileSystemCache,
     parsed_cache: &ParsedFileCache,
 ) -> (Vec<FrameworkMatch>, Vec<String>) {
-    let (dependency_frameworks, file_frameworks): (Vec<&Framework>, Vec<&Framework>) = catalog
-        .iter()
-        .filter(|f| {
-            f.ecosystems
-                .iter()
-                .any(|e| indicator.ecosystems.contains(e))
-        })
-        .partition(|f| matches!(f.detection, DetectionType::Dependencies(..)));
-
     let mut matches = dependency_matcher::detect_frameworks(
         path,
-        dependency_frameworks,
+        plan.dependency.iter().map(|index| &catalog[*index]),
         &indicator.ecosystems,
+        listing,
         parsed_cache,
     );
 
     let mut watched = Vec::new();
-    for framework in file_frameworks {
+    for framework in plan.files.iter().map(|index| &catalog[*index]) {
         if let DetectionType::FileExists(files) = &framework.detection {
             watched.extend(
                 files
@@ -75,7 +105,10 @@ fn detect(
             );
             let present: Vec<String> = files
                 .iter()
-                .filter(|file| file_cache.exists(&path.join(file)))
+                .filter(|file| {
+                    direct_listing_presence(listing, file)
+                        .unwrap_or_else(|| file_cache.exists(&path.join(file)))
+                })
                 .cloned()
                 .collect();
             if !present.is_empty() {
@@ -89,6 +122,20 @@ fn detect(
     }
 
     (resolve_framework_matches(matches), watched)
+}
+
+fn direct_listing_presence(listing: Option<&DirectoryListing>, file: &str) -> Option<bool> {
+    if file.contains('/') {
+        return None;
+    }
+    let Some(entry) = listing?.entries().find(|entry| entry.file_name() == file) else {
+        return Some(false);
+    };
+    entry
+        .file_type()
+        .ok()
+        .filter(|kind| !kind.is_symlink())
+        .map(|_| true)
 }
 
 /// The deepest existing directory above `relative` (below `root`), `/`-joined;
@@ -154,10 +201,13 @@ mod tests {
     }
 
     fn detect(dir: &TempDir, indicator: &Indicator, catalog: &[Framework]) -> Vec<FrameworkMatch> {
+        let plan = FrameworkPlan::new(indicator, catalog);
         super::detect(
             dir.path(),
             indicator,
+            &plan,
             catalog,
+            None,
             &FileSystemCache::default(),
             &ParsedFileCache::new(),
         )

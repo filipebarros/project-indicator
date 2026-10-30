@@ -1,64 +1,129 @@
 use super::ecosystems::*;
 use crate::detection::caches::ParsedFileCache;
+use crate::detection::directory::DirectoryListing;
 use crate::types::{DetectionType, Ecosystem, Framework, FrameworkMatch};
 use crate::Result;
 use std::path::Path;
 
-pub fn detect_frameworks<'a>(
+struct EcosystemBatch {
+    dependencies: Vec<String>,
+    framework_dependencies: std::collections::HashMap<usize, Vec<usize>>,
+    hits: Option<Result<DependencyHits>>,
+}
+
+impl EcosystemBatch {
+    fn new() -> Self {
+        Self {
+            dependencies: Vec::new(),
+            framework_dependencies: std::collections::HashMap::new(),
+            hits: None,
+        }
+    }
+}
+
+fn is_batched(ecosystem: Ecosystem) -> bool {
+    matches!(
+        ecosystem,
+        Ecosystem::Npm | Ecosystem::Pypi | Ecosystem::Cargo
+    )
+}
+
+pub(crate) fn detect_frameworks<'a>(
     path: &Path,
     frameworks: impl IntoIterator<Item = &'a Framework>,
     active_ecosystems: &[Ecosystem],
+    listing: Option<&DirectoryListing>,
     parsed_cache: &ParsedFileCache,
 ) -> Vec<FrameworkMatch> {
-    frameworks
-        .into_iter()
-        .filter_map(|framework| {
-            try_detect_framework(path, framework, active_ecosystems, parsed_cache).unwrap_or_else(
-                |e| {
-                    // An unreadable manifest must not break the prompt
-                    log::debug!("{}: skipped ({e:#})", framework.name);
-                    None
-                },
-            )
-        })
-        .collect()
-}
-
-/// Run the matcher for each of the framework's ecosystems that is also
-/// active for the detected indicator, until one produces a hit.
-fn try_detect_framework(
-    path: &Path,
-    framework: &Framework,
-    active_ecosystems: &[Ecosystem],
-    parsed_cache: &ParsedFileCache,
-) -> Result<Option<FrameworkMatch>> {
-    let DetectionType::Dependencies(dependencies) = &framework.detection else {
-        return Ok(None);
-    };
-
-    for ecosystem in &framework.ecosystems {
-        if !active_ecosystems.contains(ecosystem) {
+    let frameworks: Vec<&Framework> = frameworks.into_iter().collect();
+    let mut batches: std::collections::HashMap<Ecosystem, EcosystemBatch> =
+        std::collections::HashMap::new();
+    for (framework_index, framework) in frameworks.iter().enumerate() {
+        let DetectionType::Dependencies(dependencies) = &framework.detection else {
             continue;
-        }
-
-        if let Some(file) = check_ecosystem(*ecosystem, path, dependencies, parsed_cache)? {
-            // The dependency list is a set of alternatives (react OR
-            // react-dom), so any hit is a full match
-            return Ok(Some(FrameworkMatch::new(
-                framework.clone(),
-                1.0,
-                vec![file],
-            )));
+        };
+        for ecosystem in &framework.ecosystems {
+            if !active_ecosystems.contains(ecosystem) || !is_batched(*ecosystem) {
+                continue;
+            }
+            let batch = batches
+                .entry(*ecosystem)
+                .or_insert_with(EcosystemBatch::new);
+            let indices = batch
+                .framework_dependencies
+                .entry(framework_index)
+                .or_default();
+            for dependency in dependencies {
+                indices.push(batch.dependencies.len());
+                batch.dependencies.push(dependency.clone());
+            }
         }
     }
 
-    Ok(None)
+    frameworks
+        .iter()
+        .enumerate()
+        .filter_map(|(framework_index, framework)| {
+            let DetectionType::Dependencies(dependencies) = &framework.detection else {
+                return None;
+            };
+            'detection: for ecosystem in &framework.ecosystems {
+                if !active_ecosystems.contains(ecosystem) {
+                    continue;
+                }
+                let found = if is_batched(*ecosystem) {
+                    let Some(batch) = batches.get_mut(ecosystem) else {
+                        continue;
+                    };
+                    let result = batch.hits.get_or_insert_with(|| match ecosystem {
+                        Ecosystem::Npm => {
+                            check_node_ecosystem_batch(path, &batch.dependencies, parsed_cache)
+                        }
+                        Ecosystem::Pypi => {
+                            check_python_ecosystem_batch(path, &batch.dependencies, parsed_cache)
+                        }
+                        Ecosystem::Cargo => {
+                            check_rust_ecosystem_batch(path, &batch.dependencies, parsed_cache)
+                        }
+                        _ => unreachable!("only batched ecosystems have a batch"),
+                    });
+                    match result {
+                        Ok(hits) => batch.framework_dependencies[&framework_index]
+                            .iter()
+                            .filter_map(|index| hits.get(index))
+                            .min_by_key(|hit| hit.precedence)
+                            .map(|hit| hit.file.clone()),
+                        Err(e) => {
+                            // An unreadable manifest must not break the prompt
+                            log::debug!("{}: skipped ({e:#})", framework.name);
+                            break 'detection;
+                        }
+                    }
+                } else {
+                    match check_ecosystem(*ecosystem, path, dependencies, listing, parsed_cache) {
+                        Ok(found) => found,
+                        Err(e) => {
+                            log::debug!("{}: skipped ({e:#})", framework.name);
+                            break 'detection;
+                        }
+                    }
+                };
+                if let Some(file) = found {
+                    // The dependency list is a set of alternatives, so any hit
+                    // is a full match.
+                    return Some(FrameworkMatch::new((*framework).clone(), 1.0, vec![file]));
+                }
+            }
+            None
+        })
+        .collect()
 }
 
 fn check_ecosystem(
     ecosystem: Ecosystem,
     path: &Path,
     dependencies: &[String],
+    listing: Option<&DirectoryListing>,
     parsed_cache: &ParsedFileCache,
 ) -> Result<Option<String>> {
     match ecosystem {
@@ -73,11 +138,11 @@ fn check_ecosystem(
         Ecosystem::Maven | Ecosystem::Gradle => {
             check_java_ecosystem(path, dependencies, parsed_cache)
         }
-        Ecosystem::Nuget => check_dotnet_ecosystem(path, dependencies, parsed_cache),
+        Ecosystem::Nuget => check_dotnet_ecosystem(path, dependencies, listing, parsed_cache),
         Ecosystem::Sbt => check_scala_ecosystem(path, dependencies, parsed_cache),
         Ecosystem::Pub => check_dart_ecosystem(path, dependencies, parsed_cache),
         Ecosystem::Hex => check_elixir_ecosystem(path, dependencies, parsed_cache),
-        Ecosystem::Luarocks => check_lua_ecosystem(path, dependencies, parsed_cache),
+        Ecosystem::Luarocks => check_lua_ecosystem(path, dependencies, listing, parsed_cache),
         Ecosystem::Swiftpm => check_swift_ecosystem(path, dependencies, parsed_cache),
     }
 }
@@ -134,6 +199,7 @@ mod tests {
             dir.path(),
             frameworks,
             active,
+            None,
             &ParsedFileCache::new(),
         ))
     }

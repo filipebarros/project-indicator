@@ -513,6 +513,37 @@ fn benchmark_framework_count_scaling(c: &mut Criterion) -> Result<(), Box<dyn st
     Ok(())
 }
 
+fn benchmark_dependency_batching(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
+    let project = TempDir::new()?;
+    let dependencies = (0..500)
+        .map(|index| format!(r#""unrelated-package-{index}":"1""#))
+        .chain([
+            r#""react":"18""#.to_string(),
+            r#""next":"13""#.to_string(),
+            r#""express":"4""#.to_string(),
+            r#""vue":"3""#.to_string(),
+            r#""svelte":"4""#.to_string(),
+        ])
+        .collect::<Vec<_>>()
+        .join(",");
+    fs::write(
+        project.path().join("package.json"),
+        format!(r#"{{"dependencies":{{{dependencies}}}}}"#),
+    )?;
+    fs::write(project.path().join("index.js"), "")?;
+    let config = built_in_config();
+    let engine = DetectionEngine::new(config.indicators, config.frameworks);
+
+    c.bench_function("dependency_batching/node_many_dependencies", |b| {
+        b.iter(|| {
+            if let Err(error) = engine.detect(black_box(project.path())) {
+                eprintln!("Detection failed: {error}");
+            }
+        });
+    });
+    Ok(())
+}
+
 fn setup_repository(
     temp_dir: &TempDir,
     candidate_dirs: usize,
@@ -570,6 +601,88 @@ fn benchmark_dense_node_repository(c: &mut Criterion) -> Result<(), Box<dyn std:
                 }
             });
         });
+    }
+
+    group.finish();
+    Ok(())
+}
+
+fn benchmark_incremental_repository(c: &mut Criterion) -> Result<(), Box<dyn std::error::Error>> {
+    let mut group = c.benchmark_group("repository_incremental_node");
+    group.sample_size(10);
+    group.warm_up_time(std::time::Duration::from_millis(250));
+    let config = built_in_config();
+    let engine = DetectionEngine::with_config(
+        config.indicators.clone(),
+        config.frameworks.clone(),
+        config.detection.clone(),
+    );
+
+    for project_count in [1_000, 10_000] {
+        let repository = TempDir::new()?;
+        let root = setup_dense_node_repository(&repository, project_count)?;
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let started = project_indicator::cache::detection_started();
+        let result = engine.detect(&root)?;
+        let cache_dir = TempDir::new()?;
+        let cache =
+            project_indicator::cache::PersistentCache::at_base(cache_dir.path().join("results"));
+        cache.store(
+            &root,
+            None,
+            &result,
+            &config.display,
+            &config.detection,
+            started,
+        );
+        assert!(cache.load(&root, None).is_some());
+        fs::write(
+            root.join("project_00000/package.json"),
+            r#"{"dependencies":{"vue":"3"}}"#,
+        )?;
+        assert!(matches!(
+            cache.repository_lookup(&root, None),
+            project_indicator::cache::CacheLookup::Update(_)
+        ));
+
+        group.bench_with_input(BenchmarkId::new("full", project_count), &root, |b, root| {
+            b.iter(|| match cache.repository_lookup(black_box(root), None) {
+                project_indicator::cache::CacheLookup::Hit(result, _) => {
+                    black_box(result);
+                }
+                project_indicator::cache::CacheLookup::Update(_)
+                | project_indicator::cache::CacheLookup::Miss => {
+                    if let Err(e) = engine.detect(black_box(root)) {
+                        eprintln!("Detection failed: {e}");
+                    }
+                }
+            });
+        });
+        group.bench_with_input(
+            BenchmarkId::new("incremental", project_count),
+            &root,
+            |b, root| {
+                b.iter(|| match cache.repository_lookup(black_box(root), None) {
+                    project_indicator::cache::CacheLookup::Hit(result, _) => {
+                        black_box(result);
+                    }
+                    project_indicator::cache::CacheLookup::Update(update) => {
+                        let result =
+                            project_indicator::detection::repository::detect_repository_incremental(
+                                &engine,
+                                black_box(root),
+                                &update,
+                            );
+                        black_box(result);
+                    }
+                    project_indicator::cache::CacheLookup::Miss => {
+                        if let Err(e) = engine.detect(black_box(root)) {
+                            eprintln!("Detection failed: {e}");
+                        }
+                    }
+                });
+            },
+        );
     }
 
     group.finish();
@@ -644,6 +757,22 @@ fn benchmark_repository_scaling(c: &mut Criterion) -> Result<(), Box<dyn std::er
             |b, root| {
                 b.iter(|| {
                     assert!(cache.load(black_box(root), None).is_some());
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("warm_ttl", candidate_dirs),
+            &root,
+            |b, root| {
+                b.iter(|| {
+                    assert!(matches!(
+                        cache.repository_lookup_with_ttl(
+                            black_box(root),
+                            None,
+                            Some(std::time::Duration::from_secs(60))
+                        ),
+                        project_indicator::cache::CacheLookup::Hit(_, _)
+                    ));
                 });
             },
         );
@@ -758,6 +887,22 @@ fn benchmark_root_project_repository_scaling(
                 });
             },
         );
+        group.bench_with_input(
+            BenchmarkId::new("warm_ttl", candidate_dirs),
+            &root,
+            |b, root| {
+                b.iter(|| {
+                    assert!(matches!(
+                        cache.repository_lookup_with_ttl(
+                            black_box(root),
+                            None,
+                            Some(std::time::Duration::from_secs(60))
+                        ),
+                        project_indicator::cache::CacheLookup::Hit(_, _)
+                    ));
+                });
+            },
+        );
     }
 
     group.finish();
@@ -784,7 +929,9 @@ infallible!(
     benchmark_single_language_detection_wrapper => benchmark_single_language_detection,
     benchmark_polyglot_detection_wrapper => benchmark_polyglot_detection,
     benchmark_framework_count_scaling_wrapper => benchmark_framework_count_scaling,
+    benchmark_dependency_batching_wrapper => benchmark_dependency_batching,
     benchmark_dense_node_repository_wrapper => benchmark_dense_node_repository,
+    benchmark_incremental_repository_wrapper => benchmark_incremental_repository,
     benchmark_repository_scaling_wrapper => benchmark_repository_scaling,
     benchmark_root_project_repository_scaling_wrapper =>
         benchmark_root_project_repository_scaling,
@@ -800,7 +947,9 @@ criterion_group!(
     benchmark_single_language_detection_wrapper,
     benchmark_polyglot_detection_wrapper,
     benchmark_framework_count_scaling_wrapper,
+    benchmark_dependency_batching_wrapper,
     benchmark_dense_node_repository_wrapper,
+    benchmark_incremental_repository_wrapper,
     benchmark_repository_scaling_wrapper,
     benchmark_root_project_repository_scaling_wrapper,
 );

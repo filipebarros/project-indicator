@@ -1,7 +1,43 @@
-use crate::detection::confidence_scorer::calculate_indicator_score;
+use crate::detection::confidence_scorer::IndicatorScorePlan;
 use crate::patterns::matches_pattern;
 use crate::types::{ConfidenceFactor, DetectionEvidence, EvidenceItem, Indicator, MatchedFile};
+use std::collections::HashSet;
 use std::sync::Arc;
+
+pub(crate) struct RootMarkerIndex {
+    literal: HashSet<String>,
+    wildcard: Vec<String>,
+}
+
+impl RootMarkerIndex {
+    pub(crate) fn new(indicators: &[Arc<Indicator>]) -> Self {
+        let roots = || {
+            indicators
+                .iter()
+                .flat_map(|indicator| &indicator.root_indicators)
+                .map(|root| &root.pattern)
+                .filter(|pattern| !pattern.contains('/'))
+        };
+        Self {
+            literal: roots()
+                .filter(|pattern| !pattern.contains('*'))
+                .cloned()
+                .collect(),
+            wildcard: roots()
+                .filter(|pattern| pattern.contains('*'))
+                .cloned()
+                .collect(),
+        }
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.literal.contains(name)
+            || self
+                .wildcard
+                .iter()
+                .any(|pattern| matches_pattern(name, pattern))
+    }
+}
 
 /// Real source evidence for `indicator` at the scan root: a source file
 /// (`*.ext` pattern) there, or a standard source directory
@@ -13,9 +49,9 @@ use std::sync::Arc;
 pub(crate) fn root_source_evidence(
     indicator: &Indicator,
     matched_files: &[MatchedFile],
-    all_indicators: &[Arc<Indicator>],
+    marker_index: &RootMarkerIndex,
 ) -> bool {
-    root_source_count(indicator, matched_files, all_indicators) > 0
+    root_source_count(indicator, matched_files, marker_index) > 0
 }
 
 /// How many distinct root source files (or probed source directories) back
@@ -23,14 +59,8 @@ pub(crate) fn root_source_evidence(
 fn root_source_count(
     indicator: &Indicator,
     matched_files: &[MatchedFile],
-    all_indicators: &[Arc<Indicator>],
+    marker_index: &RootMarkerIndex,
 ) -> usize {
-    let is_marker_name = |name: &str| {
-        all_indicators
-            .iter()
-            .flat_map(|other| &other.root_indicators)
-            .any(|root| !root.pattern.contains('/') && matches_pattern(name, &root.pattern))
-    };
     matched_files
         .iter()
         .filter(|file| {
@@ -40,7 +70,7 @@ fn root_source_count(
                 } else if pattern.starts_with("*.") {
                     file.depth == 0
                         && matches_pattern(&file.filename, pattern)
-                        && !is_marker_name(&file.filename)
+                        && !marker_index.contains(&file.filename)
                 } else {
                     false
                 }
@@ -60,12 +90,33 @@ pub fn resolve_indicator(
     matched_files: &[MatchedFile],
     evidence: &mut DetectionEvidence,
 ) -> Option<(Arc<Indicator>, f32)> {
+    let marker_index = RootMarkerIndex::new(indicators);
+    let score_plans: Vec<IndicatorScorePlan> = indicators
+        .iter()
+        .map(|indicator| IndicatorScorePlan::new(indicator, indicators))
+        .collect();
+    resolve_indicator_with_plans(
+        indicators,
+        matched_files,
+        evidence,
+        &marker_index,
+        &score_plans,
+    )
+}
+
+pub(crate) fn resolve_indicator_with_plans(
+    indicators: &[Arc<Indicator>],
+    matched_files: &[MatchedFile],
+    evidence: &mut DetectionEvidence,
+    marker_index: &RootMarkerIndex,
+    score_plans: &[IndicatorScorePlan],
+) -> Option<(Arc<Indicator>, f32)> {
     let mut candidates: Vec<(usize, f32, usize)> = Vec::with_capacity(indicators.len());
 
     for (idx, indicator) in indicators.iter().enumerate() {
-        let sources = root_source_count(indicator, matched_files, indicators);
+        let sources = root_source_count(indicator, matched_files, marker_index);
         if sources > 0 {
-            let weighted_score = calculate_indicator_score(indicator, matched_files, indicators);
+            let weighted_score = score_plans[idx].score(matched_files);
             evidence.add_confidence_factor(ConfidenceFactor::new(
                 format!("indicator_{}", indicator.name),
                 weighted_score,
