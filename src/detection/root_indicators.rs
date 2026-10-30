@@ -775,7 +775,7 @@ mod tests {
         let engine = rust_engine(DetectionConfig::default());
 
         if let Some(home) = std::env::home_dir() {
-            // scan paths are canonical (`\\?\C:\…` on Windows), so is the cached home
+            assert!(engine.is_boundary_directory(&home));
             assert!(engine.is_boundary_directory(&home.canonicalize().unwrap_or(home)));
         }
 
@@ -1015,9 +1015,12 @@ mod tests {
     fn test_windows_system_dirs_match_canonical_and_plain_forms() {
         for dir in [
             r"C:\Windows",
+            "C:/Windows",
             r"\\?\C:\Windows",
             r"\\?\c:\users",
+            r"\\?\c:/users",
             r"\\?\C:\Program Files (x86)",
+            "C:/Program Files (x86)",
         ] {
             assert!(is_windows_system_dir(dir), "{dir}");
         }
