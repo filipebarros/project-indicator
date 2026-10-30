@@ -437,16 +437,13 @@ fn detect_repository_walk(
     };
 
     let mut scan = RepositoryScan::with_reuse(engine, repository_root, started, update);
-    let mut queue = VecDeque::from([(
-        repository_root.to_path_buf(),
-        false,
-        DirectoryListing::read(repository_root),
-    )]);
-    'walk: while let Some((directory, has_project_ancestor, listing)) = queue.pop_front() {
+    let mut queue = VecDeque::from([(repository_root.to_path_buf(), false)]);
+    'walk: while let Some((directory, has_project_ancestor)) = queue.pop_front() {
         if Instant::now() >= deadline {
             scan.result.evidence.scan_truncated = true;
             break;
         }
+        let listing = DirectoryListing::read(&directory);
         if respect_ignores && !listing_ignore_files_are_safe(&directory, &listing) {
             return None;
         }
@@ -469,11 +466,7 @@ fn detect_repository_walk(
             }
 
             let child = entry.path();
-            let child_listing = DirectoryListing::read(&child);
             if respect_ignores {
-                if !listing_ignore_files_are_safe(&child, &child_listing) {
-                    return None;
-                }
                 let relative = child.strip_prefix(repository_root).unwrap_or(&child);
                 if ignores
                     .as_mut()
@@ -482,7 +475,7 @@ fn detect_repository_walk(
                     continue;
                 }
             }
-            queue.push_back((child, has_project, child_listing));
+            queue.push_back((child, has_project));
         }
     }
     Some(scan.finish())
