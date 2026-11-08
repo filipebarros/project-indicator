@@ -11,9 +11,9 @@ keywords = ["cli", "shell", "prompt", "project", "detection"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
-clap = { version = "4.6.1", features = ["derive"] }
+clap = { version = "4.6.7", features = ["derive"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
-toml = "1.1"
+toml = "1.2"
 toml_parser = "1"
 serde_json = { version = "1.0", features = ["raw_value"] }
 
@@ -30,7 +30,7 @@ libc = "0.2"
 [dev-dependencies]
 criterion = "0.8"
 tempfile = "3.27"
-proptest = "1.11"
+proptest = "1.12"
 
 [[bin]]
 name = "project-indicator"
